@@ -16,7 +16,7 @@ import java.net.URL;
 import java.time.Duration;
 
 /**
- * Spring Ai Tool
+ * Spring AI Tool - 接入 DeepSeek + 百度搜索 MCP
  *
  * @author xiaofuge bugstack.cn @小傅哥
  * 2025/12/14 09:51
@@ -25,40 +25,58 @@ import java.time.Duration;
 public class SpringAiToolTest {
 
     public static void main(String[] args) {
+        // ⚠️ 安全规范：永远不要把真实的 API Key 写在代码里！
+        // 请在您的 IDEA 运行配置中添加环境变量：
+        // DEEPSEEK_API_KEY = sk-xxxx (您重置后的新Key)
+        // BAIDU_MCP_API_KEY = bce-v3/ALTAK-xxxx (您重置后的新Key)
+        String deepSeekApiKey = "***REMOVED-CREDENTIAL***";
+        String baiduMcpApiKey = "***REMOVED-CREDENTIAL***";
+
+        if (deepSeekApiKey == null || deepSeekApiKey == null) {
+            log.error("运行失败：请先在系统环境变量或 IDEA 启动配置中设置 DEEPSEEK_API_KEY 和 BAIDU_MCP_API_KEY");
+            return;
+        }
+
+        // 1. 构建 DeepSeek 的 API 客户端 (DeepSeek 兼容 OpenAI 协议)
         OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl("https://apis.itedus.cn")
-                .apiKey("***REMOVED-CREDENTIAL***")
-                .completionsPath("v1/chat/completions")
-                .embeddingsPath("v1/embeddings")
+                .baseUrl("https://api.deepseek.com")         // DeepSeek 官方 base_url
+                .apiKey(deepSeekApiKey)                      // 从环境变量读取
+                .completionsPath("/chat/completions")        // DeepSeek 对话路径
+                .embeddingsPath("/v1/embeddings")            // DeepSeek 向量路径
                 .build();
 
+        // 2. 构建 ChatModel，并注入百度搜索 MCP 工具
         ChatModel chatModel = OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
-                        .model("gpt-4.1")
+                        .model("deepseek-chat")              // 使用 deepseek-chat 模型
                         .toolCallbacks(SyncMcpToolCallbackProvider.builder()
-                                .mcpClients(sseMcpClient()).build()
+                                .mcpClients(sseMcpClient(baiduMcpApiKey)) // 注入 MCP 工具
+                                .build()
                                 .getToolCallbacks())
                         .build())
                 .build();
 
-        String call = chatModel.call("你哪有哪些工具能力");
-
+        // 3. 发起测试调用
+        String call = chatModel.call("你有哪些工具能力");
         log.info("测试结果:{}", call);
     }
 
     /**
-     * 百度搜索MCP服务(url)；https://sai.baidu.com/zh/detail/e014c6ffd555697deabf00d058baf388
-     * 百度搜索MCP服务(key)；https://console.bce.baidu.com/iam/?_=1753597622044#/iam/apikey/list
+     * 初始化百度搜索 MCP 客户端
      */
-    public static McpSyncClient sseMcpClient() {
+    public static McpSyncClient sseMcpClient(String apiKey) {
+        // 将环境变量中的 key 拼接到 SSE 端点路径中
+        String sseEndpoint = "/v2/ai_search/mcp/sse?api_key=" + apiKey;
 
-        // 自己申请 api_key http://appbuilder.baidu.com/v2/ai_search/mcp/sse?api_key=***REMOVED-CREDENTIAL***
         HttpClientSseClientTransport sseClientTransport = HttpClientSseClientTransport.builder("http://appbuilder.baidu.com")
-                .sseEndpoint("/v2/ai_search/mcp/sse?api_key=***REMOVED-CREDENTIAL***")
+                .sseEndpoint(sseEndpoint)
                 .build();
 
-        McpSyncClient mcpSyncClient = McpClient.sync(sseClientTransport).requestTimeout(Duration.ofMinutes(360)).build();
+        McpSyncClient mcpSyncClient = McpClient.sync(sseClientTransport)
+                .requestTimeout(Duration.ofMinutes(360))
+                .build();
+
         var init_sse = mcpSyncClient.initialize();
         log.info("Tool SSE MCP Initialized {}", init_sse);
 
@@ -68,16 +86,14 @@ public class SpringAiToolTest {
     @Test
     public void test_url() throws MalformedURLException {
         String fullUrl = "http://appbuilder.baidu.com/v2/ai_search/mcp/sse?api_key=***REMOVED-CREDENTIAL***";
-
         fullUrl = "http://127.0.0.1:9999/sse?apiKey=xxxx";
 
         URL url = new URL(fullUrl);
-
         String protocol = url.getProtocol();
         String host = url.getHost();
         int port = url.getPort();
 
-        String baseUrl = port == -1 ? protocol + "://" + host : protocol + "://" + host + ":" + port;
+        String baseUrl  = port == -1 ? protocol + "://" + host : protocol + "://" + host + ":" + port;
         String endpoint = "";
 
         int index = fullUrl.indexOf(baseUrl);
@@ -88,5 +104,4 @@ public class SpringAiToolTest {
         log.info("baseUrl:{}", baseUrl);
         log.info("endpoint:{}", endpoint);
     }
-
 }

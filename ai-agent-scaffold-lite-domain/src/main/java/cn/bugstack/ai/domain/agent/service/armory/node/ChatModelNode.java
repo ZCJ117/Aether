@@ -11,6 +11,7 @@ import cn.bugstack.ai.domain.agent.service.armory.matter.skills.ToolSkillsCreate
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
@@ -37,6 +38,18 @@ public class ChatModelNode extends AbstractArmorySupport {
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         log.info("Ai Agent 装配操作 - ChatModelNode");
+
+        // NOTE 这个ChatModel的构建参考app模块中的测试类SpringAiToolTest
+//        ChatModel chatModel = OpenAiChatModel.builder()
+//                .openAiApi(openAiApi)
+//                .defaultOptions(OpenAiChatOptions.builder()
+//                        .model("deepseek-chat")              // 使用 deepseek-chat 模型
+//                        .toolCallbacks(SyncMcpToolCallbackProvider.builder()
+//                                .mcpClients(sseMcpClient(baiduMcpApiKey)) // 注入 MCP 工具
+//                                .build()
+//                                .getToolCallbacks())
+//                        .build())
+//                .build();
 
         // 获取上下文对象
         OpenAiApi openAiApi = dynamicContext.getOpenAiApi();

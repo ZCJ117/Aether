@@ -10,12 +10,12 @@ ai:
             agent-desc: 一个测试的智能体
           module:
             ai-api:
-              base-url: https://apis.itedus.cn
+              base-url: https://api.deepseek.com
               api-key: ***REMOVED-CREDENTIAL***
               completions-path: v1/chat/completions
               embeddings-path: v1/embeddings
             chat-model:
-              model: gpt-4.1
+              model: deepseek-chat
               tool-mcp-list:
                 - sse:
                     name: baidu-search

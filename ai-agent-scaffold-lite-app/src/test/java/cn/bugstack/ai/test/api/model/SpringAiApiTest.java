@@ -15,24 +15,46 @@ import org.springframework.ai.openai.api.OpenAiApi;
 @Slf4j
 public class SpringAiApiTest {
 
+//    public static void main(String[] args) {
+//        OpenAiApi openAiApi = OpenAiApi.builder()
+//                .baseUrl("https://apis.itedus.cn/")
+//                .apiKey("***REMOVED-CREDENTIAL***")
+//                .completionsPath("v1/chat/completions")
+//                .embeddingsPath("v1/embeddings")
+//                .build();
+//
+//        ChatModel chatModel = OpenAiChatModel.builder()
+//                .openAiApi(openAiApi)
+//                .defaultOptions(OpenAiChatOptions.builder()
+//                        .model("gpt-4.1")
+//                        .build())
+//                .build();
+//
+//        String call = chatModel.call("hi 你好哇!");
+//
+//        log.info("测试结果:{}", call);
+//    }
+
     public static void main(String[] args) {
         OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl("https://apis.itedus.cn/")
+                // 去掉结尾的 /v1，框架会自动补 /v1/chat/completions
+                .baseUrl("https://api.deepseek.com")
                 .apiKey("***REMOVED-CREDENTIAL***")
-                .completionsPath("v1/chat/completions")
-                .embeddingsPath("v1/embeddings")
+                // completionsPath 可以不写，它默认就是 /v1/chat/completions
                 .build();
 
         ChatModel chatModel = OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
-                        .model("gpt-4.1")
+                        .model("deepseek-reasoner")   // 或 "deepseek-chat"
                         .build())
                 .build();
 
         String call = chatModel.call("hi 你好哇!");
-
         log.info("测试结果:{}", call);
     }
+
+
+
 
 }

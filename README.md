@@ -30,6 +30,11 @@ AI Agent Scaffold Lite 是一个基于 Spring Boot 的轻量级 AI 智能体脚�
 - **Apache Commons Lang3**：Apache 通用工具库
 - **JJWT**：JSON Web Token 生成与验证
 - **Java JWT**：Auth0 提供的 JWT 库
+- **Dom4j**：XML 解析和处理库
+- **XStream**：Java 对象与 XML 相互转换库
+- **Apache Commons Codec**：编码解码工具库
+- **Spring AI Agent Utils**：Spring AI 智能体工具集
+- **XFG Wrench Starter Design Framework**：设计模式框架
 
 ### 开发与部署
 - **Maven**：项目构建和依赖管理

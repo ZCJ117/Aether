@@ -30,12 +30,14 @@ public class AiApiNode extends AbstractArmorySupport {
         OpenAiApi openAiApi = OpenAiApi.builder()
                 .baseUrl(aiApiConfig.getBaseUrl())
                 .apiKey(aiApiConfig.getApiKey())
+                // NOTE 如果配置了completionsPath和embeddingsPath就用配置的，否则用默认的
                 .completionsPath(StringUtils.isNotBlank(aiApiConfig.getCompletionsPath()) ? aiApiConfig.getCompletionsPath() : "v1/chat/completions")
                 .embeddingsPath(StringUtils.isNotBlank(aiApiConfig.getEmbeddingsPath()) ? aiApiConfig.getEmbeddingsPath() : "v1/embeddings")
                 .build();
 
         dynamicContext.setOpenAiApi(openAiApi);
 
+        // NOTE 调router路由，router内部会调用一个get方法，获取策略的执行器，这里就是chatModelNode，然后执行chatModelNode的apply方法
         return router(requestParameter, dynamicContext);
     }
 

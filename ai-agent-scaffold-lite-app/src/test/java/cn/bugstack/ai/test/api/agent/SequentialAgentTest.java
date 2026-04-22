@@ -29,7 +29,7 @@ public class SequentialAgentTest {
 
     public static void main(String[] args) {
         OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl("https://apis.itedus.cn")
+                .baseUrl("https://api.deepseek.com")
                 .apiKey("***REMOVED-CREDENTIAL***")
                 .completionsPath("v1/chat/completions")
                 .embeddingsPath("v1/embeddings")
@@ -38,8 +38,8 @@ public class SequentialAgentTest {
         ChatModel chatModel = OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
-                        .model("gpt-4.1")
-                        .toolCallbacks(new SyncMcpToolCallbackProvider(sseMcpClient()).getToolCallbacks())
+                        .model("deepseek-chat")
+                        .toolCallbacks(new SyncMcpToolCallbackProvider(sseMcpClient()).getToolCallbacks())  //toolCallbacks 用于在 agent 执行过程中调用工具，这里我们使用 MCP 工具回调来连接到我们的 SSE MCP 客户端，以便在 agent 执行过程中能够调用工具并获取结果。
                         .build())
                 .build();
 

@@ -17,13 +17,14 @@ public class LangChain4jApiTest {
 
     public static void main(String[] args) {
         OpenAiChatModel model = OpenAiChatModel.builder()
-                .baseUrl("https://apis.itedus.cn/v1")
-                .apiKey("***REMOVED-CREDENTIAL***")
-                .modelName("gpt-4o")
+                .baseUrl("https://api.deepseek.com/v1")   // DeepSeek 官方 base_url（兼容 OpenAI）
+                .apiKey("***REMOVED-CREDENTIAL***")                // 替换成你自己的 DeepSeek API Key
+                .modelName("deepseek-reasoner")               // 聊天模型，推理模型可换成 deepseek-reasoner
                 .build();
 
         String chat = model.chat("hi 你好哇!");
         log.info("测试结果:{}", chat);
     }
+
 
 }
