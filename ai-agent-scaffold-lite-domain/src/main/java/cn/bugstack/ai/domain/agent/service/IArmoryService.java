@@ -7,9 +7,11 @@ import java.util.List;
 /**
  * 装配接口
  *
- * @author xiaofuge bugstack.cn @小傅哥
- * 2025/12/17 08:13
+ *
+ * @author zuochangjian
+ * 2026/04/24
  */
+//NOTE 7,在AiAgentAutoConfig类中，调用IArmoryService的acceptArmoryAgents方法
 public interface IArmoryService {
 
     void acceptArmoryAgents(List<AiAgentConfigTableVO> tables) throws Exception;

@@ -22,6 +22,9 @@ import javax.annotation.Resource;
 import java.util.ArrayList;
 import java.util.List;
 
+// NOTE 13，路由到ChatModelNode节点，这个节点的作用是根据配置构建ChatModel实例，
+//  并放入上下文对象中，供后续节点使用，最后路由到AgentNode节点
+
 @Slf4j
 @Service
 public class ChatModelNode extends AbstractArmorySupport {
@@ -39,7 +42,7 @@ public class ChatModelNode extends AbstractArmorySupport {
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         log.info("Ai Agent 装配操作 - ChatModelNode");
 
-        // NOTE 这个ChatModel的构建参考app模块中的测试类SpringAiToolTest
+        // 这个ChatModel的构建参考app模块中的测试类SpringAiToolTest
 //        ChatModel chatModel = OpenAiChatModel.builder()
 //                .openAiApi(openAiApi)
 //                .defaultOptions(OpenAiChatOptions.builder()
@@ -51,19 +54,21 @@ public class ChatModelNode extends AbstractArmorySupport {
 //                        .build())
 //                .build();
 
-        // 获取上下文对象
+        //获取上下文对象,读取openAiApi,在下面传递给ChatModel
         OpenAiApi openAiApi = dynamicContext.getOpenAiApi();
 
         // 获取配置对象
         AiAgentConfigTableVO aiAgentConfigTableVO = requestParameter.getAiAgentConfigTableVO();
+        //NOTE 读取ChatModel
         AiAgentConfigTableVO.Module.ChatModel chatModelConfig = aiAgentConfigTableVO.getModule().getChatModel();
         List<AiAgentConfigTableVO.Module.ChatModel.ToolMcp> toolMcpList = chatModelConfig.getToolMcpList();
         List<AiAgentConfigTableVO.Module.ChatModel.ToolSkills> toolSkillsList = chatModelConfig.getToolSkillsList();
 
-        // 构建mcp服务（工厂）
+        // 构建mcp工具回调
         List<ToolCallback> toolCallbackList = new ArrayList<>();
 
         if (null != toolMcpList && !toolMcpList.isEmpty()) {
+            // NOTE 遍历toolMcpList: SSE->SSEToolMcpCreateService.buildToolCallback()║Local → LocalToolMcpCreateService
             for (AiAgentConfigTableVO.Module.ChatModel.ToolMcp toolMcp : toolMcpList) {
                 TooMcpCreateService tooMcpCreateService = defaultMcpClientFactory.getTooMcpCreateService(toolMcp);
                 ToolCallback[] toolCallbacks = tooMcpCreateService.buildToolCallback(toolMcp);
@@ -73,6 +78,7 @@ public class ChatModelNode extends AbstractArmorySupport {
 
         // 构建skills服务
         if (null != toolSkillsList && !toolSkillsList.isEmpty()) {
+            //NOTE 遍历toolSkillsList: 调用ToolSkillsCreateService.buildToolCallback()方法构建工具回调
             for (AiAgentConfigTableVO.Module.ChatModel.ToolSkills toolSkills : toolSkillsList) {
                 ToolCallback[] toolCallbacks = toolSkillsCreateService.buildToolCallback(toolSkills);
                 toolCallbackList.addAll(List.of(toolCallbacks));

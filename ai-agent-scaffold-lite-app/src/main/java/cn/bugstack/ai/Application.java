@@ -8,6 +8,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 
+// NOTE 1，项目启动，加载application.yml配置
+
 @SpringBootApplication
 @Configurable
 public class Application {

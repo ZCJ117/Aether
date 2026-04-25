@@ -15,6 +15,10 @@ import javax.annotation.Resource;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
+// NOTE 抽象类，继承多线程策略路由
+// ArmoryCommandEntity 是输入参数
+// DefaultArmoryFactory.DynamicContext 是上下文对象，节点之间共享上下文数据
+// AiAgentRegisterVO 是输出结果
 public abstract class AbstractArmorySupport extends AbstractMultiThreadStrategyRouter<ArmoryCommandEntity, DefaultArmoryFactory.DynamicContext, AiAgentRegisterVO> {
 
     protected final Logger log = LoggerFactory.getLogger(AbstractArmorySupport.class);
@@ -34,6 +38,9 @@ public abstract class AbstractArmorySupport extends AbstractMultiThreadStrategyR
      * @param beanClass Bean类型
      * @param <T>       Bean类型
      */
+    // NOTE 这个是AbstractArmorySupport类的核心，动态Bean注册，它允许在运行时将任意对象注册为Spring Bean
+    //通过DefaultListableBeanFactory直接操作Spring容器，如果Bean已经存在，就先移除旧的Bean定义，然后注册新的Bean定义，这样就实现了动态更新Bean的功能
+    // 用synchronized关键字保证线程安全
     protected synchronized <T> void registerBean(String beanName, Class<T> beanClass, T beanInstance) {
         DefaultListableBeanFactory beanFactory = (DefaultListableBeanFactory) applicationContext.getAutowireCapableBeanFactory();
 

@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
 import javax.annotation.Resource;
 import java.util.ArrayList;
 
-// NOTE 自动装配AI Agent,在应用启动完成后执行装配逻辑，
+// NOTE 6,执行onApplicationEvent方法，调用IArmoryService的acceptArmoryAgents方法
 @Slf4j
 @Configuration
 @EnableConfigurationProperties(AiAgentAutoConfigProperties.class)

@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 
+// NOTE 这个类作用是给ChatModelNode构建SSE类型的MCP客户端工具回调，核心逻辑是从配置中获取SSE的基础URI和SSE端点，如果没有明确配置SSE端点，则从基础URI中解析出SSE端点；最后构建MCP客户端并返回工具回调数组
+
 @Slf4j
 @Service
 public class StdioToolMcpCreateService implements TooMcpCreateService {

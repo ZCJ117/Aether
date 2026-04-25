@@ -16,16 +16,22 @@ import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import java.util.List;
 
+//NOTE 15,最好路由到RunnerNode
+
 @Slf4j
 @Service
 public class AgentWorkflowNode extends AbstractArmorySupport {
 
+    // NOTE AgentWorkflowNode 来路由到不同的工作流节点的，所以这里注入了三个工作流节点，流转下面三个节点
+    //  分别是LoopAgentNode、ParallelAgentNode和SequentialAgentNode，后续会根据配置来路由到不同的工作流节点
     @Resource
     private LoopAgentNode loopAgentNode;
     @Resource
     private ParallelAgentNode parallelAgentNode;
     @Resource
     private SequentialAgentNode sequentialAgentNode;
+
+
     @Resource
     private RunnerNode runnerNode;
 
@@ -37,6 +43,7 @@ public class AgentWorkflowNode extends AbstractArmorySupport {
         List<AiAgentConfigTableVO.Module.AgentWorkflow> agentWorkflows = aiAgentConfigTableVO.getModule().getAgentWorkflows();
 
         if (null == agentWorkflows || agentWorkflows.isEmpty() || dynamicContext.getCurrentStepIndex() >= agentWorkflows.size()) {
+            // NOTE 如果没有配置工作流，或者工作流已经执行完了，就不路由了，直接返回结果，结果值可以放在上下文对象中，供外部调用方获取
             // 设置结果值
             dynamicContext.setCurrentAgentWorkflow(null);
             // 路由下节点
@@ -69,6 +76,8 @@ public class AgentWorkflowNode extends AbstractArmorySupport {
 
         String node = agentTypeEnum.getNode();
 
+        // note 根据配置的工作流类型来路由到不同的工作流节点，默认是runnerNode节点，runnerNode节点的职责是执行智能体的输出结果，
+        //  执行完后继续路由回AgentWorkflowNode节点，继续执行下一个工作流
         return switch (node){
             case "loopAgentNode" -> loopAgentNode;
             case "parallelAgentNode" -> parallelAgentNode;

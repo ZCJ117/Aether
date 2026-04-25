@@ -24,9 +24,13 @@ import java.util.List;
 /**
  * 执行节点
  *
- * @author xiaofuge bugstack.cn @小傅哥
- * 2025/12/29 16:09
+ * @author zuochangjian
+ * 2026/4/25
  */
+
+//NOTE 16,RunnerNode是AI Agent装配的最后一个节点，职责：
+// 创建InmemoryRunner示例，这个是AI Agent的运行器。
+// 注册到Spring容器中，使创建的 Agent 可以被其他组件使用
 @Slf4j
 @Service
 public class RunnerNode extends AbstractArmorySupport {
@@ -34,6 +38,7 @@ public class RunnerNode extends AbstractArmorySupport {
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         log.info("Ai Agent 装配操作 - RunnerNode");
 
+        //提取信息
         AiAgentConfigTableVO aiAgentConfigTableVO = requestParameter.getAiAgentConfigTableVO();
         String appName = aiAgentConfigTableVO.getAppName();
         AiAgentConfigTableVO.Agent agent = aiAgentConfigTableVO.getAgent();
@@ -41,8 +46,10 @@ public class RunnerNode extends AbstractArmorySupport {
         String agentName = agent.getAgentName();
         String agentDesc = agent.getAgentDesc();
 
+        //构建Runner
         InMemoryRunner runner = getRunner(dynamicContext, aiAgentConfigTableVO, appName);
 
+        //构建注册对象
         AiAgentRegisterVO aiAgentRegisterVO = AiAgentRegisterVO.builder()
                 .appName(appName)
                 .agentId(agentId)
@@ -58,16 +65,20 @@ public class RunnerNode extends AbstractArmorySupport {
     }
 
     private InMemoryRunner getRunner(DefaultArmoryFactory.DynamicContext dynamicContext, AiAgentConfigTableVO aiAgentConfigTableVO, String appName) {
+        // 获取Runner配置
         AiAgentConfigTableVO.Module.Runner runnerConfig = aiAgentConfigTableVO.getModule().getRunner();
 
         String agentName = runnerConfig.getAgentName();
+        // 校验agentName是否为空，如果为空则抛出异常，因为agentName是必须的，后续要通过agentName来获取Agent实例，如果没有agentName就无法获取Agent实例了
         if (StringUtils.isBlank(agentName)) {
             log.error("runner.agentName is null");
             throw new AppException(ResponseCode.ILLEGAL_PARAMETER.getCode(), ResponseCode.ILLEGAL_PARAMETER.getInfo());
         }
 
+        // 从上下文对象中获取Agent实例，后续要传递给Runner
         BaseAgent baseAgent = dynamicContext.getAgentGroup().get(agentName);
 
+        //处理插件配置，构建插件列表，后续要传递给Runner
         List<BasePlugin> plugins;
         List<String> pluginNameList = runnerConfig.getPluginNameList();
         if (null != pluginNameList && !pluginNameList.isEmpty()) {
@@ -80,6 +91,7 @@ public class RunnerNode extends AbstractArmorySupport {
             plugins = ImmutableList.of();
         }
 
+        // 构建Runner实例
         return new InMemoryRunner(baseAgent, appName, plugins);
     }
 

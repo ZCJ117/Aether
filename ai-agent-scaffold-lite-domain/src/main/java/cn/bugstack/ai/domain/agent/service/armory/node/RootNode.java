@@ -13,8 +13,8 @@ import javax.annotation.Resource;
 /**
  * 根节点
  *
- * @author xiaofuge bugstack.cn @小傅哥
- * 2025/12/17 08:16
+ * @author zuochangjian
+ * 2026/04/23
  */
 @Slf4j
 @Service
@@ -23,6 +23,7 @@ public class RootNode extends AbstractArmorySupport {
     @Resource
     private AiApiNode aiApiNode;
 
+    // NOTE 11,RootNode策略树的入口，doApply无逻辑，直接路由到AiApiNode节点
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
 

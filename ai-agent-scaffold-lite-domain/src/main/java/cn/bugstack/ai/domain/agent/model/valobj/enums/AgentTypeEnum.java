@@ -4,6 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+// NOTE AgentWorkflow的类型枚举，目前包含循环执行、并行执行、串行执行三种
+
 @Getter
 @AllArgsConstructor
 @NoArgsConstructor

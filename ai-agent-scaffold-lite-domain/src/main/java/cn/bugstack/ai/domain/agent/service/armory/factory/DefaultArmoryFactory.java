@@ -23,8 +23,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 默认的装配工厂
  *
- * @author xiaofuge bugstack.cn @小傅哥
- * 2025/12/17 08:16
+ * @author zuochangjian
+ * 2026/04/25
  */
 @Service
 public class DefaultArmoryFactory {
@@ -35,6 +35,8 @@ public class DefaultArmoryFactory {
     @Resource
     private RootNode rootNode;
 
+    //NOTE 10,DefaultArmoryFactory.armoryStrategyHandler() 返回rootNode作为策略树入口。
+    // 策略树执行开始，每个节点的doApply方法执行具体的装配逻辑，get方法路由到下一个节点，直到策略树执行完毕，整个AI Agent装配完成。
     public StrategyHandler<ArmoryCommandEntity, DynamicContext, AiAgentRegisterVO> armoryStrategyHandler() {
         return rootNode;
     }

@@ -2,6 +2,7 @@ ai:
   agent:
     config:
       tables:
+        # NOTE 4.导入only-one-agent.yml配置文件，会绑定到AiAgentAutoConfigProperties类
         testAgent03:
           app-name: testAgent03
           agent:
