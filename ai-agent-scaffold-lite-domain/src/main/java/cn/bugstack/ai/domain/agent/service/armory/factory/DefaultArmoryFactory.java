@@ -69,6 +69,8 @@ public class DefaultArmoryFactory {
          */
         private Map<String, BaseAgent> agentGroup = new HashMap<>();
 
+        // 这个是记录一个index步骤，从AgentWorkflowNode节点开始，每执行完一个AgentWorkflowNode节点，就把这个index加1，
+        // 这样在AgentWorkflowNode节点中就可以通过这个index来获取当前应该执行哪个智能体了
         private AtomicInteger currentStepIndex = new AtomicInteger(0);
 
         private AiAgentConfigTableVO.Module.AgentWorkflow currentAgentWorkflow;

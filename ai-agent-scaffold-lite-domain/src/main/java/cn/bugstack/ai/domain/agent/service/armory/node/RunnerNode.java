@@ -47,6 +47,8 @@ public class RunnerNode extends AbstractArmorySupport {
         String agentDesc = agent.getAgentDesc();
 
         //构建Runner
+        //NOTE 这个是从getRunner方法中抽取出来的，之所以抽取出来，是因为构建Runner的逻辑比较复杂，
+        // 涉及到从上下文对象中获取Agent实例，处理插件配置等，所以单独抽取成一个方法，保持doApply方法的简洁性
         InMemoryRunner runner = getRunner(dynamicContext, aiAgentConfigTableVO, appName);
 
         //构建注册对象

@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import java.util.List;
 
-//NOTE 15,最好路由到RunnerNode
+//NOTE 15,最后路由到RunnerNode
 
 @Slf4j
 @Service
@@ -52,7 +52,7 @@ public class AgentWorkflowNode extends AbstractArmorySupport {
 
         dynamicContext.setCurrentAgentWorkflow(agentWorkflows.get(dynamicContext.getCurrentStepIndex()));
 
-        // 步骤值增加
+        // 步骤值增加,每次加1，直到执行完所有的工作流
         dynamicContext.addCurrentStepIndex();
 
         return router(requestParameter, dynamicContext);

@@ -9,8 +9,7 @@ import org.springframework.ai.openai.api.OpenAiApi;
 /**
  * Spring AI Test
  * 文档：<a href="https://docs.spring.io/spring-ai/reference/1.0/api/advisors.html">spring ai</a>
- * @author xiaofuge bugstack.cn @小傅哥
- * 2025/12/14 09:15
+ * @author zuochangjian
  */
 @Slf4j
 public class SpringAiApiTest {
@@ -38,7 +37,7 @@ public class SpringAiApiTest {
     public static void main(String[] args) {
         OpenAiApi openAiApi = OpenAiApi.builder()
                 // 去掉结尾的 /v1，框架会自动补 /v1/chat/completions
-                .baseUrl("https://api.deepseek.com")
+                .baseUrl("https://api.xiaomimimo.com")
                 .apiKey("***REMOVED-CREDENTIAL***")
                 // completionsPath 可以不写，它默认就是 /v1/chat/completions
                 .build();
@@ -46,7 +45,7 @@ public class SpringAiApiTest {
         ChatModel chatModel = OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
-                        .model("deepseek-reasoner")   // 或 "deepseek-chat"
+                        .model("mimo-v2.5-pro")
                         .build())
                 .build();
 

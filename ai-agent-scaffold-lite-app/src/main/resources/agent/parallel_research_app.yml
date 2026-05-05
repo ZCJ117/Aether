@@ -10,12 +10,12 @@ ai:
             agent-desc: 并行研究并汇总的智能体管道
           module:
             ai-api:
-              base-url: https://apis.itedus.cn
+              base-url: https://api.xiaomimimo.com
               api-key: ***REMOVED-CREDENTIAL***
               completions-path: v1/chat/completions
               embeddings-path: v1/embeddings
             chat-model:
-              model: gpt-4.1
+              model: mimo-v2.5-pro
               tool-mcp-list:
                 - sse:
                     name: baidu-search

@@ -8,8 +8,9 @@ import lombok.NoArgsConstructor;
 
 /**
  * Ai Agent 智能体注册值对象
- * @author xiaofuge bugstack.cn @小傅哥
- * 2025/12/17 08:19
+ * @author zuochangjian
+ * 2026/4/27
+ * NOTE 这个是给RunnerNode节点使用的注册对象，包含了智能体的基本信息和运行器对象，用于在Spring容器中注册AI Agent实例
  */
 @Getter
 @Builder

@@ -42,7 +42,7 @@ public class ApiTest {
         assert resourceAsStream != null;
 
         OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl("https://apis.itedus.cn")
+                .baseUrl("https://api.xiaomimimo.com")
                 .apiKey("***REMOVED-CREDENTIAL***")
                 .completionsPath("v1/chat/completions")
                 .embeddingsPath("v1/embeddings")
@@ -51,7 +51,7 @@ public class ApiTest {
         ChatModel chatModel = OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
-                        .model("gpt-4o")
+                        .model("mimo-v2.5")
                         .build())
                 .build();
 
@@ -65,20 +65,20 @@ public class ApiTest {
 //                                .build())
 //                        .build(),
 //                OpenAiChatOptions.builder()
-//                        .model("gpt-4o")
+//                        .model("mimo-v2.5")
 //                        .build()));
 //
 //        System.out.println("测试结果" + JSON.toJSONString(response));
 
 
-        // agent 测试
+//         agent 测试
         LlmAgent agent = LlmAgent.builder()
                 .name("test")
                 .description("Chess coach agent")
                 .model(new MySpringAI(chatModel))
                 .instruction("""
-                        You are a knowledgeable chess coach
-                        who helps chess players train and sharpen their chess skills.
+                        你是描述大师，能将图片内容描述的非常详细，尤其是图片中的物品和场景。请仔细观察图片，
+                        描述图片中的物品、场景、颜色、形状、位置等细节，并尝试推测图片中物品的用途和功能。
                         """)
                 .build();
 
