@@ -50,7 +50,7 @@ public class ChatService implements IChatService {
     private AiAgentAutoConfigProperties aiAgentAutoConfigProperties;
 
     /**
-     * 用户会话映射表
+     * NOTE 用户会话映射表
      * key: userId - 用户唯一标识
      * value: sessionId - 会话唯一标识
      * 使用ConcurrentHashMap保证线程安全
@@ -119,14 +119,15 @@ public class ChatService implements IChatService {
     }
 
     /**
-     * 简单消息处理方法（自动创建会话）
+     * NOTE 简单消息处理方法（自动创建会话）
      * 这是最常用的消息处理入口，适用于首次对话或不需要关心sessionId的场景
      *
      * 完整调用链：
      * handleMessage(agentId, userId, message)
-     *   -> getAiAgentRegisterVO(agentId) 获取Agent配置
+     *   -> getAiAgentRegisterVO(agentId) 获取Agent配置,获取AiAgentRegisterVO对象
      *   -> createSession(agentId, userId) 创建/获取会话
-     *   -> handleMessage(agentId, userId, sessionId, message) 委托给4参数版本处理
+     *   -> handleMessage(agentId, userId, sessionId, message) 委托给4参数版本处理，
+     *   //NOTE 他需要返回的是List<String>,调用的是阻塞式的handleMessage方法
      *
      * @param agentId Agent唯一标识
      * @param userId 用户唯一标识
@@ -146,14 +147,14 @@ public class ChatService implements IChatService {
         String sessionId = createSession(agentId, userId);
 
         // 委托给4参数版本处理实际消息
-        return handleMessage(agentId, userId, sessionId, message);
+        return handleMessage(agentId, userId, sessionId, message); //NOTE 他需要返回的是List<String>,调用的是阻塞式的handleMessage方法
     }
 
     /**
      * 指定会话的消息处理方法（阻塞式）
      * 适用于需要保持会话连续性的多轮对话场景
      *
-     * 执行流程：
+     * NOTE 执行流程：
      * 1. 通过agentId获取Agent注册信息
      * 2. 检查Agent是否存在
      * 3. 从AiAgentRegisterVO获取InMemoryRunner
@@ -177,22 +178,20 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.E0001.getCode());
         }
 
-        // 获取Agent运行器
+        // 从AiAgentRegisterVO通过getRunner方法获取InMemoryRunner实例
         InMemoryRunner runner = aiAgentRegisterVO.getRunner();
 
-        // 构建消息内容
-        // Content是Google ADK中表示消息内容的类型，由多个Part组成
-        // 每个Part可以是文本、文件、图片等不同类型
+        // 构建 Content 对象（包含用户消息）
         Content userMsg = Content.fromParts(Part.fromText(message));
 
-        // 调用Runner的runAsync方法执行对话
-        // runAsync方法是异步的，返回一个Flowable<Event>
+        // NOTE 调用Runner的runAsync方法执行对话 这个是Google ADK中执行Agent的核心方法，输入是用户ID、会话ID和消息内容，输出是一个事件流
+        //  runAsync方法是异步的，返回一个Flowable<Event>
         // Event是Google ADK中表示对话事件的类型（模型回复、工具调用结果等）
         Flowable<Event> events = runner.runAsync(userId, sessionId, userMsg);
 
         // 阻塞式地收集事件内容，转换成字符串列表返回给调用方
         List<String> outputs = new ArrayList<>();
-        events.blockingForEach(event -> outputs.add(event.stringifyContent()));
+        events.blockingForEach(event -> outputs.add(event.stringifyContent())); //NOTE 阻塞式输出
 
         return outputs;
     }
@@ -228,7 +227,7 @@ public class ChatService implements IChatService {
         Content userMsg = Content.fromParts(Part.fromText(message));
 
         // 直接返回事件流，不阻塞等待
-        return runner.runAsync(userId, sessionId, userMsg);
+        return runner.runAsync(userId, sessionId, userMsg); //NOTE 直接返回事件流
     }
 
     /**

@@ -8,8 +8,8 @@ import java.util.List;
 
 /**
  * 智能体服务接口
- * @author xiaofuge bugstack.cn @小傅哥
- * 2026/1/20 08:16
+ * @author zuochangjian
+ * 2026/ 5/10
  */
 public interface IAgentService {
 

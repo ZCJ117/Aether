@@ -12,8 +12,11 @@ services:
       - '443:443'
       - '80:80'
     volumes:
-      - ./nginx/html:/usr/share/nginx/html
+      - ./AIagent_frontend/dist:/usr/share/nginx/html
+      - ./nginx/conf.d:/etc/nginx/conf.d
     privileged: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 #  ai-agent-scaffold-lite:
 #    image: system/ai-agent-scaffold-lite:1.0

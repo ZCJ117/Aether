@@ -17,9 +17,17 @@ import java.util.stream.Collectors;
 
 /**
  *
- * @author xiaofuge bugstack.cn @小傅哥
- * 2026/1/20 08:23
+ * @author zuochangjian
+ * 2026/5/10
  */
+
+// NOTE REST控制器，AI agent服务的HTTP入口， 这个控制器是 DDD 分层中的触发层，只负责：
+//  1. 接收 HTTP 请求
+//  2. 参数转换（DTO → 领域对象）
+//  3. 调用 domain 层服务
+//  4. 结果转换（领域对象 → DTO）
+//  5. 统一异常包装
+//  不包含任何业务逻辑，所有核心逻辑都在 chatService 中。
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/")
@@ -29,6 +37,7 @@ public class AgentServiceController implements IAgentService {
     @Resource
     private IChatService chatService;
 
+    // NOTE 这个接口用于查询所有已注册的智能体配置，返回给前端展示
     @RequestMapping(value = "query_ai_agent_config_list", method = RequestMethod.GET)
     @Override
     public Response<List<AiAgentConfigResponseDTO>> queryAiAgentConfigList() {
@@ -39,12 +48,14 @@ public class AgentServiceController implements IAgentService {
 
             List<AiAgentConfigResponseDTO> responseDTOS = agentConfigs.stream().map(agentConfig -> {
                 AiAgentConfigResponseDTO responseDTO = new AiAgentConfigResponseDTO();
+                // 手动映射
                 responseDTO.setAgentId(agentConfig.getAgentId());
                 responseDTO.setAgentName(agentConfig.getAgentName());
                 responseDTO.setAgentDesc(agentConfig.getAgentDesc());
                 return responseDTO;
             }).collect(Collectors.toList());
 
+            // NOTE 返回结果给前端，包含状态码、提示信息和数据列表
             return Response.<List<AiAgentConfigResponseDTO>>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info(ResponseCode.SUCCESS.getInfo())
@@ -66,10 +77,14 @@ public class AgentServiceController implements IAgentService {
         }
     }
 
+
+
+    // NOTE 这个接口用于创建用户会话
     @RequestMapping(value = "create_session", method = RequestMethod.POST)
     @Override
     public Response<CreateSessionResponseDTO> createSession(@RequestBody CreateSessionRequestDTO requestDTO) {
         try {
+            //为指定的agentId和userId创建一个新的会话，返回会话sessionId
             log.info("创建会话 agentId:{} userId:{}", requestDTO.getAgentId(), requestDTO.getUserId());
             String sessionId = chatService.createSession(requestDTO.getAgentId(), requestDTO.getUserId());
 
@@ -96,6 +111,7 @@ public class AgentServiceController implements IAgentService {
         }
     }
 
+    // NOTE 这个接口提供了一个简化版本的创建会话接口，方便前端直接通过URL参数创建会话，适用于一些简单场景
     @RequestMapping(value = "create_session", method = RequestMethod.GET)
     public Response<CreateSessionResponseDTO> createSession(@RequestParam("agentId") String agentId, @RequestParam("userId") String userId) {
         CreateSessionRequestDTO requestDTO = new CreateSessionRequestDTO();
@@ -104,6 +120,7 @@ public class AgentServiceController implements IAgentService {
         return createSession(requestDTO);
     }
 
+    // NOTE 这个接口用于处理用户发送的消息，进行智能体对话
     @RequestMapping(value = "chat", method = RequestMethod.POST)
     @Override
     public Response<ChatResponseDTO> chat(@RequestBody ChatRequestDTO requestDTO) {
@@ -114,6 +131,7 @@ public class AgentServiceController implements IAgentService {
                 sessionId = chatService.createSession(requestDTO.getAgentId(), requestDTO.getUserId());
             }
 
+            //拼接消息列表为字符串返回给前端，多个消息之间用换行符分隔
             List<String> messages = chatService.handleMessage(requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
 
             ChatResponseDTO responseDTO = new ChatResponseDTO();
@@ -139,20 +157,21 @@ public class AgentServiceController implements IAgentService {
         }
     }
 
+    // NOTE 这个接口用于处理流式对话
     @RequestMapping(value = "chat_stream", method = RequestMethod.POST)
     @Override
     public ResponseBodyEmitter chatStream(@RequestBody ChatRequestDTO requestDTO) {
-        ResponseBodyEmitter emitter = new ResponseBodyEmitter(3 * 60 * 1000L);
+        ResponseBodyEmitter emitter = new ResponseBodyEmitter(3 * 60 * 1000L); //3分钟超时
         try {
             log.info("流式对话 agentId:{} userId:{} sessionId:{} message:{}", requestDTO.getAgentId(), requestDTO.getUserId(), requestDTO.getSessionId(), requestDTO.getMessage());
             chatService.handleMessageStream(requestDTO.getAgentId(), requestDTO.getUserId(), requestDTO.getSessionId(), requestDTO.getMessage())
                     .subscribe(
                             event -> {
                                 try {
-                                    emitter.send(event.stringifyContent());
+                                    emitter.send(event.stringifyContent());  //逐条发送事件内容给前端
                                 } catch (Exception e) {
                                     log.error("流式对话发送失败", e);
-                                    emitter.completeWithError(e);
+                                    emitter.completeWithError(e); //完成关闭
                                 }
                             },
                             emitter::completeWithError,
