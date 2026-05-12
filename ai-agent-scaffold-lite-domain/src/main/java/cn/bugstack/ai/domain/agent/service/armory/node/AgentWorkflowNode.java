@@ -31,9 +31,8 @@ public class AgentWorkflowNode extends AbstractArmorySupport {
     @Resource
     private SequentialAgentNode sequentialAgentNode;
 
-
     @Resource
-    private RunnerNode runnerNode;
+    private CompilerNode compilerNode;
 
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
@@ -64,7 +63,7 @@ public class AgentWorkflowNode extends AbstractArmorySupport {
         AiAgentConfigTableVO.Module.AgentWorkflow currentAgentWorkflow = dynamicContext.getCurrentAgentWorkflow();
 
         if (null == currentAgentWorkflow){
-            return runnerNode;
+            return compilerNode;
         }
 
         String type = currentAgentWorkflow.getType();
@@ -82,7 +81,7 @@ public class AgentWorkflowNode extends AbstractArmorySupport {
             case "loopAgentNode" -> loopAgentNode;
             case "parallelAgentNode" -> parallelAgentNode;
             case "sequentialAgentNode" -> sequentialAgentNode;
-            default -> runnerNode;
+            default -> compilerNode;
         };
     }
 

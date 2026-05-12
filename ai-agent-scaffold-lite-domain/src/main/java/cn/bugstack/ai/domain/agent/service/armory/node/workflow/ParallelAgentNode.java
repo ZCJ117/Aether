@@ -3,17 +3,17 @@ package cn.bugstack.ai.domain.agent.service.armory.node.workflow;
 import cn.bugstack.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import cn.bugstack.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import cn.bugstack.ai.domain.agent.model.valobj.AiAgentRegisterVO;
-import cn.bugstack.ai.domain.agent.model.valobj.enums.AgentTypeEnum;
 import cn.bugstack.ai.domain.agent.service.armory.AbstractArmorySupport;
 import cn.bugstack.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
-import com.google.adk.agents.BaseAgent;
-import com.google.adk.agents.ParallelAgent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-
+/**
+ * 并行工作流节点 — 记录并行配置元数据
+ *
+ * 实际并行执行由 GraphExecutor 在运行时处理
+ */
 @Slf4j
 @Service("parallelAgentNode")
 public class ParallelAgentNode extends AbstractArmorySupport {
@@ -23,18 +23,9 @@ public class ParallelAgentNode extends AbstractArmorySupport {
         log.info("Ai Agent 装配操作 - ParallelAgentNode");
 
         AiAgentConfigTableVO.Module.AgentWorkflow currentAgentWorkflow = dynamicContext.getCurrentAgentWorkflow();
-
-        List<String> subAgentNames = currentAgentWorkflow.getSubAgents();
-        List<BaseAgent> subAgents = dynamicContext.queryAgentList(subAgentNames);
-
-        ParallelAgent parallelAgent =
-                ParallelAgent.builder()
-                        .name(currentAgentWorkflow.getName())
-                        .description(currentAgentWorkflow.getDescription())
-                        .subAgents(subAgents)
-                        .build();
-
-        dynamicContext.getAgentGroup().put(currentAgentWorkflow.getName(), parallelAgent);
+        log.info("记录并行工作流: {} subAgents={}",
+                currentAgentWorkflow.getName(),
+                currentAgentWorkflow.getSubAgents());
 
         return router(requestParameter, dynamicContext);
     }

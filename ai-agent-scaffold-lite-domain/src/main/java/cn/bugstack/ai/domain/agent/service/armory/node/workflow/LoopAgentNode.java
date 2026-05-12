@@ -3,17 +3,17 @@ package cn.bugstack.ai.domain.agent.service.armory.node.workflow;
 import cn.bugstack.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import cn.bugstack.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import cn.bugstack.ai.domain.agent.model.valobj.AiAgentRegisterVO;
-import cn.bugstack.ai.domain.agent.model.valobj.enums.AgentTypeEnum;
 import cn.bugstack.ai.domain.agent.service.armory.AbstractArmorySupport;
 import cn.bugstack.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
-import com.google.adk.agents.BaseAgent;
-import com.google.adk.agents.LoopAgent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-
+/**
+ * 循环工作流节点 — 记录循环配置元数据
+ *
+ * 实际循环执行由 GraphExecutor 在运行时处理
+ */
 @Slf4j
 @Service("loopAgentNode")
 public class LoopAgentNode extends AbstractArmorySupport {
@@ -23,19 +23,10 @@ public class LoopAgentNode extends AbstractArmorySupport {
         log.info("Ai Agent 装配操作 - LoopAgentNode");
 
         AiAgentConfigTableVO.Module.AgentWorkflow currentAgentWorkflow = dynamicContext.getCurrentAgentWorkflow();
-
-        List<String> subAgentNames = currentAgentWorkflow.getSubAgents();
-        List<BaseAgent> subAgents = dynamicContext.queryAgentList(subAgentNames);
-
-        LoopAgent loopAgent =
-                LoopAgent.builder()
-                        .name(currentAgentWorkflow.getName())
-                        .description(currentAgentWorkflow.getDescription())
-                        .subAgents(subAgents)
-                        .maxIterations(currentAgentWorkflow.getMaxIterations())
-                        .build();
-
-        dynamicContext.getAgentGroup().put(currentAgentWorkflow.getName(), loopAgent);
+        log.info("记录循环工作流: {} subAgents={} maxIterations={}",
+                currentAgentWorkflow.getName(),
+                currentAgentWorkflow.getSubAgents(),
+                currentAgentWorkflow.getMaxIterations());
 
         return router(requestParameter, dynamicContext);
     }
@@ -44,5 +35,4 @@ public class LoopAgentNode extends AbstractArmorySupport {
     public StrategyHandler<ArmoryCommandEntity, DefaultArmoryFactory.DynamicContext, AiAgentRegisterVO> get(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         return getBean("agentWorkflowNode");
     }
-
 }

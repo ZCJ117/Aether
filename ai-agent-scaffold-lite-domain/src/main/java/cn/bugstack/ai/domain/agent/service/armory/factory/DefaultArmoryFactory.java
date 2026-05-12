@@ -3,17 +3,15 @@ package cn.bugstack.ai.domain.agent.service.armory.factory;
 import cn.bugstack.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import cn.bugstack.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import cn.bugstack.ai.domain.agent.model.valobj.AiAgentRegisterVO;
+import cn.bugstack.ai.domain.agent.service.armory.AgentRegistry;
 import cn.bugstack.ai.domain.agent.service.armory.node.RootNode;
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
-import com.google.adk.agents.BaseAgent;
-import com.google.adk.agents.SequentialAgent;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -22,31 +20,29 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 默认的装配工厂
- *
- * @author zuochangjian
- * 2026/04/25
  */
 @Service
 public class DefaultArmoryFactory {
 
     @Resource
-    private ApplicationContext applicationContext;
+    private AgentRegistry agentRegistry;
 
     @Resource
     private RootNode rootNode;
 
-    //NOTE 10,DefaultArmoryFactory.armoryStrategyHandler() 返回rootNode作为策略树入口。
-    // 策略树执行开始，每个节点的doApply方法执行具体的装配逻辑，get方法路由到下一个节点，直到策略树执行完毕，整个AI Agent装配完成。
     public StrategyHandler<ArmoryCommandEntity, DynamicContext, AiAgentRegisterVO> armoryStrategyHandler() {
         return rootNode;
     }
 
     public AiAgentRegisterVO getAiAgentRegisterVO(String agentId) {
-        return applicationContext.getBean(agentId, AiAgentRegisterVO.class);
+        return AiAgentRegisterVO.builder()
+                .agentId(agentId)
+                .agentGraph(agentRegistry.get(agentId))
+                .build();
     }
 
     /**
-     * 定义一个上下文对象，用于各个节点串联的时候，写入数据和使用数据
+     * 策略树上下文对象，节点之间共享数据
      */
     @Data
     @Builder
@@ -54,51 +50,31 @@ public class DefaultArmoryFactory {
     @NoArgsConstructor
     public static class DynamicContext {
 
-        /**
-         * LLM API
-         */
         private OpenAiApi openAiApi;
 
-        /**
-         * LLM ChatModel
-         */
         private ChatModel chatModel;
 
         /**
-         * 智能体配置组
+         * Agent 名称列表 (替代原 Google ADK BaseAgent agentGroup)
          */
-        private Map<String, BaseAgent> agentGroup = new HashMap<>();
+        @Builder.Default
+        private List<String> agentNames = new ArrayList<>();
 
-        // 这个是记录一个index步骤，从AgentWorkflowNode节点开始，每执行完一个AgentWorkflowNode节点，就把这个index加1，
-        // 这样在AgentWorkflowNode节点中就可以通过这个index来获取当前应该执行哪个智能体了
+        @Builder.Default
         private AtomicInteger currentStepIndex = new AtomicInteger(0);
 
         private AiAgentConfigTableVO.Module.AgentWorkflow currentAgentWorkflow;
 
+        @Builder.Default
         private Map<String, Object> dataObjects = new HashMap<>();
 
         public <T> void setValue(String key, T value) {
             dataObjects.put(key, value);
         }
 
+        @SuppressWarnings("unchecked")
         public <T> T getValue(String key) {
             return (T) dataObjects.get(key);
-        }
-
-        public List<BaseAgent> queryAgentList(List<String> agentNames) {
-            if (agentNames == null || agentNames.isEmpty() || agentGroup == null) {
-                return Collections.emptyList();
-            }
-
-            List<BaseAgent> agents = new ArrayList<>();
-            for (String name : agentNames) {
-                BaseAgent agent = agentGroup.get(name);
-                if (agent != null) {
-                    agents.add(agent);
-                }
-            }
-
-            return agents;
         }
 
         public void addCurrentStepIndex() {

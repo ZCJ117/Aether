@@ -96,6 +96,9 @@ public class ChatModelNode extends AbstractArmorySupport {
 
         dynamicContext.setChatModel(chatModel);
 
+        // 注册为 Spring Bean，供 ChatService / ContextManager / AgentRuntime 注入使用
+        registerBean("chatModel", ChatModel.class, chatModel);
+
         return router(requestParameter, dynamicContext);
     }
 

@@ -30,7 +30,7 @@ public class SpringAiToolTest {
 
     public static void main(String[] args) {
         OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl("https://apis.itedus.cn")
+                .baseUrl("https://api.xiaomimimo.com")
                 .apiKey("***REMOVED-CREDENTIAL***")
                 .completionsPath("v1/chat/completions")
                 .embeddingsPath("v1/embeddings")
@@ -48,7 +48,7 @@ public class SpringAiToolTest {
         ChatModel chatModel = OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
-                        .model("gpt-4.1")
+                        .model("mimo-v2.5")
                         .toolCallbacks(new ArrayList<>(){{
                             add(toolCallback02);
                         }})
