@@ -386,7 +386,7 @@ npm run dev          # Vite 开发服务器
 {
   "code": "0000",
   "info": "成功",
-  "data": { ... }
+  "data": "..." 
 }
 ```
 
