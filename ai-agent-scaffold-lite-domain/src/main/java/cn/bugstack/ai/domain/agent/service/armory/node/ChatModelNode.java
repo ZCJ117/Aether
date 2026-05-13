@@ -8,10 +8,13 @@ import cn.bugstack.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import cn.bugstack.ai.domain.agent.service.armory.matter.mcp.client.TooMcpCreateService;
 import cn.bugstack.ai.domain.agent.service.armory.matter.mcp.client.factory.DefaultMcpClientFactory;
 import cn.bugstack.ai.domain.agent.service.armory.matter.skills.ToolSkillsCreateService;
+import cn.bugstack.ai.domain.agent.service.tool.McpToolAdapter;
+import cn.bugstack.ai.domain.agent.service.tool.SkillsToolAdapter;
+import cn.bugstack.ai.domain.agent.service.tool.Tool;
+import cn.bugstack.ai.domain.agent.service.tool.ToolRegistry;
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
@@ -37,6 +40,15 @@ public class ChatModelNode extends AbstractArmorySupport {
 
     @Resource
     private ToolSkillsCreateService toolSkillsCreateService;
+
+    @Resource
+    private ToolRegistry toolRegistry;
+
+    @Resource
+    private McpToolAdapter mcpToolAdapter;
+
+    @Resource
+    private SkillsToolAdapter skillsToolAdapter;
 
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
@@ -96,10 +108,55 @@ public class ChatModelNode extends AbstractArmorySupport {
 
         dynamicContext.setChatModel(chatModel);
 
+        // 注册工具到 ToolRegistry（AgentRuntime → ToolExecutor 调用链路）
+        registerToolsToRegistry(toolMcpList, toolSkillsList);
+
         // 注册为 Spring Bean，供 ChatService / ContextManager / AgentRuntime 注入使用
         registerBean("chatModel", ChatModel.class, chatModel);
 
         return router(requestParameter, dynamicContext);
+    }
+
+    /**
+     * 将 MCP 和 Skills 工具适配为 Tool 接口并注册到 ToolRegistry
+     *
+     * 此步骤是 AgentRuntime → ToolExecutor → ToolRegistry 调用链路的关键：
+     * 没有注册，LLM 返回的 tool_call 将因 "Tool not found" 而失败。
+     */
+    private void registerToolsToRegistry(
+            List<AiAgentConfigTableVO.Module.ChatModel.ToolMcp> toolMcpList,
+            List<AiAgentConfigTableVO.Module.ChatModel.ToolSkills> toolSkillsList) {
+
+        if (toolMcpList != null) {
+            for (AiAgentConfigTableVO.Module.ChatModel.ToolMcp toolMcp : toolMcpList) {
+                try {
+                    Tool tool = mcpToolAdapter.adapt(toolMcp);
+                    toolRegistry.register(tool);
+                    log.info("MCP 工具已注册: {}", tool.name());
+                } catch (Exception e) {
+                    log.error("MCP 工具注册失败: {}", extractMcpName(toolMcp), e);
+                }
+            }
+        }
+
+        if (toolSkillsList != null) {
+            for (AiAgentConfigTableVO.Module.ChatModel.ToolSkills toolSkills : toolSkillsList) {
+                try {
+                    Tool tool = skillsToolAdapter.adapt(toolSkills);
+                    toolRegistry.register(tool);
+                    log.info("Skills 工具已注册: {}", tool.name());
+                } catch (Exception e) {
+                    log.error("Skills 工具注册失败: type={} path={}", toolSkills.getType(), toolSkills.getPath(), e);
+                }
+            }
+        }
+    }
+
+    private String extractMcpName(AiAgentConfigTableVO.Module.ChatModel.ToolMcp toolMcp) {
+        if (toolMcp.getSse() != null) return toolMcp.getSse().getName();
+        if (toolMcp.getStdio() != null) return toolMcp.getStdio().getName();
+        if (toolMcp.getLocal() != null) return toolMcp.getLocal().getName();
+        return "unknown";
     }
 
     @Override

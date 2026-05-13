@@ -8,6 +8,7 @@ import cn.bugstack.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import cn.bugstack.ai.domain.agent.model.valobj.properties.AiAgentAutoConfigProperties;
 import cn.bugstack.ai.domain.agent.service.IChatService;
 import cn.bugstack.ai.domain.agent.service.armory.AgentRegistry;
+import cn.bugstack.ai.domain.agent.service.executor.GraphExecutor;
 import cn.bugstack.ai.domain.agent.service.memory.MemoryStore;
 import cn.bugstack.ai.domain.agent.service.runtime.AgentRuntime;
 import cn.bugstack.ai.domain.agent.service.runtime.RuntimeEvent;
@@ -40,6 +41,9 @@ public class ChatService implements IChatService {
 
     @Resource
     private AgentRuntime agentRuntime;
+
+    @Resource
+    private GraphExecutor graphExecutor;
 
     @Resource
     private MemoryStore memoryStore;
@@ -107,13 +111,26 @@ public class ChatService implements IChatService {
         // 加载记忆
         String memoryPrompt = memoryStore.loadMemoryPrompt(message);
 
-        // 获取入口Agent定义
+        // 多Agent工作流 → GraphExecutor
+        if (graph.getEdges() != null && !graph.getEdges().isEmpty()) {
+            log.info("路由到 GraphExecutor: edges={}", graph.getEdges().size());
+            List<String> outputs = new ArrayList<>();
+            graphExecutor.execute(graph, chatModel, userId, sessionId, message)
+                    .blockingForEach(event -> {
+                        if (event.getType() == RuntimeEvent.EventType.textDelta
+                                && event.getText() != null) {
+                            outputs.add(event.getText());
+                        }
+                    });
+            return outputs;
+        }
+
+        // 单Agent → AgentRuntime
         AgentNodeDef entry = graph.getAgentDefs().get(graph.getEntryPoint());
         if (entry == null) {
             throw new AppException(ResponseCode.E0001.getCode(), "入口Agent未配置: " + graph.getEntryPoint());
         }
 
-        // 注入记忆到instruction
         String instruction = injectMemory(entry.getInstruction(), memoryPrompt);
         AgentNodeDef resolved = AgentNodeDef.builder()
                 .name(entry.getName())
@@ -124,7 +141,6 @@ public class ChatService implements IChatService {
                 .modelRef(entry.getModelRef())
                 .build();
 
-        // 执行Agent
         List<String> outputs = new ArrayList<>();
         agentRuntime.execute(resolved, chatModel, userId, sessionId, message)
                 .blockingForEach(event -> {
@@ -148,6 +164,13 @@ public class ChatService implements IChatService {
 
         String memoryPrompt = memoryStore.loadMemoryPrompt(message);
 
+        // 多Agent工作流 → GraphExecutor
+        if (graph.getEdges() != null && !graph.getEdges().isEmpty()) {
+            log.info("流式路由到 GraphExecutor: edges={}", graph.getEdges().size());
+            return graphExecutor.execute(graph, chatModel, userId, sessionId, message);
+        }
+
+        // 单Agent → AgentRuntime
         AgentNodeDef entry = graph.getAgentDefs().get(graph.getEntryPoint());
         if (entry == null) {
             return Flowable.error(new AppException(ResponseCode.E0001.getCode(),
