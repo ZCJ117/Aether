@@ -111,6 +111,9 @@ public class ChatModelNode extends AbstractArmorySupport {
         // 注册工具到 ToolRegistry（AgentRuntime → ToolExecutor 调用链路）
         registerToolsToRegistry(toolMcpList, toolSkillsList);
 
+        // 校验工具定义就绪 — MCP SSE 初始化可能尚未完全返回工具 schema
+        validateToolDefinitions(toolCallbackList);
+
         // 注册为 Spring Bean，供 ChatService / ContextManager / AgentRuntime 注入使用
         registerBean("chatModel", ChatModel.class, chatModel);
 
@@ -157,6 +160,51 @@ public class ChatModelNode extends AbstractArmorySupport {
         if (toolMcp.getStdio() != null) return toolMcp.getStdio().getName();
         if (toolMcp.getLocal() != null) return toolMcp.getLocal().getName();
         return "unknown";
+    }
+
+    /**
+     * 校验工具定义是否已就绪
+     * MCP SSE 连接初始化期间，ToolCallback.getToolDefinition() 可能尚未返回完整 schema。
+     * 等待最多 3 次 × 500ms，确保工具定义完整后再注册 ChatModel Bean。
+     */
+    private void validateToolDefinitions(List<ToolCallback> toolCallbacks) {
+        if (toolCallbacks == null || toolCallbacks.isEmpty()) {
+            log.info("无工具回调需校验，跳过");
+            return;
+        }
+
+        int totalTools = toolCallbacks.size();
+        for (int retry = 0; retry < 3; retry++) {
+            long nullCount = toolCallbacks.stream()
+                    .filter(tc -> {
+                        try {
+                            return tc.getToolDefinition() == null;
+                        } catch (Exception e) {
+                            log.warn("获取工具定义异常: {}", e.getMessage());
+                            return true;
+                        }
+                    })
+                    .count();
+
+            if (nullCount == 0) {
+                log.info("工具定义校验通过: {}/{} 个工具已就绪", totalTools, totalTools);
+                return;
+            }
+
+            if (retry < 2) {
+                log.warn("工具定义未就绪 ({}/{} 为空)，等待 500ms 后重试 ({}/{})",
+                        nullCount, totalTools, retry + 1, 3);
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            } else {
+                log.warn("工具定义校验未完全通过: {} 个工具中仍有 {} 个未就绪，继续注册",
+                        totalTools, nullCount);
+            }
+        }
     }
 
     @Override

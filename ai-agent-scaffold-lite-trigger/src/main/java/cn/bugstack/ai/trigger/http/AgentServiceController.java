@@ -8,12 +8,15 @@ import cn.bugstack.ai.domain.agent.service.IChatService;
 import cn.bugstack.ai.domain.agent.service.runtime.RuntimeEvent;
 import cn.bugstack.ai.types.enums.ResponseCode;
 import cn.bugstack.ai.types.exception.AppException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 import javax.annotation.Resource;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -34,6 +37,8 @@ public class AgentServiceController implements IAgentService {
 
     @Resource
     private IChatService chatService;
+
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @RequestMapping(value = "query_ai_agent_config_list", method = RequestMethod.GET)
     @Override
@@ -185,15 +190,33 @@ public class AgentServiceController implements IAgentService {
     }
 
     private String serializeEvent(RuntimeEvent event) {
-        return switch (event.getType()) {
-            case textDelta -> event.getText() != null ? event.getText() : "";
-            case toolCall -> "[调用工具: " + event.getToolName() + "]";
-            case toolResult -> "[工具结果: " + event.getToolName() + "] "
-                    + (event.getToolOutput() != null ? event.getToolOutput().substring(0, Math.min(100, event.getToolOutput().length())) : "");
-            case compactBoundary -> "[上下文压缩]";
-            case done -> "[对话完成]";
-            case error -> "[错误: " + event.getErrorMessage() + "]";
-            default -> "";
-        };
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("type", event.getType().name());
+            switch (event.getType()) {
+                case textDelta -> payload.put("text", event.getText() != null ? event.getText() : "");
+                case toolCall -> {
+                    payload.put("toolCallId", event.getToolCallId());
+                    payload.put("toolName", event.getToolName());
+                    payload.put("toolInput", event.getToolInput());
+                }
+                case toolResult -> {
+                    payload.put("toolCallId", event.getToolCallId());
+                    payload.put("toolName", event.getToolName());
+                    payload.put("toolOutput", event.getToolOutput());
+                    payload.put("toolError", event.isToolError());
+                }
+                case compactBoundary ->
+                    payload.put("summary", event.getCompactSummary());
+                case error ->
+                    payload.put("errorMessage", event.getErrorMessage());
+                case turnComplete ->
+                    payload.put("turnCount", event.getTurnCount());
+                default -> {}
+            }
+            return "data: " + objectMapper.writeValueAsString(payload) + "\n\n";
+        } catch (Exception e) {
+            return "data: {\"type\":\"error\",\"errorMessage\":\"serialize failed\"}\n\n";
+        }
     }
 }

@@ -132,6 +132,10 @@ public class ChatService implements IChatService {
         }
 
         String instruction = injectMemory(entry.getInstruction(), memoryPrompt);
+        log.info("Agent entry resolved: name={}, instructionLen={}, modelRef={}",
+                entry.getName(),
+                instruction != null ? instruction.length() : 0,
+                entry.getModelRef());
         AgentNodeDef resolved = AgentNodeDef.builder()
                 .name(entry.getName())
                 .instruction(instruction)
@@ -178,6 +182,10 @@ public class ChatService implements IChatService {
         }
 
         String instruction = injectMemory(entry.getInstruction(), memoryPrompt);
+        log.info("Agent entry resolved (stream): name={}, instructionLen={}, modelRef={}",
+                entry.getName(),
+                instruction != null ? instruction.length() : 0,
+                entry.getModelRef());
         AgentNodeDef resolved = AgentNodeDef.builder()
                 .name(entry.getName())
                 .instruction(instruction)
