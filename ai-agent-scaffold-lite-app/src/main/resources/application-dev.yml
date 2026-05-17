@@ -17,12 +17,7 @@ spring:
   config:
     import:
        - classpath:agent/agents.yml
-#      - classpath:agent/test-agent.yml
-#      - classpath:agent/ai.agent.config.test.yml
-#这个配置文件是用于配置AI Agent的自动装配的，影响的是AiAgentAutoConfigProperties类
-      # NOTE 3.在加载application-dev.yml之后，下面又导入only-one-agent.yml配置文件
-#      - classpath:agent/only-one-agent.yml
-#      - classpath:agent/parallel_research_app.yml
+      # NOTE 3.在加载application-dev.yml之后，上面又导入agents.yml配置文件
   datasource:
     username: root
     password: 123456

@@ -25,7 +25,7 @@ ai:
                     request-timeout: 500000
                 # local本地实现的，mcp 服务，在 ai-agent-scaffold-lite-domain 模块下，cn.bugstack.ai.domain.agent.service.armory.matter.mcp.server 下实现服务
                 - local:
-                    name: myToolCallbackProvider
+#                    name: myToolCallbackProvider
               # 可以配置 skills 技能书，放到 resource/agent/skills 下。
               tool-skills-list:
                 - type: resource
