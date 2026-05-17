@@ -2,7 +2,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>cn.bugstack.ai</groupId>
+    <groupId>cn.zcj.ai</groupId>
     <artifactId>ai-agent-scaffold-lite</artifactId>
     <version>1.0</version>
     <packaging>pom</packaging>
@@ -217,27 +217,27 @@
 
             <!-- 工程模块 -->
             <dependency>
-                <groupId>cn.bugstack.ai</groupId>
+                <groupId>cn.zcj.ai</groupId>
                 <artifactId>ai-agent-scaffold-lite-api</artifactId>
                 <version>1.0</version>
             </dependency>
             <dependency>
-                <groupId>cn.bugstack.ai</groupId>
+                <groupId>cn.zcj.ai</groupId>
                 <artifactId>ai-agent-scaffold-lite-domain</artifactId>
                 <version>1.0</version>
             </dependency>
             <dependency>
-                <groupId>cn.bugstack.ai</groupId>
+                <groupId>cn.zcj.ai</groupId>
                 <artifactId>ai-agent-scaffold-lite-infrastructure</artifactId>
                 <version>1.0</version>
             </dependency>
             <dependency>
-                <groupId>cn.bugstack.ai</groupId>
+                <groupId>cn.zcj.ai</groupId>
                 <artifactId>ai-agent-scaffold-lite-types</artifactId>
                 <version>1.0</version>
             </dependency>
             <dependency>
-                <groupId>cn.bugstack.ai</groupId>
+                <groupId>cn.zcj.ai</groupId>
                 <artifactId>ai-agent-scaffold-lite-trigger</artifactId>
                 <version>1.0</version>
             </dependency>

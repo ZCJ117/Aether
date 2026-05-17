@@ -380,7 +380,7 @@ npm run dev          # Vite 开发服务器
 | POST | `/api/v1/chat` | 同步对话 |
 | POST | `/api/v1/chat_stream` | 流式对话（SSE） |
 
-统一响应格式（`cn.bugstack.ai.api.response.Response<T>`）：
+统一响应格式（`cn.zcj.ai.api.response.Response<T>`）：
 
 ```json
 {
@@ -394,7 +394,7 @@ npm run dev          # Vite 开发服务器
 
 - Java: 4 空格缩进，Lombok（`@Data`/`@Builder`/`@Slf4j`/`@Getter`）替代手写样板
 - 日志: `@Slf4j` + `log.info()`；禁止 `System.out.println` 和手写 `LoggerFactory.getLogger`
-- REST 响应: `cn.bugstack.ai.api.response.Response<T>` 统一包装
+- REST 响应: `cn.zcj.ai.api.response.Response<T>` 统一包装
 - 业务错误: `AppException(ResponseCode.XXX)` 抛出
 - JSON: domain 层使用 Jackson `ObjectMapper`，config 层可使用 FastJSON
 - 新建 DTO/枚举: 同目录必须包含 `package-info.java`
