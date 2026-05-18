@@ -38,8 +38,10 @@ build/
 /.mvn/
 /.idea/
 /data/
-/ai-agent-scaffold-lite-app/data/
+/aether-app/data/
 /.trae/
-/ai-agent-scaffold-lite-app/target/
-/ai-agent-scaffold-lite-domain/target/
-/ai-agent-scaffold-lite-app/src/test/
+/aether-app/target/
+/aether-domain/target/
+/aether-app/src/test/
+/aether-app/src/main/resources/agent/agents.yml
+/aether-app/src/main/resources/agent/demo.yml

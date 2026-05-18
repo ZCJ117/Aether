@@ -47,16 +47,16 @@ AI Agent Scaffold Lite 是一个面向企业级应用的 AI Agent 开发脚手�
 ## 项目结构
 
 ```
-ai-agent-scaffold-lite/
+aether/
 ├── pom.xml                              # 根 POM，管理 6 个子模块 + 全部依赖版本
 │
-├── ai-agent-scaffold-lite-api/          # ★ API 层：服务接口 + DTO
+├── aether-api/          # ★ API 层：服务接口 + DTO
 │   └── src/main/java/cn/bugstack/ai/api/
 │       ├── IAgentService.java           # 对外服务接口定义
 │       ├── dto/                         # ChatRequestDTO, CreateSessionRequestDTO 等
 │       └── response/Response.java       # 统一响应包装类
 │
-├── ai-agent-scaffold-lite-app/          # ★ 启动引导 + 配置
+├── aether-app/          # ★ 启动引导 + 配置
 │   └── src/main/
 │       ├── java/cn/bugstack/ai/
 │       │   ├── Application.java                      # Spring Boot 启动类
@@ -73,7 +73,7 @@ ai-agent-scaffold-lite/
 │               ├── parallel_research_app.yml          # 并行研究 Agent 配置示例
 │               └── demo.yml                           # 基础演示配置
 │
-├── ai-agent-scaffold-lite-domain/      # ★★★ 核心业务层（禁止反向依赖 trigger/infrastructure）
+├── aether-domain/      # ★★★ 核心业务层（禁止反向依赖 trigger/infrastructure）
 │   └── src/main/java/cn/bugstack/ai/domain/agent/
 │       ├── model/
 │       │   ├── entity/                  # ChatCommandEntity, ArmoryCommandEntity
@@ -131,13 +131,13 @@ ai-agent-scaffold-lite/
 │           │   └── SkillsToolAdapter.java    # Skills → Tool 适配器
 │           └── executor/GraphExecutor.java   # ★ 多 Agent 图执行器
 │
-├── ai-agent-scaffold-lite-infrastructure/  # 基础设施层（DAO / Redis / Gateway）
+├── aether-infrastructure/  # 基础设施层（DAO / Redis / Gateway）
 │
-├── ai-agent-scaffold-lite-trigger/         # HTTP 触发层
+├── aether-trigger/         # HTTP 触发层
 │   └── src/main/java/cn/bugstack/ai/trigger/http/
 │       └── AgentServiceController.java     # ★ REST API 入口（/api/v1/chat, /api/v1/chat_stream 等）
 │
-├── ai-agent-scaffold-lite-types/           # 类型定义层
+├── aether-types/           # 类型定义层
 │   └── src/main/java/cn/bugstack/ai/types/
 │       ├── common/Constants.java           # 全局常量
 │       ├── enums/ResponseCode.java         # 响应码枚举（SUCCESS/E0001/E0002 等）
@@ -223,7 +223,7 @@ POST /api/v1/chat → ChatService.handleMessage()
 
 ## Agent YAML 配置
 
-配置文件位于 `ai-agent-scaffold-lite-app/src/main/resources/agent/*.yml`，通过 `application-dev.yml` 中的 `spring.config.import` 激活。
+配置文件位于 `aether-app/src/main/resources/agent/*.yml`，通过 `application-dev.yml` 中的 `spring.config.import` 激活。
 
 ### 最小配置模板（only-one-agent.yml）
 
@@ -302,31 +302,31 @@ agent-workflows:
 ```bash
 # 1. 克隆项目
 git clone <repo-url>
-cd ai-agent-scaffold-lite
+cd aether
 
 # 2. 配置 YAML
-# 编辑 ai-agent-scaffold-lite-app/src/main/resources/application-dev.yml：
+# 编辑 aether-app/src/main/resources/application-dev.yml：
 #   - 配置数据库连接（如不需要可注释 datasource 相关配置）
 #   - 通过 spring.config.import 激活所需的 agent/*.yml 配置文件
 #
-# 编辑 ai-agent-scaffold-lite-app/src/main/resources/agent/only-one-agent.yml：
+# 编辑 aether-app/src/main/resources/agent/only-one-agent.yml：
 #   - 配置 ai-api（base-url 和 api-key）
 #   - 配置 chat-model（model 名称）
 #   - 按需配置 tool-mcp-list 和 tool-skills-list
 
 # 3. 构建项目
 mvn clean install                                    # 全量构建
-mvn clean package -pl ai-agent-scaffold-lite-app -am # 仅打包 app 模块
+mvn clean package -pl aether-app -am # 仅打包 app 模块
 ```
 
 ### 启动
 
 ```bash
 # 开发模式（直接运行 Spring Boot）
-mvn spring-boot:run -pl ai-agent-scaffold-lite-app
+mvn spring-boot:run -pl aether-app
 
 # 或运行打包好的 JAR
-java -jar ai-agent-scaffold-lite-app/target/ai-agent-scaffold-lite-app.jar
+java -jar aether-app/target/aether-app.jar
 ```
 
 ### 验证
@@ -352,13 +352,13 @@ curl -X POST http://localhost:8091/api/v1/chat_stream \
 ### Docker 部署
 
 ```bash
-cd ai-agent-scaffold-lite-app
+cd aether-app
 
 # 构建镜像
-docker build -t system/ai-agent-scaffold-lite-app:1.0 -f ./Dockerfile .
+docker build -t system/aether-app:1.0 -f ./Dockerfile .
 
 # 运行容器
-docker run -p 8091:8091 -e JAVA_OPTS="-Xms1G -Xmx1G" system/ai-agent-scaffold-lite-app:1.0
+docker run -p 8091:8091 -e JAVA_OPTS="-Xms1G -Xmx1G" system/aether-app:1.0
 ```
 
 Dockerfile 基于 `openjdk:17-jdk-slim`，通过 `$JAVA_OPTS` 和 `$PARAMS` 环境变量传递 JVM 参数和程序参数。
@@ -380,7 +380,7 @@ npm run dev          # Vite 开发服务器
 | POST | `/api/v1/chat` | 同步对话 |
 | POST | `/api/v1/chat_stream` | 流式对话（SSE） |
 
-统一响应格式（`cn.zcj.ai.api.response.Response<T>`）：
+统一响应格式（`cn.zcj.aether.api.response.Response<T>`）：
 
 ```json
 {
@@ -394,7 +394,7 @@ npm run dev          # Vite 开发服务器
 
 - Java: 4 空格缩进，Lombok（`@Data`/`@Builder`/`@Slf4j`/`@Getter`）替代手写样板
 - 日志: `@Slf4j` + `log.info()`；禁止 `System.out.println` 和手写 `LoggerFactory.getLogger`
-- REST 响应: `cn.zcj.ai.api.response.Response<T>` 统一包装
+- REST 响应: `cn.zcj.aether.api.response.Response<T>` 统一包装
 - 业务错误: `AppException(ResponseCode.XXX)` 抛出
 - JSON: domain 层使用 Jackson `ObjectMapper`，config 层可使用 FastJSON
 - 新建 DTO/枚举: 同目录必须包含 `package-info.java`

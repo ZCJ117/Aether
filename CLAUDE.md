@@ -16,22 +16,22 @@ YAML 配置驱动的多 Agent 编排，支持 MCP/Skills 工具集成和流式�
 
 ```bash
 mvn clean install                                    # 全量构建
-mvn clean compile -pl ai-agent-scaffold-lite-domain -am     # 仅编译 domain 模块
-mvn clean package -pl ai-agent-scaffold-lite-app -am        # 打包可执行 JAR
-mvn test -DskipTests=false -pl ai-agent-scaffold-lite-app   # 运行测试
-cd ai-agent-scaffold-lite-app && bash build.sh              # Docker 构建
+mvn clean compile -pl aether-domain -am     # 仅编译 domain 模块
+mvn clean package -pl aether-app -am        # 打包可执行 JAR
+mvn test -DskipTests=false -pl aether-app   # 运行测试
+cd aether-app && bash build.sh              # Docker 构建
 ```
 
 ## 模块结构（6 模块 + 1 前端）
 
 | 模块 | 职责 | 关键路径 |
 |---|---|---|
-| `ai-agent-scaffold-lite-app` | 启动引导、YAML 配置、HttpClientConfig | `src/main/resources/agent/*.yml` |
-| `ai-agent-scaffold-lite-api` | 服务接口、DTO | `cn.zcj.ai.api` |
-| `ai-agent-scaffold-lite-domain` | **核心**：Agent 运行时、编译器、上下文、工具、执行器、记忆 | `cn.zcj.ai.domain` |
-| `ai-agent-scaffold-lite-infrastructure` | 会话存储等基础设施适配器 | `cn.zcj.ai.infrastructure` |
-| `ai-agent-scaffold-lite-trigger` | REST 控制器 | `cn.zcj.ai.trigger.http` |
-| `ai-agent-scaffold-lite-types` | 枚举、异常、常量 | `cn.zcj.ai.types` |
+| `aether-app` | 启动引导、YAML 配置、HttpClientConfig | `src/main/resources/agent/*.yml` |
+| `aether-api` | 服务接口、DTO | `cn.zcj.aether.api` |
+| `aether-domain` | **核心**：Agent 运行时、编译器、上下文、工具、执行器、记忆 | `cn.zcj.aether.domain` |
+| `aether-infrastructure` | 会话存储等基础设施适配器 | `cn.zcj.aether.infrastructure` |
+| `aether-trigger` | REST 控制器 | `cn.zcj.aether.trigger.http` |
+| `aether-types` | 枚举、异常、常量 | `cn.zcj.aether.types` |
 | `docs/dev-ops/AIagent_frontend` | Vue 3 聊天前端 | `src/components/chat/`, `src/stores/chat.js` |
 
 ## Domain 核心包结构
@@ -137,7 +137,7 @@ while (turnCount < 100):
 
 - Java: 4 空格缩进，Lombok（`@Data`/`@Builder`/`@Slf4j`/`@Getter`）替代手写样板
 - 日志: `@Slf4j` + `log.info()`；禁止 `System.out.println` 和 `LoggerFactory.getLogger`
-- REST 响应: `cn.zcj.ai.api.response.Response<T>` 包装
+- REST 响应: `cn.zcj.aether.api.response.Response<T>` 包装
 - 业务错误: `AppException(ResponseCode.XXX)` 抛出
 - 新建 DTO/枚举: 同目录必须包含 `package-info.java`
 - JSON: Jackson `ObjectMapper`，禁止 domain 层使用 FastJSON
