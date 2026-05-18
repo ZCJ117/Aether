@@ -4,7 +4,7 @@
 
 ## 项目简介
 
-AI Agent Scaffold Lite 是一个面向企业级应用的 AI Agent 开发脚手架。项目采用 DDD 六边形架构设计，核心运行引擎为**自研 AgentRuntime**（替代 Google ADK），提供完整的 YAML 配置化智能体定义、多工作流编排、MCP/Skills 工具集成、流式对话和会话管理能力。
+AI Agent Scaffold Lite 是一个面向企业级应用的 AI Agent 开发脚手架。项目采用 DDD 六边形架构设计，核心运行引擎为**自研 AgentRuntime**，提供完整的 YAML 配置化智能体定义、多工作流编排、MCP/Skills 工具集成、流式对话和会话管理能力。
 
 ### 核心价值
 
@@ -15,14 +15,14 @@ AI Agent Scaffold Lite 是一个面向企业级应用的 AI Agent 开发脚手�
 
 ## 核心特性
 
-- **策略树装配链**：启动时自动将 YAML 配置"翻译"为可运行的 Agent 实例（RootNode → AiApiNode → ChatModelNode → AgentNode → AgentWorkflowNode → CompilerNode）
+- **策略树装配链**：启动时自动将 YAML 配置编译为可运行的 Agent 实例（RootNode → AiApiNode → ChatModelNode → AgentNode → AgentWorkflowNode → CompilerNode）
 - **AgentRuntime 主循环**：四阶段循环执行 — 上下文管理 → 模型调用 → 退出判断 → 工具执行，最大 100 轮
 - **三层上下文压缩**：`applyToolResultBudget`（超长工具输出截断）→ `microCompact`（冗余消息清理）→ `autoCompact`（token 超限时 LLM 摘要压缩）
 - **指数退避重试**：ModelInvoker 自动重试 3 次（1s → 2s → 4s），智能识别 Connection Reset / Timeout / 503 / 429 等可重试错误
 - **GraphExecutor 多 Agent 执行器**：SEQUENTIAL 模式串行推进 + `{outputKey}` 模板传递；PARALLEL 模式 CountDownLatch 并发控制 + 事件同步转发；LOOP 模式循环迭代 + 收敛检测
 - **MCP 工具工厂**：`DefaultMcpClientFactory` 按传输类型路由到 SSEToolMcpCreateService / StdioToolMcpCreateService / LocalToolMcpCreateService
 - **流式对话**：RxJava 3 Flowable + SSE，支持同步和流式两种 API
-- **记忆系统**：`.claude/memory/MEMORY.md` 读写，支持 `{memory}` 模板注入到 Agent 指令
+- **记忆系统**：自动探测项目根目录的 `memory/MEMORY.md` 读写，支持 `{memory}` 模板注入到 Agent 指令
 - **Vue 3 前端**：独立的聊天前端应用，支持 Pinia 状态管理和 Vite 构建
 
 ## 技术栈
@@ -39,10 +39,8 @@ AI Agent Scaffold Lite 是一个面向企业级应用的 AI Agent 开发脚手�
 | 缓存 | Guava | 32.1.3-jre |
 | JSON | Jackson (domain 层) / FastJSON 2.0.28 (config 层) | — |
 | 数据库 | MySQL + MyBatis + HikariCP | 8.0.28 / 3.0.4 |
-| ORM | MyBatis Spring Boot Starter | 3.0.4 |
 | 设计模式框架 | xfg-wrench-starter-design-framework | 3.0.0 |
-| 容器 | Docker (openjdk:17-jdk-slim) | — |
-| 前端 | Vue 3 + Pinia + Vite | — |
+| 前端 | Vue 3 + Pinia + Vue Router + Vite + Axios | — |
 
 ## 项目结构
 
@@ -51,34 +49,37 @@ aether/
 ├── pom.xml                              # 根 POM，管理 6 个子模块 + 全部依赖版本
 │
 ├── aether-api/          # ★ API 层：服务接口 + DTO
-│   └── src/main/java/cn/bugstack/ai/api/
+│   └── src/main/java/cn/zcj/aether/api/
 │       ├── IAgentService.java           # 对外服务接口定义
-│       ├── dto/                         # ChatRequestDTO, CreateSessionRequestDTO 等
+│       ├── dto/                         # ChatRequestDTO, ChatResponseDTO 等
 │       └── response/Response.java       # 统一响应包装类
 │
 ├── aether-app/          # ★ 启动引导 + 配置
 │   └── src/main/
-│       ├── java/cn/bugstack/ai/
+│       ├── java/cn/zcj/aether/
 │       │   ├── Application.java                      # Spring Boot 启动类
 │       │   └── config/
 │       │       ├── AiAgentAutoConfig.java             # ApplicationReadyEvent 监听器（装配入口）
 │       │       ├── ThreadPoolConfig.java              # 线程池配置
-│       │       ├── HttpClientConfig.java              # HTTP 客户端（连接超时 30s，读取超时 300s）
-│       │       └── GuavaConfig.java                   # Guava 缓存配置
+│       │       ├── ThreadPoolConfigProperties.java    # 线程池属性
+│       │       └── HttpClientConfig.java              # HTTP 客户端（连接超时 30s，读取超时 300s）
 │       └── resources/
 │           ├── application.yml                        # 激活 dev profile
-│           ├── application-dev.yml                    # 数据库、线程池、spring.config.import agent/*.yml
+│           ├── application-dev.yml                    # 数据库、线程池、spring.config.import agent/agents.yml
 │           └── agent/
-│               ├── only-one-agent.yml                 # ★ 单 Agent 最小配置模板
-│               ├── parallel_research_app.yml          # 并行研究 Agent 配置示例
-│               └── demo.yml                           # 基础演示配置
+│               ├── agents.yml                         # ★ 主要 Agent 配置
+│               ├── test-agent.yml                     # 测试 Agent + 串行工作流示例
+│               ├── demo.yml                           # 演示配置
+│               └── parallel_research_app.yml          # 并行研究 Agent 配置示例
 │
 ├── aether-domain/      # ★★★ 核心业务层（禁止反向依赖 trigger/infrastructure）
-│   └── src/main/java/cn/bugstack/ai/domain/agent/
+│   └── src/main/java/cn/zcj/aether/domain/agent/
 │       ├── model/
 │       │   ├── entity/                  # ChatCommandEntity, ArmoryCommandEntity
-│       │   ├── graph/                   # AgentGraph, AgentNodeDef, AgentEdge（IR 中间表示）
-│       │   └── valobj/                  # AiAgentConfigTableVO, AiAgentRegisterVO, 枚举
+│       │   ├── graph/                   # AgentGraph, AgentNodeDef, AgentEdge, AgentEdgeType（IR 中间表示）
+│       │   └── valobj/                  # AiAgentConfigTableVO, AiAgentRegisterVO
+│       │       ├── enums/               # AgentTypeEnum
+│       │       └── properties/          # AiAgentAutoConfigProperties
 │       └── service/
 │           ├── armory/                  # ★ 策略树装配链（YAML → Agent 运行实例）
 │           │   ├── IArmoryService.java  # 装配服务接口
@@ -88,7 +89,7 @@ aether/
 │           │   ├── factory/
 │           │   │   └── DefaultArmoryFactory.java  # 策略树工厂 + DynamicContext 上下文
 │           │   ├── node/                # ★ 策略树节点链
-│           │   │   ├── RootNode.java           # 根节点（路由入口，无业务逻辑）
+│           │   │   ├── RootNode.java           # 根节点（路由入口）
 │           │   │   ├── AiApiNode.java           # 构建 OpenAiApi（baseUrl + apiKey）
 │           │   │   ├── ChatModelNode.java        # ★ 核心节点：构建 ChatModel，注册 ToolCallback + ToolRegistry
 │           │   │   ├── AgentNode.java            # 收集 agent 名称列表
@@ -100,55 +101,58 @@ aether/
 │           │   │       └── SequentialAgentNode.java
 │           │   └── matter/
 │           │       ├── mcp/              # MCP 客户端工厂
-│           │       │   ├── client/
-│           │       │   │   ├── TooMcpCreateService.java          # MCP 工具创建接口
-│           │       │   │   ├── factory/DefaultMcpClientFactory.java  # 按类型路由工厂
-│           │       │   │   └── impl/
-│           │       │   │       ├── SSEToolMcpCreateService.java     # SSE MCP 客户端
-│           │       │   │       ├── StdioToolMcpCreateService.java   # Stdio MCP 客户端
-│           │       │   │       └── LocalToolMcpCreateService.java   # Local MCP 客户端
-│           │       │   └── server/MyTestMcpService.java  # MCP 服务端测试桩
-│           │       ├── skills/           # Skills 技能工具
-│           │       │   ├── ToolSkillsCreateService.java
-│           │       │   └── impl/DefaultToolSkillsCreateService.java
-│           │       └── plugin/           # 插件实现
-│           │           ├── MyLogPlugin.java
-│           │           └── MyTestPlugin.java
+│           │       │   └── client/
+│           │       │       ├── TooMcpCreateService.java          # MCP 工具创建接口
+│           │       │       ├── factory/DefaultMcpClientFactory.java  # 按类型路由工厂
+│           │       │       └── impl/
+│           │       │           ├── SSEToolMcpCreateService.java     # SSE MCP 客户端
+│           │       │           ├── StdioToolMcpCreateService.java   # Stdio MCP 客户端
+│           │       │           └── LocalToolMcpCreateService.java   # Local MCP 客户端
+│           │       └── skills/           # Skills 技能工具
+│           │           ├── ToolSkillsCreateService.java
+│           │           └── impl/DefaultToolSkillsCreateService.java
 │           ├── chat/ChatService.java     # ★ 对话入口：单/多 Agent 路由 + 记忆注入
 │           ├── compiler/AgentGraphCompiler.java  # YAML → AgentGraph IR 编译器
 │           ├── runtime/                  # ★ 运行时引擎
 │           │   ├── AgentRuntime.java     # 主循环（Phase 1-4），最大 100 轮
 │           │   ├── ModelInvoker.java     # LLM 调用 + 指数退避重试（3 次，1s→2s→4s）
-│           │   ├── RuntimeEvent.java     # 运行时事件类型（textDelta/toolCall/toolResult/compactBoundary/done/error）
+│           │   ├── RuntimeEvent.java     # 运行时事件类型
 │           │   └── TurnMessage.java      # 轮次消息封装（支持 tool_use 元数据保留）
-│           ├── context/ContextManager.java   # 三层上下文压缩
-│           ├── memory/MemoryStore.java       # 记忆系统（MEMORY.md 读写）
-│           ├── tool/                         # 工具系统
-│           │   ├── Tool.java                 # 工具接口定义
-│           │   ├── ToolRegistry.java         # 工具注册中心
-│           │   ├── ToolExecutor.java         # 工具执行器（safe 组并发 / unsafe 组串行）
-│           │   ├── McpToolAdapter.java       # MCP → Tool 适配器
-│           │   └── SkillsToolAdapter.java    # Skills → Tool 适配器
-│           └── executor/GraphExecutor.java   # ★ 多 Agent 图执行器
+│           ├── context/                  # 上下文管理
+│           │   ├── ContextManager.java   # 三层上下文压缩
+│           │   ├── TokenEstimator.java   # Token 估算
+│           │   └── AutoCompactResult.java # 压缩结果封装
+│           ├── memory/MemoryStore.java   # 记忆系统（MEMORY.md 读写）
+│           ├── tool/                     # 工具系统
+│           │   ├── Tool.java             # 工具接口定义
+│           │   ├── ToolRegistry.java     # 工具注册中心
+│           │   ├── ToolExecutor.java     # 工具执行器（safe 组并发 / unsafe 组串行）
+│           │   ├── ToolResult.java       # 工具执行结果
+│           │   ├── McpToolAdapter.java   # MCP → Tool 适配器
+│           │   └── SkillsToolAdapter.java # Skills → Tool 适配器
+│           └── executor/                 # 多 Agent 图执行器
+│               ├── GraphExecutor.java    # ★ SEQUENTIAL / PARALLEL / LOOP 执行
+│               └── ExecutionState.java   # 执行状态（模板解析 + 输出合并）
 │
-├── aether-infrastructure/  # 基础设施层（DAO / Redis / Gateway）
+├── aether-infrastructure/  # 基础设施层
+│   └── src/main/java/cn/zcj/aether/repository/
+│       └── SessionStore.java             # 会话持久化存储
 │
 ├── aether-trigger/         # HTTP 触发层
-│   └── src/main/java/cn/bugstack/ai/trigger/http/
-│       └── AgentServiceController.java     # ★ REST API 入口（/api/v1/chat, /api/v1/chat_stream 等）
+│   └── src/main/java/cn/zcj/aether/trigger/http/
+│       └── AgentServiceController.java   # ★ REST API 入口（/api/v1/chat, /api/v1/chat_stream 等）
 │
 ├── aether-types/           # 类型定义层
-│   └── src/main/java/cn/bugstack/ai/types/
-│       ├── common/Constants.java           # 全局常量
-│       ├── enums/ResponseCode.java         # 响应码枚举（SUCCESS/E0001/E0002 等）
-│       └── exception/AppException.java     # 业务异常
+│   └── src/main/java/cn/zcj/aether/types/
+│       ├── common/Constants.java         # 全局常量
+│       ├── enums/ResponseCode.java       # 响应码枚举（SUCCESS/UN_ERROR/E0001/E0002 等）
+│       └── exception/AppException.java   # 业务异常
 │
 └── docs/dev-ops/
-    ├── AIagent_frontend/                   # Vue 3 聊天前端
-    │   └── src/
-    │       ├── components/chat/            # 聊天组件
-    │       └── stores/chat.js              # Pinia 状态管理
-    └── docker-compose-environment.yml      # Docker 编排
+    └── AIagent_frontend/                 # Vue 3 聊天前端
+        └── src/
+            ├── components/chat/          # 聊天组件
+            └── stores/chat.js            # Pinia 状态管理
 ```
 
 ## 架构设计
@@ -223,24 +227,24 @@ POST /api/v1/chat → ChatService.handleMessage()
 
 ## Agent YAML 配置
 
-配置文件位于 `aether-app/src/main/resources/agent/*.yml`，通过 `application-dev.yml` 中的 `spring.config.import` 激活。
+配置文件位于 `aether-app/src/main/resources/agent/*.yml`，通过 `application-dev.yml` 中的 `spring.config.import` 激活（默认导入 `agent/agents.yml`）。
 
-### 最小配置模板（only-one-agent.yml）
+### 配置结构示例
 
 ```yaml
 ai:
   agent:
     config:
       tables:
-        testAgent03:
-          app-name: testAgent03
+        Agent01:
+          app-name: Agent01
           agent:
-            agent-id: 100003
-            agent-name: 单一智能体
-            agent-desc: 单一智能体
+            agent-id: 000001
+            agent-name: 旅游规划智能体
+            agent-desc: 这是一个旅游规划智能体
           module:
             ai-api:                          # ★ API 连接配置
-              base-url: https://api.example.com
+              base-url: https://api.deepseek.com
               api-key: sk-xxx
               completions-path: v1/chat/completions
             chat-model:                      # ★ 模型 + 工具配置
@@ -250,20 +254,17 @@ ai:
                     name: baidu-search
                     base-uri: http://...
                     sse-endpoint: sse?api_key=xxx
-                - local:                     # Local MCP（引用 Spring Bean）
-                    name: myToolCallbackProvider
+                    request-timeout: 5000
               tool-skills-list:              # Skills 技能列表
                 - type: resource
                   path: agent/skills
             agents:                          # ★ Agent 定义
-              - name: onlyAgent
+              - name: Agent01
                 description: Agent 描述
                 instruction: |
                   Agent 系统指令内容...
             runner:                          # ★ 运行器配置
-              agent-name: onlyAgent
-              plugin-name-list:
-                - myTestPlugin
+              agent-name: Agent01
 ```
 
 ### 多 Agent 工作流配置
@@ -272,8 +273,8 @@ ai:
 # 在 module 下添加 agent-workflows:
 agent-workflows:
   - type: sequential                      # 串行
-    name: research_pipeline
-    sub-agents: [researcher, writer]
+    name: CodePipelineAgent
+    sub-agents: [CodeWriterAgent, CodeReviewerAgent, CodeRefactorerAgent]
   - type: parallel                        # 并行
     name: parallel_translation
     sub-agents: [translator_en, translator_ja]
@@ -287,6 +288,7 @@ agent-workflows:
 - `agents[].outputKey` 用于跨 Agent 传递结果，下游通过 `{outputKey}` 模板引用
 - `tool-mcp-list` 支持三种传输模式：`sse` / `stdio` / `local`
 - `tool-skills-list` 支持两种来源：`resource`（类路径）/ `directory`（文件系统）
+- `runner.agent-name` 指向入口 Agent 或 workflow 名称
 
 ## 快速开始
 
@@ -295,7 +297,6 @@ agent-workflows:
 - JDK 17+
 - Maven 3.6+
 - MySQL 8.0+（可选，若有持久化需求）
-- Docker（可选，用于容器化部署）
 
 ### 安装与配置
 
@@ -309,14 +310,14 @@ cd aether
 #   - 配置数据库连接（如不需要可注释 datasource 相关配置）
 #   - 通过 spring.config.import 激活所需的 agent/*.yml 配置文件
 #
-# 编辑 aether-app/src/main/resources/agent/only-one-agent.yml：
+# 编辑 aether-app/src/main/resources/agent/agents.yml：
 #   - 配置 ai-api（base-url 和 api-key）
 #   - 配置 chat-model（model 名称）
 #   - 按需配置 tool-mcp-list 和 tool-skills-list
 
 # 3. 构建项目
 mvn clean install                                    # 全量构建
-mvn clean package -pl aether-app -am # 仅打包 app 模块
+mvn clean package -pl aether-app -am                 # 仅打包 app 模块
 ```
 
 ### 启动
@@ -336,32 +337,18 @@ java -jar aether-app/target/aether-app.jar
 curl http://localhost:8091/api/v1/query_ai_agent_config_list
 
 # 创建会话
-curl "http://localhost:8091/api/v1/create_session?agentId=100003&userId=testUser"
+curl "http://localhost:8091/api/v1/create_session?agentId=000001&userId=testUser"
 
 # 同步对话
 curl -X POST http://localhost:8091/api/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{"agentId":"100003","userId":"testUser","message":"你好，请介绍一下你的能力"}'
+  -d '{"agentId":"000001","userId":"testUser","message":"你好，请介绍一下你的能力"}'
 
 # 流式对话
 curl -X POST http://localhost:8091/api/v1/chat_stream \
   -H "Content-Type: application/json" \
-  -d '{"agentId":"100003","userId":"testUser","message":"请帮我写一段 Java Hello World"}'
+  -d '{"agentId":"000001","userId":"testUser","message":"请帮我写一段 Java Hello World"}'
 ```
-
-### Docker 部署
-
-```bash
-cd aether-app
-
-# 构建镜像
-docker build -t system/aether-app:1.0 -f ./Dockerfile .
-
-# 运行容器
-docker run -p 8091:8091 -e JAVA_OPTS="-Xms1G -Xmx1G" system/aether-app:1.0
-```
-
-Dockerfile 基于 `openjdk:17-jdk-slim`，通过 `$JAVA_OPTS` 和 `$PARAMS` 环境变量传递 JVM 参数和程序参数。
 
 ### 前端启动
 
@@ -386,9 +373,19 @@ npm run dev          # Vite 开发服务器
 {
   "code": "0000",
   "info": "成功",
-  "data": "..." 
+  "data": "..."
 }
 ```
+
+错误码：
+
+| 编码 | 含义 |
+|---|---|
+| `0000` | 成功 |
+| `0001` | 未知失败 |
+| `0002` | 非法参数 |
+| `E0001` | 智能体ID不存在 |
+| `E0002` | 智能体MCP配置不在可加载范围 |
 
 ## 代码规范
 
@@ -402,8 +399,8 @@ npm run dev          # Vite 开发服务器
 
 ## 关键约束
 
-- **ChatModel 延迟注入**：ChatModel 在 `ChatModelNode` 装配阶段动态注册，所有消费者必须使用 `@Lazy` 注解（见 `ChatService.java:58`）
-- **tool_result 消息格式**：必须转为 `ToolResponseMessage`（role: "tool" + tool_call_id），禁止转为 `UserMessage`，否则 API 返回 400（见 `AgentRuntime.java:206-209`）
+- **ChatModel 延迟注入**：ChatModel 在 `ChatModelNode` 装配阶段动态注册，所有消费者必须使用 `@Lazy` 注解（见 `ChatService.java:59`）
+- **tool_result 消息格式**：必须转为 `ToolResponseMessage`（role: "tool" + tool_call_id），禁止转为 `UserMessage`，否则 API 返回 400
 - **禁止硬编码密钥**：API key 等敏感信息仅允许放在 `application-dev.yml` 本地值中
 - **禁止未更新根 POM 前新增子模块**：新增 Maven 模块必须同步更新根 `pom.xml` 的 `<modules>` 声明
 - **禁止提交 `data/` 目录**
