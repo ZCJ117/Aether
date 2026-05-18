@@ -1,10 +1,10 @@
-# AI Agent Scaffold Lite
+# Aether: 企业级 AI Agent 架构
 
-企业级 AI Agent 脚手架 — 基于 Spring Boot 3.4.3 + 自研 AgentRuntime + DDD 分层架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成和流式对话。
+Aether ———— 企业级 AI Agent 架构  — 基于 Spring Boot 3.4.3 + 自研 AgentRuntime + DDD 分层架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成和流式对话。
 
 ## 项目简介
 
-AI Agent Scaffold Lite 是一个面向企业级应用的 AI Agent 开发脚手架。项目采用 DDD 六边形架构设计，核心运行引擎为**自研 AgentRuntime**，提供完整的 YAML 配置化智能体定义、多工作流编排、MCP/Skills 工具集成、流式对话和会话管理能力。
+Aether是一个面向企业级应用的 AI Agent 开发架构。项目采用 DDD 六边形架构设计，核心运行引擎为**自研 AgentRuntime**，提供完整的 YAML 配置化智能体定义、多工作流编排、MCP/Skills 工具集成、流式对话和会话管理能力。
 
 ### 核心价值
 
