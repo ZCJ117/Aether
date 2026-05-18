@@ -1,0 +1,6 @@
+spring:
+  config:
+    name: aether-app
+  profiles:
+#   NOTE 2.在项目启动时优先加载application.yml, 在第六行激活 dev 因此它会加载 application-dev.yml 作为补充配置
+    active: dev
