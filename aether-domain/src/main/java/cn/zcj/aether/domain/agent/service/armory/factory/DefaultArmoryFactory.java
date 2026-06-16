@@ -5,13 +5,14 @@ import cn.zcj.aether.domain.agent.model.valobj.AiAgentConfigTableVO;
 import cn.zcj.aether.domain.agent.model.valobj.AiAgentRegisterVO;
 import cn.zcj.aether.domain.agent.service.armory.AgentRegistry;
 import cn.zcj.aether.domain.agent.service.armory.node.RootNode;
+import cn.zcj.aether.domain.agent.service.model.ModelConfig;
+import cn.zcj.aether.domain.agent.service.model.ModelProvider;
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -50,9 +51,20 @@ public class DefaultArmoryFactory {
     @NoArgsConstructor
     public static class DynamicContext {
 
-        private OpenAiApi openAiApi;
-
+        /**
+         * P0-2 改造：ChatModel 现在由 ChatModelNode 创建并设置
+         */
         private ChatModel chatModel;
+
+        /**
+         * P0-2 新增：模型配置
+         */
+        private ModelConfig modelConfig;
+
+        /**
+         * P0-2 新增：解析后的 Provider
+         */
+        private ModelProvider modelProvider;
 
         /**
          * Agent 名称列表 (替代原 Google ADK BaseAgent agentGroup)

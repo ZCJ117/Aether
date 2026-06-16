@@ -151,20 +151,49 @@ public class AiAgentConfigTableVO {
             private String description;
             private String outputKey;
 
+            // P0-3 新增：独立模型配置（可选）
+            private AgentModelConfig model;
+
         }
 
         // 智能体工作流配置，定义智能体之间的调用关系和执行方式，例如循环、并行、顺序等。
         @Data
         public static class AgentWorkflow {
             /**
-             * 类型；loop、parallel、sequential
+             * 类型；loop、parallel、sequential、graphflow
              */
-            private String type; // 工作流类型，决定智能体的执行方式，例如 loop 表示循环执行，parallel 表示并行执行，sequential 表示顺序执行
+            private String type;
             private String name;
             private List<String> subAgents;
             private String description;
-            private Integer maxIterations = 3; // loop 类型的工作流的最大循环次数，防止死循环
+            private Integer maxIterations = 3;
 
+            // ====== P1-1 新增：GraphFlow 专用字段 ======
+
+            /** DAG 入口节点 ID */
+            private String entryPoint;
+
+            /** DAG 节点列表（声明所有参与节点） */
+            private List<GraphFlowNode> nodes;
+
+            /** DAG 边列表 */
+            private List<GraphFlowEdge> edges;
+
+            @Data
+            public static class GraphFlowNode {
+                private String id;
+                private String agent;  // 引用 agents[] 中定义的 Agent 名称
+            }
+
+            @Data
+            public static class GraphFlowEdge {
+                private String from;
+                private String to;
+                private String condition;
+                private String activation;
+                private String exitCondition;
+                private String description;
+            }
         }
 
         @Data

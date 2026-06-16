@@ -10,6 +10,7 @@ import cn.zcj.aether.types.enums.ResponseCode;
 import cn.zcj.aether.types.exception.AppException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
@@ -17,6 +18,7 @@ import javax.annotation.Resource;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -156,6 +158,10 @@ public class AgentServiceController implements IAgentService {
     @RequestMapping(value = "chat_stream", method = RequestMethod.POST)
     @Override
     public ResponseBodyEmitter chatStream(@RequestBody ChatRequestDTO requestDTO) {
+        // P0-6: 注入 correlationId 到 MDC
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        MDC.put("correlationId", correlationId);
+
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(3 * 60 * 1000L);
         try {
             log.info("流式对话 agentId:{} userId:{} sessionId:{} message:{}",

@@ -10,15 +10,18 @@ public enum AgentEdgeType {
 
     SEQUENTIAL,
     PARALLEL,
-    LOOP;
+    LOOP,
+    GRAPHFLOW;    // P1-1 新增：DAG 图流模式
 
     public static AgentEdgeType fromYamlType(String yamlType) {
-        return switch (yamlType) {
+        if (yamlType == null) return null;
+        return switch (yamlType.toLowerCase()) {
             case "sequential" -> SEQUENTIAL;
             case "parallel" -> PARALLEL;
             case "loop" -> LOOP;
+            case "graphflow" -> GRAPHFLOW;    // P1-1 新增
             default -> throw new AppException(ResponseCode.ILLEGAL_PARAMETER.getCode(),
-                    "Unknown workflow type: " + yamlType);
+                    "未知的工作流类型: " + yamlType);
         };
     }
 }

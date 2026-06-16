@@ -7,17 +7,25 @@ import cn.zcj.aether.domain.agent.model.valobj.AiAgentConfigTableVO;
 import cn.zcj.aether.domain.agent.model.valobj.AiAgentRegisterVO;
 import cn.zcj.aether.domain.agent.model.valobj.properties.AiAgentAutoConfigProperties;
 import cn.zcj.aether.domain.agent.service.IChatService;
+import cn.zcj.aether.domain.agent.service.agent.DefaultAgentFactory;
+import cn.zcj.aether.domain.agent.service.agent.core.Agent;
+import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
+import cn.zcj.aether.domain.agent.service.agent.core.AgentState;
+import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.armory.AgentRegistry;
+import cn.zcj.aether.domain.agent.service.session.SessionRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import cn.zcj.aether.domain.agent.service.executor.GraphExecutor;
+import cn.zcj.aether.domain.agent.service.memory.MemoryFacade;
+import cn.zcj.aether.domain.agent.service.memory.MemoryScope;
+import cn.zcj.aether.domain.agent.service.memory.MemorySearchResult;
 import cn.zcj.aether.domain.agent.service.memory.MemoryStore;
-import cn.zcj.aether.domain.agent.service.runtime.AgentRuntime;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.types.enums.ResponseCode;
 import cn.zcj.aether.types.exception.AppException;
 import io.reactivex.rxjava3.core.Flowable;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -40,24 +48,35 @@ public class ChatService implements IChatService {
     private AgentRegistry agentRegistry;
 
     @Resource
-    private AgentRuntime agentRuntime;
-
-    @Resource
     private GraphExecutor graphExecutor;
 
     @Resource
     private MemoryStore memoryStore;
 
+    /**
+     * P1-4 新增：多层记忆门面（优先使用语义搜索，回退文件存储）。
+     * required=false：未配置 EmbeddingModel/向量数据库时不影响启动。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private MemoryFacade memoryFacade;
+
     @Resource
     private AiAgentAutoConfigProperties aiAgentAutoConfigProperties;
 
     /**
-     * ChatModel — 从策略树装配阶段（ChatModelNode.doApply）动态注册
-     * @Lazy 延迟注入避免装配未完成时的初始化错误
+     * P0-1 新增：Agent 工厂，替代直接调用 AgentRuntime
      */
     @Resource
-    @org.springframework.context.annotation.Lazy
-    private ChatModel chatModel;
+    private DefaultAgentFactory agentFactory;
+
+    /**
+     * P0-4 新增：会话持久化仓储（用于会话恢复）。
+     * required=false：未配置数据源时不影响启动。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SessionRepository sessionRepository;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final Map<String, String> userSessions = new ConcurrentHashMap<>();
 
@@ -108,14 +127,11 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.E0001.getCode());
         }
 
-        // 加载记忆
-        String memoryPrompt = memoryStore.loadMemoryPrompt(message);
-
-        // 多Agent工作流 → GraphExecutor
+        // 多Agent工作流 → GraphExecutor（P0-1 改造：不再传 chatModel）
         if (graph.getEdges() != null && !graph.getEdges().isEmpty()) {
             log.info("路由到 GraphExecutor: edges={}", graph.getEdges().size());
             List<String> outputs = new ArrayList<>();
-            graphExecutor.execute(graph, chatModel, userId, sessionId, message)
+            graphExecutor.execute(graph, userId, sessionId, message)
                     .blockingForEach(event -> {
                         if (event.getType() == RuntimeEvent.EventType.textDelta
                                 && event.getText() != null) {
@@ -125,28 +141,35 @@ public class ChatService implements IChatService {
             return outputs;
         }
 
-        // 单Agent → AgentRuntime
+        // 单Agent → 通过 AgentFactory 创建 Agent 实例（P0-1 改造）
         AgentNodeDef entry = graph.getAgentDefs().get(graph.getEntryPoint());
         if (entry == null) {
             throw new AppException(ResponseCode.E0001.getCode(), "入口Agent未配置: " + graph.getEntryPoint());
         }
 
-        String instruction = injectMemory(entry.getInstruction(), memoryPrompt);
+        // P1-4: 记忆注入（优先 MemoryFacade 语义搜索，回退文件存储）
+        String instruction = injectMemory(entry.getInstruction(), message, entry.getName());
         log.info("Agent entry resolved: name={}, instructionLen={}, modelRef={}",
                 entry.getName(),
                 instruction != null ? instruction.length() : 0,
                 entry.getModelRef());
-        AgentNodeDef resolved = AgentNodeDef.builder()
+
+        // P0-1: 通过 AgentFactory 创建 Agent 实例
+        AgentConfig agentConfig = AgentConfig.builder()
                 .name(entry.getName())
                 .instruction(instruction)
                 .description(entry.getDescription())
                 .outputKey(entry.getOutputKey())
                 .toolNames(entry.getToolNames())
                 .modelRef(entry.getModelRef())
+                .agentType(entry.getAgentType() != null ? entry.getAgentType() : "react")
                 .build();
 
+        Agent agent = agentFactory.create(agentConfig);
+        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, null, null);
+
         List<String> outputs = new ArrayList<>();
-        agentRuntime.execute(resolved, chatModel, userId, sessionId, message)
+        agent.execute(ctx)
                 .blockingForEach(event -> {
                     if (event.getType() == RuntimeEvent.EventType.textDelta
                             && event.getText() != null) {
@@ -166,36 +189,60 @@ public class ChatService implements IChatService {
             return Flowable.error(new AppException(ResponseCode.E0001.getCode()));
         }
 
-        String memoryPrompt = memoryStore.loadMemoryPrompt(message);
+        // P1-4: 记忆注入（优先 MemoryFacade 语义搜索，回退文件存储）
 
-        // 多Agent工作流 → GraphExecutor
+        // 多Agent工作流 → GraphExecutor（P0-1 改造：不再传 chatModel）
         if (graph.getEdges() != null && !graph.getEdges().isEmpty()) {
             log.info("流式路由到 GraphExecutor: edges={}", graph.getEdges().size());
-            return graphExecutor.execute(graph, chatModel, userId, sessionId, message);
+            return graphExecutor.execute(graph, userId, sessionId, message);
         }
 
-        // 单Agent → AgentRuntime
+        // 单Agent → 通过 AgentFactory 创建 Agent 实例（P0-1 改造）
         AgentNodeDef entry = graph.getAgentDefs().get(graph.getEntryPoint());
         if (entry == null) {
             return Flowable.error(new AppException(ResponseCode.E0001.getCode(),
                     "入口Agent未配置: " + graph.getEntryPoint()));
         }
 
-        String instruction = injectMemory(entry.getInstruction(), memoryPrompt);
+        String instruction = injectMemory(entry.getInstruction(), message, entry.getName());
         log.info("Agent entry resolved (stream): name={}, instructionLen={}, modelRef={}",
                 entry.getName(),
                 instruction != null ? instruction.length() : 0,
                 entry.getModelRef());
-        AgentNodeDef resolved = AgentNodeDef.builder()
+
+        // P0-1: 通过 AgentFactory 创建 Agent 实例
+        AgentConfig agentConfig = AgentConfig.builder()
                 .name(entry.getName())
                 .instruction(instruction)
                 .description(entry.getDescription())
                 .outputKey(entry.getOutputKey())
                 .toolNames(entry.getToolNames())
                 .modelRef(entry.getModelRef())
+                .agentType(entry.getAgentType() != null ? entry.getAgentType() : "react")
                 .build();
 
-        return agentRuntime.execute(resolved, chatModel, userId, sessionId, message);
+        Agent agent = agentFactory.create(agentConfig);
+
+        // P0-4: 会话恢复 —— 加载已保存的状态（仅在 sessionRepository 可用时）
+        if (sessionRepository != null && sessionId != null) {
+            try {
+                var opt = sessionRepository.findBySessionId(sessionId);
+                if (opt.isPresent()) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> savedState = objectMapper.readValue(
+                            opt.get().getStateJson(), Map.class);
+                    agent.loadState(savedState);
+                    log.info("恢复会话: sessionId={}, turnCount={}",
+                            sessionId, savedState.getOrDefault("currentTurn", 0));
+                }
+            } catch (Exception e) {
+                log.warn("会话状态 JSON 解析失败，将作为新会话处理: sessionId={}", sessionId, e);
+            }
+        }
+
+        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, null, null);
+
+        return agent.execute(ctx);
     }
 
     @Override
@@ -209,7 +256,32 @@ public class ChatService implements IChatService {
                         : "");
     }
 
-    private String injectMemory(String instruction, String memoryPrompt) {
+    /**
+     * P1-4: 记忆注入（优先使用 MemoryFacade 语义搜索，回退文件存储关键词匹配）。
+     */
+    private String injectMemory(String instruction, String userMessage, String agentId) {
+        // P1-4: 优先使用 MemoryFacade 语义搜索
+        if (memoryFacade != null) {
+            MemoryScope scope = MemoryScope.global().subscope("agent").subscope(agentId);
+            List<MemorySearchResult> results = memoryFacade.search(userMessage, scope, 5);
+
+            if (!results.isEmpty()) {
+                StringBuilder memoryBlock = new StringBuilder("\n\n<auto-memory>\n");
+                memoryBlock.append("以下是与当前对话相关的历史记忆，请参考但不强制使用：\n\n");
+                for (int i = 0; i < results.size(); i++) {
+                    MemorySearchResult r = results.get(i);
+                    memoryBlock.append("记忆").append(i + 1).append(": ")
+                        .append(r.getRecord().getContent()).append("\n\n");
+                }
+                memoryBlock.append("</auto-memory>");
+
+                if (instruction == null) return memoryBlock.toString();
+                return instruction.replace("{memory}", memoryBlock.toString());
+            }
+        }
+
+        // 回退：文件存储关键词匹配
+        String memoryPrompt = memoryStore.loadMemoryPrompt(userMessage);
         if (memoryPrompt == null || memoryPrompt.isEmpty()) return instruction;
         if (instruction == null) return memoryPrompt;
         return instruction.replace("{memory}", memoryPrompt);

@@ -102,12 +102,34 @@
         <logger name="com.nmys.view" level="debug"/>
     </springProfile>
 
+    <!-- ====== P0-6: JSON 格式日志文件（结构化日志） ====== -->
+    <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/aether-agent.json</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/aether-agent.%d{yyyy-MM-dd}.json</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>agentId</includeMdcKeyName>
+            <includeMdcKeyName>sessionId</includeMdcKeyName>
+            <includeMdcKeyName>correlationId</includeMdcKeyName>
+            <includeMdcKeyName>userId</includeMdcKeyName>
+            <includeMdcKeyName>requestUri</includeMdcKeyName>
+            <includeMdcKeyName>requestMethod</includeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <!-- P0-6: Agent 领域日志级别 -->
+    <logger name="cn.zcj.aether.domain.agent" level="DEBUG"/>
+
     <root level="info">
         <appender-ref ref="CONSOLE"/>
         <!-- 异步日志-INFO -->
         <appender-ref ref="ASYNC_FILE_INFO"/>
         <!-- 异步日志-ERROR -->
         <appender-ref ref="ASYNC_FILE_ERROR"/>
+        <!-- P0-6: JSON 结构化日志 -->
+        <appender-ref ref="JSON_FILE"/>
     </root>
 
 </configuration>

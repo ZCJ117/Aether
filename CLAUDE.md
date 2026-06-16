@@ -1,7 +1,7 @@
 
-# AI Agent Scaffold Lite
+# Aether Agent 
 
-企业级 AI Agent 脚手架 — Spring Boot 3.4.3 + 自研 AgentRuntime + DDD 分层。
+企业级 AI Agent 架构 — Spring Boot 3.4.3 + 自研 AgentRuntime + DDD 分层。
 YAML 配置驱动的多 Agent 编排，支持 MCP/Skills 工具集成和流式对话。
 
 ## 技术栈
@@ -10,7 +10,6 @@ YAML 配置驱动的多 Agent 编排，支持 MCP/Skills 工具集成和流式�
 - **Agent 引擎**: 自研 AgentRuntime（主循环 + 多层上下文压缩 + 并发安全工具编排 + 指数退避重试）
 - **前端**: Vue 3 + Pinia + Vite（`docs/dev-ops/AIagent_frontend/`）
 - **依赖**: Lombok（必须）, RxJava3, Jackson, Guava, spring-ai-agent-utils (SkillsTool)
-- **容器**: Docker (openjdk:17-jdk-slim)
 
 ## 常用命令
 

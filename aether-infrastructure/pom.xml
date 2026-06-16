@@ -15,6 +15,18 @@
 <!--            <artifactId>mybatis-spring-boot-starter</artifactId>-->
 <!--        </dependency>-->
 
+        <!-- P0-4: Spring JDBC（MySqlSessionRepository 编译依赖，运行时需用户自行配置数据源） -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+        </dependency>
+
+        <!-- P1-4: PostgreSQL JDBC 驱动（PgvectorVectorStore 依赖） -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -29,6 +41,17 @@
 
     <build>
         <finalName>aether-infrastructure</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <compilerVersion>${java.version}</compilerVersion>
+                </configuration>
+            </plugin>
+        </plugins>
     </build>
 
 </project>

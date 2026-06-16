@@ -8,6 +8,9 @@ import cn.zcj.aether.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import cn.zcj.aether.domain.agent.service.armory.matter.mcp.client.TooMcpCreateService;
 import cn.zcj.aether.domain.agent.service.armory.matter.mcp.client.factory.DefaultMcpClientFactory;
 import cn.zcj.aether.domain.agent.service.armory.matter.skills.ToolSkillsCreateService;
+import cn.zcj.aether.domain.agent.service.model.ModelConfig;
+import cn.zcj.aether.domain.agent.service.model.ModelProvider;
+import cn.zcj.aether.domain.agent.service.model.ModelProviderRegistry;
 import cn.zcj.aether.domain.agent.service.tool.McpToolAdapter;
 import cn.zcj.aether.domain.agent.service.tool.SkillsToolAdapter;
 import cn.zcj.aether.domain.agent.service.tool.Tool;
@@ -50,28 +53,15 @@ public class ChatModelNode extends AbstractArmorySupport {
     @Resource
     private SkillsToolAdapter skillsToolAdapter;
 
+    @Resource
+    private ModelProviderRegistry modelProviderRegistry;  // P0-2 新增
+
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         log.info("Ai Agent 装配操作 - ChatModelNode");
 
-        // 这个ChatModel的构建参考app模块中的测试类SpringAiToolTest
-//        ChatModel chatModel = OpenAiChatModel.builder()
-//                .openAiApi(openAiApi)
-//                .defaultOptions(OpenAiChatOptions.builder()
-//                        .model("deepseek-chat")              // 使用 deepseek-chat 模型
-//                        .toolCallbacks(SyncMcpToolCallbackProvider.builder()
-//                                .mcpClients(sseMcpClient(baiduMcpApiKey)) // 注入 MCP 工具
-//                                .build()
-//                                .getToolCallbacks())
-//                        .build())
-//                .build();
-
-        //获取上下文对象,读取openAiApi,在下面传递给ChatModel
-        OpenAiApi openAiApi = dynamicContext.getOpenAiApi();
-
         // 获取配置对象
         AiAgentConfigTableVO aiAgentConfigTableVO = requestParameter.getAiAgentConfigTableVO();
-        //NOTE 读取ChatModel
         AiAgentConfigTableVO.Module.ChatModel chatModelConfig = aiAgentConfigTableVO.getModule().getChatModel();
         List<AiAgentConfigTableVO.Module.ChatModel.ToolMcp> toolMcpList = chatModelConfig.getToolMcpList();
         List<AiAgentConfigTableVO.Module.ChatModel.ToolSkills> toolSkillsList = chatModelConfig.getToolSkillsList();
@@ -80,7 +70,6 @@ public class ChatModelNode extends AbstractArmorySupport {
         List<ToolCallback> toolCallbackList = new ArrayList<>();
 
         if (null != toolMcpList && !toolMcpList.isEmpty()) {
-            // NOTE 遍历toolMcpList: SSE->SSEToolMcpCreateService.buildToolCallback()║Local → LocalToolMcpCreateService
             for (AiAgentConfigTableVO.Module.ChatModel.ToolMcp toolMcp : toolMcpList) {
                 TooMcpCreateService tooMcpCreateService = defaultMcpClientFactory.getTooMcpCreateService(toolMcp);
                 ToolCallback[] toolCallbacks = tooMcpCreateService.buildToolCallback(toolMcp);
@@ -90,34 +79,74 @@ public class ChatModelNode extends AbstractArmorySupport {
 
         // 构建skills服务
         if (null != toolSkillsList && !toolSkillsList.isEmpty()) {
-            //NOTE 遍历toolSkillsList: 调用ToolSkillsCreateService.buildToolCallback()方法构建工具回调
             for (AiAgentConfigTableVO.Module.ChatModel.ToolSkills toolSkills : toolSkillsList) {
                 ToolCallback[] toolCallbacks = toolSkillsCreateService.buildToolCallback(toolSkills);
                 toolCallbackList.addAll(List.of(toolCallbacks));
             }
         }
 
-        // 构建对话模型
-        ChatModel chatModel = OpenAiChatModel.builder()
-                .openAiApi(openAiApi)
-                .defaultOptions(OpenAiChatOptions.builder()
-                        .model(chatModelConfig.getModel())
-                        .toolCallbacks(toolCallbackList)
-                        .build())
-                .build();
+        // P0-2 改造：通过 ModelProvider 创建 ChatModel（自动处理 toolCallbacks）
+        ModelProvider provider = dynamicContext.getModelProvider();
+        ModelConfig modelConfig = dynamicContext.getModelConfig();
+        ChatModel chatModel = provider.createChatModelWithTools(modelConfig, toolCallbackList);
 
         dynamicContext.setChatModel(chatModel);
 
         // 注册工具到 ToolRegistry（AgentRuntime → ToolExecutor 调用链路）
         registerToolsToRegistry(toolMcpList, toolSkillsList);
 
-        // 校验工具定义就绪 — MCP SSE 初始化可能尚未完全返回工具 schema
+        // 校验工具定义就绪
         validateToolDefinitions(toolCallbackList);
 
-        // 注册为 Spring Bean，供 ChatService / ContextManager / AgentRuntime 注入使用
+        // 注册全局默认 ChatModel Bean
         registerBean("chatModel", ChatModel.class, chatModel);
 
+        // P0-3: 为配置了独立模型的 Agent 创建独立 ChatModel Bean
+        List<AiAgentConfigTableVO.Module.Agent> agents = aiAgentConfigTableVO.getModule().getAgents();
+        if (agents != null) {
+            for (var agent : agents) {
+                if (agent.getModel() != null) {
+                    registerPerAgentChatModel(agent, dynamicContext, toolCallbackList);
+                }
+            }
+        }
+
         return router(requestParameter, dynamicContext);
+    }
+
+    /**
+     * P0-3 新增：为配置了独立模型的 Agent 创建独立的 ChatModel Bean。
+     */
+    private void registerPerAgentChatModel(
+            AiAgentConfigTableVO.Module.Agent agent,
+            DefaultArmoryFactory.DynamicContext dynamicContext,
+            List<ToolCallback> toolCallbacks) {
+
+        String modelId = agent.getModel().getModelId();
+        String baseUrl = agent.getModel().getBaseUrl();
+        String apiKey = agent.getModel().getApiKey();
+
+        // 回退到全局配置
+        ModelConfig globalConfig = dynamicContext.getModelConfig();
+        if (baseUrl == null) baseUrl = globalConfig.getBaseUrl();
+        if (apiKey == null) apiKey = globalConfig.getApiKey();
+
+        ModelConfig agentModelConfig = ModelConfig.builder()
+                .modelId(modelId)
+                .baseUrl(baseUrl)
+                .apiKey(apiKey)
+                .completionsPath(globalConfig.getCompletionsPath())
+                .embeddingsPath(globalConfig.getEmbeddingsPath())
+                .build();
+
+        ModelProvider provider = modelProviderRegistry.resolve(modelId);
+        ChatModel agentChatModel = provider.createChatModelWithTools(agentModelConfig, toolCallbacks);
+
+        String beanName = "chatModel-" + agent.getName();
+        registerBean(beanName, ChatModel.class, agentChatModel);
+
+        log.info("为 Agent [{}] 注册独立 ChatModel Bean: beanName={}, modelId={}, provider={}",
+                agent.getName(), beanName, modelId, provider.providerName());
     }
 
     /**

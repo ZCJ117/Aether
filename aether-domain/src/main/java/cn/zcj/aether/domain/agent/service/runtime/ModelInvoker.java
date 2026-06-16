@@ -169,7 +169,7 @@ public class ModelInvoker {
      * 400 → 重试（非标准 API 瞬时错误）
      * 401 / 403 / 404 → 不重试
      */
-    private boolean isRetryable(Exception e) {
+    boolean isRetryable(Exception e) {
         String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
 
         // IO/网络层错误 → 重试
@@ -207,7 +207,7 @@ public class ModelInvoker {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> parseArguments(String argumentsJson) {
+    Map<String, Object> parseArguments(String argumentsJson) {
         if (argumentsJson == null || argumentsJson.isBlank()) {
             return Map.of();
         }
@@ -228,8 +228,21 @@ public class ModelInvoker {
         private List<ToolCallDef> toolCalls;
         private String error;
 
+        // ====== P1-3 新增：Token 使用量字段 ======
+        /** 输入 token 数 */
+        private int inputTokens;
+        /** 输出 token 数 */
+        private int outputTokens;
+        /** 缓存命中的 token 数 */
+        private int cacheTokens;
+        /** 成本（美元），估算值 */
+        private double costUsd;
+
         public boolean hasError() { return error != null; }
         public boolean hasToolCalls() { return toolCalls != null && !toolCalls.isEmpty(); }
+
+        /** 总 token 数 */
+        public int totalTokens() { return inputTokens + outputTokens; }
 
         public static ModelCallResult error(String err) {
             return ModelCallResult.builder().error(err).build();

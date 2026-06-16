@@ -1,0 +1,120 @@
+package cn.zcj.aether.domain.agent.service.event;
+
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * Agent 领域事件基类 — P0-6 新增。
+ * 灵感来源：AgentScope v2 28 种事件类型 + CrewAI Event Bus。
+ * 使用 Jackson 多态序列化，支持事件溯源和审计。
+ */
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "eventType")
+@JsonSubTypes({
+    @JsonSubTypes.Type(value = AgentEvent.AgentStarted.class, name = "agent.started"),
+    @JsonSubTypes.Type(value = AgentEvent.AgentCompleted.class, name = "agent.completed"),
+    @JsonSubTypes.Type(value = AgentEvent.TurnStarted.class, name = "turn.started"),
+    @JsonSubTypes.Type(value = AgentEvent.TurnCompleted.class, name = "turn.completed"),
+    @JsonSubTypes.Type(value = AgentEvent.ModelCallStarted.class, name = "model.call.started"),
+    @JsonSubTypes.Type(value = AgentEvent.ModelCallCompleted.class, name = "model.call.completed"),
+    @JsonSubTypes.Type(value = AgentEvent.ToolCallStarted.class, name = "tool.call.started"),
+    @JsonSubTypes.Type(value = AgentEvent.ToolCallCompleted.class, name = "tool.call.completed"),
+    @JsonSubTypes.Type(value = AgentEvent.CompactTriggered.class, name = "compact.triggered"),
+    @JsonSubTypes.Type(value = AgentEvent.ErrorOccurred.class, name = "error.occurred"),
+})
+public interface AgentEvent {
+
+    String eventId();
+    Instant timestamp();
+    String agentId();
+    String sessionId();
+    String correlationId();
+
+    // ====== 10 种事件类型 ======
+
+    record AgentStarted(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId,
+        String agentType, String modelRef
+    ) implements AgentEvent {
+        public AgentStarted(String agentId, String sessionId, String correlationId,
+                            String agentType, String modelRef) {
+            this(UUID.randomUUID().toString(), Instant.now(),
+                 agentId, sessionId, correlationId, agentType, modelRef);
+        }
+    }
+
+    record AgentCompleted(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId,
+        int totalTurns, long durationMs, String status
+    ) implements AgentEvent {}
+
+    record TurnStarted(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId, int turnNumber
+    ) implements AgentEvent {
+        public TurnStarted(String agentId, String sessionId,
+                           String correlationId, int turnNumber) {
+            this(UUID.randomUUID().toString(), Instant.now(),
+                 agentId, sessionId, correlationId, turnNumber);
+        }
+    }
+
+    record TurnCompleted(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId, int turnNumber,
+        boolean hasToolCalls, int toolCallCount, long durationMs
+    ) implements AgentEvent {}
+
+    record ModelCallStarted(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId,
+        String modelName, int messageCount
+    ) implements AgentEvent {}
+
+    record ModelCallCompleted(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId,
+        String modelName, long durationMs,
+        int inputTokens, int outputTokens, double costUsd
+    ) implements AgentEvent {}
+
+    record ToolCallStarted(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId,
+        String toolName, String toolCallId
+    ) implements AgentEvent {
+        public ToolCallStarted(String agentId, String sessionId,
+                               String correlationId, String toolName, String toolCallId) {
+            this(UUID.randomUUID().toString(), Instant.now(),
+                 agentId, sessionId, correlationId, toolName, toolCallId);
+        }
+    }
+
+    record ToolCallCompleted(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId,
+        String toolName, String toolCallId,
+        boolean success, long durationMs
+    ) implements AgentEvent {}
+
+    record CompactTriggered(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId,
+        int beforeTokens, int afterTokens, int messagesCompacted
+    ) implements AgentEvent {}
+
+    record ErrorOccurred(
+        String eventId, Instant timestamp, String agentId,
+        String sessionId, String correlationId,
+        String errorType, String errorMessage, int turnNumber
+    ) implements AgentEvent {
+        public ErrorOccurred(String agentId, String sessionId, String correlationId,
+                            String errorType, String errorMessage, int turnNumber) {
+            this(UUID.randomUUID().toString(), Instant.now(),
+                 agentId, sessionId, correlationId, errorType, errorMessage, turnNumber);
+        }
+    }
+}

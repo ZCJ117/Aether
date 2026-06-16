@@ -44,3 +44,26 @@ logging:
   level:
     root: info
   config: classpath:logback-spring.xml
+
+# ====== P1-3: 可观测性配置 ======
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: aether-agent
+
+# OpenTelemetry
+otel:
+  traces:
+    exporter: otlp
+  exporter:
+    otlp:
+      endpoint: http://localhost:4317
+  service:
+    name: aether-agent

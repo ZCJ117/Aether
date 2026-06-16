@@ -65,8 +65,14 @@ public class AgentGraphCompiler {
         }
 
         for (AiAgentConfigTableVO.Module.Agent agentConfig : agents) {
-            String modelRef = module.getChatModel() != null
-                    ? module.getChatModel().getModel() : null;
+            // P0-3: Per-Agent 模型优先，回退全局
+            String modelRef;
+            if (agentConfig.getModel() != null && agentConfig.getModel().getModelId() != null) {
+                modelRef = agentConfig.getModel().getModelId();
+            } else {
+                modelRef = module.getChatModel() != null
+                        ? module.getChatModel().getModel() : null;
+            }
             log.info("Agent [{}] 指令已解析: instructionLen={}, modelRef={}",
                     agentConfig.getName(),
                     agentConfig.getInstruction() != null ? agentConfig.getInstruction().length() : 0,
@@ -78,6 +84,7 @@ public class AgentGraphCompiler {
                     .outputKey(agentConfig.getOutputKey())
                     .toolNames(List.of())
                     .modelRef(modelRef)
+                    .agentType("react")
                     .build();
             defs.put(agentConfig.getName(), def);
         }
@@ -94,16 +101,37 @@ public class AgentGraphCompiler {
 
         List<AgentEdge> edges = new ArrayList<>();
         for (AiAgentConfigTableVO.Module.AgentWorkflow wf : workflows) {
-            AgentEdge edge = AgentEdge.builder()
-                    .workflowName(wf.getName())
-                    .type(AgentEdgeType.fromYamlType(wf.getType()))
-                    .subAgents(wf.getSubAgents() != null
-                            ? new ArrayList<>(wf.getSubAgents()) : List.of())
-                    .description(wf.getDescription())
-                    .maxIterations(wf.getMaxIterations() != null
-                            ? wf.getMaxIterations() : 3)
-                    .build();
-            edges.add(edge);
+            AgentEdgeType type = AgentEdgeType.fromYamlType(wf.getType());
+
+            if (type == AgentEdgeType.GRAPHFLOW) {
+                // P1-1: GraphFlow 模式 — 编译 nodes + edges 列表
+                if (wf.getEdges() != null) {
+                    List<AgentEdge> flowEdges = wf.getEdges().stream()
+                        .map(yamlEdge -> AgentEdge.builder()
+                            .type(AgentEdgeType.GRAPHFLOW)
+                            .from(yamlEdge.getFrom())
+                            .to(yamlEdge.getTo())
+                            .condition(yamlEdge.getCondition())
+                            .activation(yamlEdge.getActivation())
+                            .exitCondition(yamlEdge.getExitCondition())
+                            .description(yamlEdge.getDescription())
+                            .build())
+                        .toList();
+                    edges.addAll(flowEdges);
+                }
+            } else {
+                // 旧模式（SEQUENTIAL/PARALLEL/LOOP）：保持不变
+                AgentEdge edge = AgentEdge.builder()
+                        .workflowName(wf.getName())
+                        .type(type)
+                        .subAgents(wf.getSubAgents() != null
+                                ? new ArrayList<>(wf.getSubAgents()) : List.of())
+                        .description(wf.getDescription())
+                        .maxIterations(wf.getMaxIterations() != null
+                                ? wf.getMaxIterations() : 3)
+                        .build();
+                edges.add(edge);
+            }
         }
 
         return edges;

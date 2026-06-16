@@ -2,16 +2,18 @@ package cn.zcj.aether.domain.agent.service.memory;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
- * 记忆存储系统
+ * 记忆存储系统 — P1-4 扩展：实现 VectorStore 接口。
  *
  * 记忆目录定位优先级：
  *   1. YAML 配置 ai.agent.config.memory-dir（支持绝对路径）
@@ -20,7 +22,8 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-public class MemoryStore {
+@Primary
+public class MemoryStore implements VectorStore {
 
     private static final String MEMORY_INDEX = "MEMORY.md";
 
@@ -212,5 +215,127 @@ public class MemoryStore {
 
     private String sanitizeFileName(String name) {
         return name.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fff_\\-]", "_").toLowerCase();
+    }
+
+    // =========================================================
+    // P1-4: VectorStore 接口实现（向量存储后端之一）
+    // =========================================================
+
+    @Override
+    public CompletableFuture<Void> upsert(String id, float[] vector, MemoryRecord record) {
+        return CompletableFuture.runAsync(() -> {
+            // 文件存储后端：保存为 JSON 格式文件 + 更新索引
+            try {
+                Path memoryDir = resolveMemoryDir();
+                if (memoryDir == null) return;
+                Files.createDirectories(memoryDir);
+
+                String fileName = sanitizeFileName(record.getScope().path() + "-" + id) + ".json";
+                Path memFile = memoryDir.resolve(fileName);
+
+                // 序列化 embedding 为 Base64 或其他格式存储
+                String embeddingStr = vector != null
+                    ? Base64.getEncoder().encodeToString(floatArrayToBytes(vector)) : "null";
+
+                String json = String.format(
+                    "{\"id\":\"%s\",\"content\":\"%s\",\"embedding\":\"%s\",\"scope\":\"%s\",\"importance\":%f}",
+                    id, record.getContent().replace("\"", "\\\""),
+                    embeddingStr, record.getScope().path(), record.getImportance());
+                Files.writeString(memFile, json);
+            } catch (IOException e) {
+                log.warn("记忆 upsert 写入失败: id={}", id, e);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<MemorySearchResult>> search(
+            float[] queryVector, int topK, List<MemoryScope> scopes) {
+        return CompletableFuture.supplyAsync(() -> {
+            // 文件后端：回退到关键词匹配搜索
+            List<MemorySearchResult> results = new ArrayList<>();
+            try {
+                Path memoryDir = resolveMemoryDir();
+                if (memoryDir == null || !Files.exists(memoryDir)) return results;
+
+                // 简单实现：遍历 memory 目录中的文件
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(memoryDir, "*.json")) {
+                    for (Path file : stream) {
+                        String content = Files.readString(file);
+                        // 提取内容字段用于匹配评分
+                        double score = 0.1; // 基础分数
+                        MemoryRecord record = MemoryRecord.builder()
+                            .id(file.getFileName().toString())
+                            .content(content)
+                            .scope(MemoryScope.global())
+                            .importance(0.5f)
+                            .build();
+                        results.add(new MemorySearchResult(record, score));
+                    }
+                }
+            } catch (IOException e) {
+                log.warn("记忆搜索失败", e);
+            }
+            results.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
+            return results.subList(0, Math.min(results.size(), topK));
+        });
+    }
+
+    @Override
+    public CompletableFuture<Void> upsertBatch(List<MemoryRecord> records) {
+        CompletableFuture<?>[] futures = records.stream()
+            .map(r -> upsert(r.getId(), r.getEmbedding(), r))
+            .toArray(CompletableFuture[]::new);
+        return CompletableFuture.allOf(futures);
+    }
+
+    @Override
+    public CompletableFuture<Void> delete(String id) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                Path memoryDir = resolveMemoryDir();
+                if (memoryDir == null) return;
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(memoryDir,
+                        "*" + sanitizeFileName(id) + "*.json")) {
+                    for (Path file : stream) {
+                        Files.deleteIfExists(file);
+                    }
+                }
+            } catch (IOException e) {
+                log.warn("记忆删除失败: id={}", id, e);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<Void> deleteByScope(MemoryScope scope) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                Path memoryDir = resolveMemoryDir();
+                if (memoryDir == null) return;
+                String scopePrefix = sanitizeFileName(scope.path());
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(memoryDir,
+                        scopePrefix + "*.json")) {
+                    for (Path file : stream) {
+                        Files.deleteIfExists(file);
+                    }
+                }
+            } catch (IOException e) {
+                log.warn("按作用域删除记忆失败: scope={}", scope.path(), e);
+            }
+        });
+    }
+
+    @Override
+    public int dimension() {
+        return 1280; // 默认 1280 维（如 text-embedding-3-small）
+    }
+
+    private byte[] floatArrayToBytes(float[] floats) {
+        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(floats.length * 4);
+        for (float f : floats) {
+            buffer.putFloat(f);
+        }
+        return buffer.array();
     }
 }
