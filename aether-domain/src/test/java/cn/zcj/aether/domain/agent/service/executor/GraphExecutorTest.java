@@ -112,10 +112,9 @@ class GraphExecutorTest {
     }
 
     @Test
-    void agentEdgeTypeShouldThrowForNull() {
-        // null 输入导致 switch 匹配 default → 抛出 AppException
-        assertThrows(RuntimeException.class,
-                () -> AgentEdgeType.fromYamlType(null));
+    void agentEdgeTypeShouldReturnNullForNull() {
+        // P1-1 后：null 输入直接返回 null（不再走 switch default）
+        assertNull(AgentEdgeType.fromYamlType(null));
     }
 
     @Test

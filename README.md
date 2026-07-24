@@ -2,37 +2,11 @@
 
 Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
 
-> **优化版本**: 已完成 P0（基础架构）+ P1（进阶能力）共 12 项优化，累计新增 55+ 源文件、9 个测试文件。设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架。
+设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架，累计 55+ 源文件、9 个测试类。
 
 ---
 
-## 一、优化总览
-
-### P0 基建层（6 项）— 已全部完成
-
-| # | 优化项 | 解决的问题 | 参考项目 |
-|---|--------|-----------|---------|
-| P0-1 | **Agent 接口抽象** | AgentNodeDef 纯数据 POJO，逻辑硬编码在 AgentRuntime | AutoGen ChatAgent 协议 + AgentScope Agent 接口 + CrewAI BaseAgent |
-| P0-2 | **模型提供商抽象** | AiApiNode 硬编码 `new OpenAiApi()`，非 OpenAI 协议无法接入 | CrewAI BaseLLM + AgentScope Model SPI + AutoGen model_client |
-| P0-3 | **Per-Agent 多模型** | 全局单例 ChatModel Bean，所有 Agent 共享同一模型 | AutoGen AssistantAgent + MetaGPT RoleContext + CrewAI YAML 声明式 |
-| P0-4 | **对话持久化** | ConcurrentHashMap 纯内存，重启丢失，无 TTL 淘汰 | AgentScope AgentStateStore + CrewAI CheckpointConfig |
-| P0-5 | **测试基础设施** | 零测试文件，无法安全重构 | JUnit 5 + Mockito（9 个测试类） |
-| P0-6 | **结构化日志** | printf 风格日志，无 TraceId/结构化字段/事件溯源 | AgentScope 28 种 AgentEvent + CrewAI Event Bus + cc-haha cost-tracker |
-
-### P1 能力层（6 项）— 已全部完成
-
-| # | 优化项 | 解决的问题 | 参考项目 |
-|---|--------|-----------|---------|
-| P1-1 | **GraphFlow DAG 执行器** | 仅支持 SEQ/PAR/LOOP 三种固定模式，无条件分支/fan-in | AutoGen DiGraph + GraphFlowManager |
-| P1-2 | **洋葱中间件系统** | 执行链路无拦截点，限流/权限等功能只能改核心代码 | AgentScope MiddlewareBase + Koa/Express 中间件模式 |
-| P1-3 | **可观测性 v1** | Agent 执行是黑盒，无 Span/Metric/Token 成本核算 | AgentScope AgentTracer + AutoGen OTel + cc-haha cost-tracker |
-| P1-4 | **多层记忆系统** | 文件系统扁平记忆 + 子串关键词匹配，无语义搜索 | CrewAI UnifiedMemory + RecallFlow + MetaGPT LongTermMemory |
-| P1-5 | **权限引擎** | Tool.checkPermissions() 空实现（return true），无访问控制 | AgentScope PermissionEngine + cc-haha PermissionMode |
-| P1-6 | **Agent Hook 完善** | P0-1 只有 3 个钩子，模型/工具调用前后无法拦截 | AgentScope Hook 系统 + cc-haha hooks/ 模块 |
-
----
-
-## 二、核心特性
+## 一、核心特性
 
 ### 2.1 Agent 引擎与编排
 
@@ -112,7 +86,7 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 
 ---
 
-## 三、技术栈
+## 二、技术栈
 
 | 类别 | 技术 | 版本 |
 |---|---|---|
@@ -135,7 +109,7 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 
 ---
 
-## 四、项目结构
+## 三、项目结构
 
 ```
 aether/
@@ -159,7 +133,7 @@ aether/
 │       └── resources/
 │           ├── application.yml                        # 激活 dev profile
 │           ├── application-dev.yml                    # 数据库、线程池、OTel、Prometheus 配置
-│           ├── logback-spring.xml                     # JSON 日志 Appender（P0-6 新增）
+│           ├── logback-spring.xml                     # JSON 日志 Appender
 │           └── agent/
 │               ├── agents.yml                         # ★ 主要 Agent 配置
 │               ├── test-agent.yml                     # 测试 Agent + 串行工作流示例
@@ -183,38 +157,38 @@ aether/
 │           │   ├── factory/DefaultArmoryFactory.java  # DynamicContext 含 ModelConfig/Provider
 │           │   ├── node/                # 策略树节点链
 │           │   │   ├── RootNode.java
-│           │   │   ├── AiApiNode.java           # P0-2 改造：调用 ModelProviderRegistry
-│           │   │   ├── ChatModelNode.java        # P0-3 改造：支持 Per-Agent ChatModel Bean
+│           │   │   ├── AiApiNode.java           # 调用 ModelProviderRegistry
+│           │   │   ├── ChatModelNode.java        # 支持 Per-Agent ChatModel Bean
 │           │   │   ├── AgentNode.java
-│           │   │   ├── AgentWorkflowNode.java    # P1-1 改造：支持 GRAPHFLOW 类型
+│           │   │   ├── AgentWorkflowNode.java    # 支持 GRAPHFLOW 类型
 │           │   │   ├── CompilerNode.java
 │           │   │   └── workflow/                 # LoopAgentNode / ParallelAgentNode / SequentialAgentNode
 │           │   └── matter/
 │           │       ├── mcp/              # MCP 客户端工厂（SSE / Stdio / Local）
 │           │       └── skills/           # Skills 技能工具
 │           │
-│           ├── agent/                    # ★ P0-1 核心：Agent 接口体系
+│           ├── agent/                    # ★ Agent 接口体系
 │           │   ├── core/                 # Agent, BaseAgent, AgentConfig, AgentState, RuntimeContext, AgentResult
-│           │   ├── impl/ReActAgent.java  # 标准 Think-Act-Observe 循环（P1-2/P1-6 集成）
+│           │   ├── impl/ReActAgent.java  # 标准 Think-Act-Observe 循环
 │           │   ├── hook/                 # AgentHook, HookRegistry, CompositeHook,
-│           │   │   │                     # LoggingHook (P0-6), SessionPersistenceHook (P0-4)
-│           │   ├── middleware/           # P1-2: AgentMiddleware, MiddlewareChain
+│           │   │   │                     # LoggingHook, SessionPersistenceHook
+│           │   ├── middleware/           # AgentMiddleware, MiddlewareChain
 │           │   │   └── impl/             # RateLimitMiddleware, GracefulShutdownMiddleware, PermissionMiddleware
-│           │   ├── permission/           # P1-5: PermissionMode, PermissionDecision, PermissionContext,
+│           │   ├── permission/           # PermissionMode, PermissionDecision, PermissionContext,
 │           │   │                         # PermissionRule, PermissionEngine
-│           │   └── observability/        # P1-3: AgentTracer, AgentMetrics, TokenUsage
+│           │   └── observability/        # AgentTracer, AgentMetrics, TokenUsage
 │           │
-│           ├── model/                    # ★ P0-2: 模型提供商抽象
+│           ├── model/                    # ★ 模型提供商抽象
 │           │   ├── ModelProvider.java    # SPI 接口
 │           │   ├── ModelConfig.java
 │           │   ├── ModelProviderRegistry.java
 │           │   └── impl/                 # OpenAIProvider, AnthropicProvider, DashScopeProvider
 │           │
-│           ├── session/                  # ★ P0-4: 会话持久化
+│           ├── session/                  # ★ 会话持久化
 │           │   ├── SessionEntity.java
 │           │   └── SessionRepository.java
 │           │
-│           ├── memory/                   # ★ P1-4: 多层记忆系统
+│           ├── memory/                   # ★ 多层记忆系统
 │           │   ├── MemoryFacade.java     # 统一门面
 │           │   ├── DefaultMemoryFacade.java
 │           │   ├── MemoryRecord.java
@@ -227,14 +201,14 @@ aether/
 │           │   ├── SessionMemoryExtractor.java  # 后台记忆提取
 │           │   └── MemoryStore.java      # 文件存储（保留向后兼容）
 │           │
-│           ├── event/                    # ★ P0-6: 结构化事件
+│           ├── event/                    # ★ 结构化事件
 │           │   ├── AgentEvent.java       # 10 种事件 record，Jackson 多态
 │           │   └── AgentEventPublisher.java
 │           │
 │           ├── executor/                 # ★ 多 Agent 图执行器
-│           │   ├── GraphExecutor.java    # SEQ/PAR/LOOP + P1-1: executeGraphFlow()
-│           │   ├── GraphFlowState.java   # P1-1: DAG 节点运行时状态
-│           │   ├── ConditionEvaluator.java  # P1-1: SpEL 条件求值
+│           │   ├── GraphExecutor.java    # SEQ/PAR/LOOP + GRAPHFLOW DAG 执行
+│           │   ├── GraphFlowState.java   # DAG 节点运行时状态
+│           │   ├── ConditionEvaluator.java  # SpEL 条件求值
 │           │   └── ExecutionState.java   # 模板解析 + 输出合并
 │           │
 │           ├── chat/ChatService.java     # ★ 对话入口：单/多 Agent 路由 + 记忆注入 + 会话恢复
@@ -250,14 +224,14 @@ aether/
 ├── aether-infrastructure/  # 基础设施层
 │   └── src/main/java/cn/zcj/aether/repository/
 │       ├── SessionStore.java             # 会话存储
-│       ├── MySqlSessionRepository.java   # P0-4: MySQL 持久化
-│       ├── RedisSessionRepository.java   # P0-4: Redis 持久化
-│       └── PgvectorVectorStore.java      # P1-4: Pgvector 向量存储
+│       ├── MySqlSessionRepository.java   # MySQL 持久化
+│       ├── RedisSessionRepository.java   # Redis 持久化
+│       └── PgvectorVectorStore.java      # Pgvector 向量存储
 │
 ├── aether-trigger/         # HTTP 触发层
 │   └── src/main/java/cn/zcj/aether/trigger/http/
 │       ├── AgentServiceController.java   # ★ REST API 入口
-│       └── filter/MdcFilter.java         # P0-6: MDC trace 注入
+│       └── filter/MdcFilter.java         # MDC trace 注入
 │
 ├── aether-types/           # 类型定义层
 │   └── src/main/java/cn/zcj/aether/types/
@@ -271,7 +245,7 @@ aether/
 
 ---
 
-## 五、架构设计
+## 四、架构设计
 
 ### 5.1 DDD 六边形架构
 
@@ -291,8 +265,8 @@ types (枚举 / 异常 / 常量)
 AiAgentAutoConfig.onApplicationEvent()
   → ArmoryService.acceptArmoryAgents(tables)
     → DefaultArmoryFactory.armoryStrategyHandler()
-      → RootNode → AiApiNode (P0-2: ModelProviderRegistry 创建 ChatModel)
-        → ChatModelNode (P0-3: 遍历 agents[] → registerPerAgentChatModel())
+      → RootNode → AiApiNode (ModelProviderRegistry 创建 ChatModel)
+        → ChatModelNode (遍历 agents[] → registerPerAgentChatModel())
           → AgentNode (收集 agent 名列表)
             → AgentWorkflowNode (按 type 路由: sequential/parallel/loop/graphflow)
               → CompilerNode (编译 AgentGraph → 注册到 AgentRegistry)
@@ -305,25 +279,25 @@ POST /api/v1/chat → ChatService.handleMessage()
   │
   ├─ 单 Agent（graph.edges 为空）
   │     → AgentFactory.create(agentConfig)
-  │     → P0-4: sessionRepository.findBySessionId() 恢复会话
-  │     → P1-4: injectMemory() 注入记忆
+  │     → sessionRepository.findBySessionId() 恢复会话
+  │     → injectMemory() 注入记忆
   │     → agent.execute(ctx)
   │           │
-  │           ├─ P1-2: MiddlewareChain 构建
+  │           ├─ MiddlewareChain 构建
   │           │     ├─ RateLimitMiddleware.onAgent()
   │           │     ├─ PermissionMiddleware.onActing()
   │           │     └─ GracefulShutdownMiddleware.onAgent()
   │           │
-  │           ├─ P1-6: Hook 触发
+  │           ├─ Hook 触发
   │           │     ├─ onBeforeExecute → onAfterExecute
   │           │     ├─ onBeforeModelCall → onAfterModelCall
   │           │     └─ onBeforeToolCall → onAfterToolCall
   │           │
   │           └─ queryLoop()
   │                 ├─ Phase 1: ContextManager 三层压缩
-  │                 ├─ Phase 2: P1-2 chain.applyModelCall() → P0-2 ModelProvider
+  │                 ├─ Phase 2: chain.applyModelCall() → ModelProvider
   │                 ├─ Phase 3: 无 tool_use → emit done + 退出
-  │                 └─ Phase 4: P1-2 chain.applyActing() → P1-5 PermissionEngine
+  │                 └─ Phase 4: chain.applyActing() → PermissionEngine
   │
   └─ 多 Agent（graph.edges 非空） → GraphExecutor.execute(graph)
         ├─ SEQUENTIAL → 串行推进，{outputKey} 模板传递
@@ -341,7 +315,7 @@ agent.execute(ctx)
   │     ├── LoggingHook: 发布 AgentStarted 事件 + 设置 MDC
   │     └── SessionPersistenceHook: 加载已保存状态
   │
-  ├── MiddlewareChain 构建                     ← P1-2
+  ├── MiddlewareChain 构建                     
   │     ├── GracefulShutdownMiddleware (p=5)
   │     ├── RateLimitMiddleware (p=10)
   │     └── PermissionMiddleware (p=20)
@@ -349,31 +323,31 @@ agent.execute(ctx)
   ├── queryLoop() 主循环
   │     │
   │     ├── [每轮循环]
-  │     │   ├── EventPublisher.publishTurnStarted()     ← P0-6
+  │     │   ├── EventPublisher.publishTurnStarted()     
   │     │   ├── ContextManager 三层压缩
   │     │   │
-  │     │   ├── onBeforeModelCall()                     ← P1-6 Hook
-  │     │   ├── chain.applyReasoning(messages)          ← P1-2 中间件
-  │     │   ├── chain.applyModelCall(...)               ← P1-2 中间件
-  │     │   │     └── ModelInvoker → ModelProvider (P0-2)
-  │     │   ├── onAfterModelCall()                      ← P1-6 Hook
+  │     │   ├── onBeforeModelCall()                     Hook
+  │     │   ├── chain.applyReasoning(messages)          中间件
+  │     │   ├── chain.applyModelCall(...)               中间件
+  │     │   │     └── ModelInvoker → ModelProvider
+  │     │   ├── onAfterModelCall()                      Hook
   │     │   │
   │     │   ├── [if toolCalls]
-  │     │   │   ├── onBeforeToolCall()                  ← P1-6 Hook
-  │     │   │   ├── chain.applyActing()                 ← P1-2 中间件
-  │     │   │   │     └── PermissionMiddleware → PermissionEngine.check() (P1-5)
+  │     │   │   ├── onBeforeToolCall()                  Hook
+  │     │   │   ├── chain.applyActing()                 中间件
+  │     │   │   │     └── PermissionMiddleware → PermissionEngine.check()
   │     │   │   ├── ToolExecutor.executeBatch()
-  │     │   │   └── onAfterToolCall()                   ← P1-6 Hook
+  │     │   │   └── onAfterToolCall()                   Hook
   │     │   │
-  │     │   └── EventPublisher.publishTurnCompleted()   ← P0-6
+  │     │   └── EventPublisher.publishTurnCompleted()   
   │     │
-  │     └── AgentTracer Span (P1-3) 包裹每个阶段
+  │     └── AgentTracer Span 包裹每个阶段
   │
   ├── onAfterExecute(ctx, result)             ← Hook 触发
   │     ├── LoggingHook: 发布 AgentCompleted 事件
   │     ├── MetricsHook: recordTurn()
-  │     ├── SessionPersistenceHook: 异步 saveState()  (P0-4)
-  │     └── SessionMemoryExtractor: 后台提取记忆    (P1-4)
+  │     ├── SessionPersistenceHook: 异步 saveState() 
+  │     └── SessionMemoryExtractor: 后台提取记忆   
   │
   └── onError(ctx, error)                     ← Hook 触发
         ├── LoggingHook: 发布 ErrorOccurred 事件
@@ -382,7 +356,7 @@ agent.execute(ctx)
 
 ---
 
-## 六、Agent YAML 配置
+## 五、Agent YAML 配置
 
 ### 6.1 基础单 Agent 配置
 
@@ -434,7 +408,7 @@ agent-workflows:
     subAgents: [writer, reviewer]
 ```
 
-### 6.3 Per-Agent 异构模型配置（P0-3）
+### 6.3 Per-Agent 异构模型配置
 
 ```yaml
 agents:
@@ -457,7 +431,7 @@ agents:
     # 不配置 model → 使用全局 chat-model
 ```
 
-### 6.4 GraphFlow DAG 条件路由配置（P1-1）
+### 6.4 GraphFlow DAG 条件路由配置
 
 ```yaml
 agent-workflows:
@@ -487,14 +461,14 @@ agent-workflows:
 
 ---
 
-## 七、快速开始
+## 六、快速开始
 
 ### 环境要求
 
 - JDK 17+
 - Maven 3.6+
-- MySQL 8.0+（可选，P0-4 会话持久化 / P1-4 向量记忆需要）
-- PostgreSQL + Pgvector（可选，P1-4 语义记忆需要）
+- MySQL 8.0+（可选——会话持久化需要）
+- PostgreSQL + Pgvector（可选——语义记忆需要）
 
 ### 构建与启动
 
@@ -547,7 +521,7 @@ npm run dev
 
 ---
 
-## 八、API 接口
+## 七、API 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -555,7 +529,7 @@ npm run dev
 | GET/POST | `/api/v1/create_session` | 创建会话（agentId, userId） |
 | POST | `/api/v1/chat` | 同步对话 |
 | POST | `/api/v1/chat_stream` | 流式对话（SSE） |
-| GET | `/actuator/prometheus` | Prometheus 指标端点（P1-3） |
+| GET | `/actuator/prometheus` | Prometheus 指标端点 |
 
 统一响应格式 `cn.zcj.aether.api.response.Response<T>`：
 
@@ -565,7 +539,7 @@ npm run dev
 
 ---
 
-## 九、关键配置阈值
+## 八、关键配置阈值
 
 | 配置项 | 位置 | 值 |
 |---|---|---|
@@ -584,7 +558,7 @@ npm run dev
 
 ---
 
-## 十、设计参考来源
+## 九、设计参考来源
 
 | 参考框架 | 语言 | 借鉴的设计 |
 |---------|------|-----------|
@@ -596,7 +570,7 @@ npm run dev
 
 ---
 
-## 十一、代码规范与约束
+## 十、代码规范与约束
 
 - **Java**: 4 空格缩进，Lombok（`@Data`/`@Builder`/`@Slf4j`）替代手写样板
 - **日志**: `@Slf4j` + `log.info()`；禁止 `System.out.println`
@@ -610,7 +584,7 @@ npm run dev
 
 ---
 
-## 十二、下一步扩展方向
+## 十一、下一步扩展方向
 
 | 方向 | 说明 |
 |------|------|
