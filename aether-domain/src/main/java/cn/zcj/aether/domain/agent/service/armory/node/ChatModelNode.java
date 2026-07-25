@@ -26,7 +26,9 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 // NOTE 13，路由到ChatModelNode节点，这个节点的作用是根据配置构建ChatModel实例，
 //  并放入上下文对象中，供后续节点使用，最后路由到AgentNode节点
@@ -101,13 +103,12 @@ public class ChatModelNode extends AbstractArmorySupport {
         // 注册全局默认 ChatModel Bean
         registerBean("chatModel", ChatModel.class, chatModel);
 
-        // P0-3: 为配置了独立模型的 Agent 创建独立 ChatModel Bean
+        // C1: 为每个 Agent 创建独立 ChatModel Bean（按 toolNames 过滤工具）
+        // 借鉴 AgentScope Java 的 per-agent Toolkit 深拷贝 + cc-haha 的 allowlist 模式
         List<AiAgentConfigTableVO.Module.Agent> agents = aiAgentConfigTableVO.getModule().getAgents();
         if (agents != null) {
             for (var agent : agents) {
-                if (agent.getModel() != null) {
-                    registerPerAgentChatModel(agent, dynamicContext, toolCallbackList);
-                }
+                registerPerAgentChatModel(agent, dynamicContext, toolCallbackList);
             }
         }
 
@@ -115,19 +116,52 @@ public class ChatModelNode extends AbstractArmorySupport {
     }
 
     /**
-     * P0-3 新增：为配置了独立模型的 Agent 创建独立的 ChatModel Bean。
+     * C1 改造：为每个 Agent 创建独立的 ChatModel Bean。
+     * 根据 Agent 的 toolNames 配置过滤 ToolCallback，实现 Agent 级工具作用域。
+     *
+     * 借鉴 AgentScope Java 的 per-agent Toolkit 深拷贝模式 + cc-haha 的 allowlist 设计。
      */
     private void registerPerAgentChatModel(
             AiAgentConfigTableVO.Module.Agent agent,
             DefaultArmoryFactory.DynamicContext dynamicContext,
-            List<ToolCallback> toolCallbacks) {
+            List<ToolCallback> allToolCallbacks) {
 
-        String modelId = agent.getModel().getModelId();
-        String baseUrl = agent.getModel().getBaseUrl();
-        String apiKey = agent.getModel().getApiKey();
+        // 计算该 Agent 允许的工具名集合
+        Set<String> allowedToolNames = resolveToolNames(agent);
 
-        // 回退到全局配置
+        // 按 allowlist 过滤 ToolCallback
+        List<ToolCallback> filteredCallbacks;
+        if (allowedToolNames == null) {
+            // null = 全部工具（通配符 "*" 或未配置）
+            filteredCallbacks = allToolCallbacks;
+        } else {
+            filteredCallbacks = allToolCallbacks.stream()
+                .filter(tc -> {
+                    try {
+                        String name = tc.getToolDefinition().name();
+                        return allowedToolNames.contains(name);
+                    } catch (Exception e) {
+                        log.warn("获取工具定义失败，保守保留该工具: {}", e.getMessage());
+                        return true; // 无法获取定义时保守保留
+                    }
+                })
+                .toList();
+            log.info("Agent [{}] 工具过滤: {} → {} 个工具",
+                    agent.getName(), allToolCallbacks.size(), filteredCallbacks.size());
+        }
+
+        // 处理 ModelConfig：优先 agent 级，回退全局
         ModelConfig globalConfig = dynamicContext.getModelConfig();
+        String modelId, baseUrl, apiKey;
+        if (agent.getModel() != null && agent.getModel().getModelId() != null) {
+            modelId = agent.getModel().getModelId();
+            baseUrl = agent.getModel().getBaseUrl();
+            apiKey = agent.getModel().getApiKey();
+        } else {
+            modelId = globalConfig.getModelId();
+            baseUrl = null;
+            apiKey = null;
+        }
         if (baseUrl == null) baseUrl = globalConfig.getBaseUrl();
         if (apiKey == null) apiKey = globalConfig.getApiKey();
 
@@ -140,13 +174,28 @@ public class ChatModelNode extends AbstractArmorySupport {
                 .build();
 
         ModelProvider provider = modelProviderRegistry.resolve(modelId);
-        ChatModel agentChatModel = provider.createChatModelWithTools(agentModelConfig, toolCallbacks);
+        ChatModel agentChatModel = provider.createChatModelWithTools(agentModelConfig, filteredCallbacks);
 
         String beanName = "chatModel-" + agent.getName();
         registerBean(beanName, ChatModel.class, agentChatModel);
 
-        log.info("为 Agent [{}] 注册独立 ChatModel Bean: beanName={}, modelId={}, provider={}",
-                agent.getName(), beanName, modelId, provider.providerName());
+        log.info("Agent [{}] ChatModel 已注册: beanName={}, modelId={}, tools={}",
+                agent.getName(), beanName, modelId, filteredCallbacks.size());
+    }
+
+    /**
+     * 解析 Agent 允许的工具名集合。
+     * 返回 null 表示全部工具（通配符或未配置），返回空 Set 表示无工具。
+     */
+    private Set<String> resolveToolNames(AiAgentConfigTableVO.Module.Agent agent) {
+        List<String> rawNames = agent.getToolNames();
+        if (rawNames == null || rawNames.isEmpty()) {
+            return null; // 全部工具（向后兼容）
+        }
+        if (rawNames.size() == 1 && "*".equals(rawNames.get(0))) {
+            return null; // 通配符 = 全部工具
+        }
+        return new HashSet<>(rawNames);
     }
 
     /**
