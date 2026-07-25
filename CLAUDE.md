@@ -1,13 +1,13 @@
 
 # Aether Agent 
 
-企业级 AI Agent 架构 — Spring Boot 3.4.3 + 自研 AgentRuntime + DDD 分层。
-YAML 配置驱动的多 Agent 编排，支持 MCP/Skills 工具集成和流式对话。
+企业级 AI Agent 架构 — Spring Boot 3.4.3 + 自研 ReActAgent 引擎 + DDD 分层。
+YAML 配置驱动的多 Agent 编排，支持 Agent 级工具作用域、MCP/Skills 工具集成和流式对话。
 
 ## 技术栈
 
 - **后端**: Java 17, Spring Boot 3.4.3, Maven 3.x, Spring AI 1.1.0-M3
-- **Agent 引擎**: 自研 AgentRuntime（主循环 + 多层上下文压缩 + 并发安全工具编排 + 指数退避重试）
+- **Agent 引擎**: 自研 ReActAgent（主循环 + 多层上下文压缩 + Agent 级工具作用域 + 并发安全工具编排 + 指数退避重试）
 - **前端**: Vue 3 + Pinia + Vite（`docs/dev-ops/AIagent_frontend/`）
 - **依赖**: Lombok（必须）, RxJava3, Jackson, Guava, spring-ai-agent-utils (SkillsTool)
 
@@ -46,7 +46,7 @@ domain/agent/service/
 │       └── skills/    # Skills 工具创建服务
 ├── chat/              # ChatService — 对话入口，单/多Agent 路由
 ├── compiler/          # AgentGraphCompiler — YAML→AgentGraph IR
-├── runtime/           # AgentRuntime（主循环）, ModelInvoker（API调用+重试）, RuntimeEvent, TurnMessage
+├── runtime/           # ReActAgent（主循环，AgentRuntime已废弃）, ModelInvoker（API调用+重试+Provider级策略）, RuntimeEvent, TurnMessage
 ├── context/           # ContextManager（applyToolResultBudget / microCompact / autoCompact）
 ├── memory/            # MemoryStore — .claude/memory/MEMORY.md 读写
 ├── tool/              # Tool 接口, ToolRegistry, ToolExecutor, McpToolAdapter, SkillsToolAdapter, ToolResult
@@ -67,7 +67,7 @@ model/valobj/          # AiAgentConfigTableVO, AiAgentRegisterVO, AiAgentAutoCon
 ```
 AiAgentAutoConfig → ArmoryService.acceptArmoryAgents()
   → RootNode → AiApiNode（构建 OpenAiApi）
-  → ChatModelNode（构建 ChatModel + ToolCallback + 注册 Bean + populate ToolRegistry）
+  → ChatModelNode（构建 ChatModel + ToolCallback + Agent级工具过滤 + 注册 Bean + populate ToolRegistry）
   → AgentNode（收集 agent 名列表）
   → AgentWorkflowNode（按 type 路由）
   → [LoopAgentNode | ParallelAgentNode | SequentialAgentNode]
@@ -79,7 +79,8 @@ AiAgentAutoConfig → ArmoryService.acceptArmoryAgents()
 2. 遍历 `toolSkillsList` → `ToolSkillsCreateService` → `ToolCallback[]`
 3. 合并所有 ToolCallback → `OpenAiChatOptions.toolCallbacks()`
 4. `registerToolsToRegistry()` → MCP 工具经 `McpToolAdapter.adapt()`、Skills 工具经 `SkillsToolAdapter.adapt()` 注册到 `ToolRegistry`
-5. `registerBean("chatModel", ChatModel.class, chatModel)` — 动态注册 Spring Bean
+5. **为每个 Agent 创建独立 ChatModel Bean**（`"chatModel-{agentName}"`），按 `toolNames` 过滤 ToolCallback。`"*"` 或未配置 = 全部工具（向后兼容），`toolNames: [a, b]` = 仅暴露指定工具给 LLM
+6. `registerBean("chatModel", ChatModel.class, chatModel)` — 动态注册全局 Spring Bean（兜底）
 
 ### 请求时路由（`chat/ChatService.java`）
 ```
@@ -88,10 +89,10 @@ POST /api/v1/chat → ChatService.handleMessage()
   │     ├── SEQUENTIAL → 串行执行 subAgents，{outputKey} 模板解析
   │     ├── PARALLEL   → 并发执行 subAgents，CountDownLatch + 事件同步转发
   │     └── LOOP       → 循环迭代 subAgents，收敛检测
-  └── graph.getEdges() 为空 → AgentRuntime.execute(entryAgent)
+  └── graph.getEdges() 为空 → DefaultAgentFactory.create(agentConfig) → ReActAgent.execute()
 ```
 
-### AgentRuntime 主循环（`runtime/AgentRuntime.java`）
+### ReActAgent 主循环（`agent/impl/ReActAgent.java`，原 AgentRuntime 已废弃）
 ```
 while (turnCount < 100):
   Phase1 → ContextManager.applyToolResultBudget / microCompact / autoCompact
@@ -126,11 +127,14 @@ while (turnCount < 100):
 | HTTP 读取超时 | `HttpClientConfig.java` | 300s (5min) |
 | 重试次数 | `ModelInvoker.java` | 3 次，初始退避 1s，翻倍至 15s 上限 |
 | 可重试错误 | `ModelInvoker.isRetryable()` | Connection reset, Broken pipe, Timeout, 503, 502, 429 |
-| 不可重试错误 | `ModelInvoker.isRetryable()` | 400, 401, 403, 404 |
+| HTTP 400 重试 | `ModelInvoker.isRetryable()` | 仅 mimo Provider 可重试，其他 Provider 视为客户端错误 |
+| 不可重试错误 | `ModelInvoker.isRetryable()` | 401, 403, 404 |
 | 上下文压缩阈值 | `ContextManager.java` | `(contextWindow - 20000) * 0.9` |
 | 工具结果截断 | `ContextManager.applyToolResultBudget()` | >50000 字符 → 500 字符 + 警告 |
 | 并行工具超时 | `ToolExecutor.executeConcurrently()` | 60s |
-| 循环最大次数 | `AgentRuntime.MAX_TURNS` | 100 |
+| 循环最大次数 | `ReActAgent.MAX_TURNS` | 100 |
+| 连续工具失败熔断 | `ReActAgent.queryLoop()` | 连续 3 轮全部工具调用失败 → 强制退出 |
+| Agent 工具作用域 | `ChatModelNode.registerPerAgentChatModel()` | YAML `toolNames` → per-agent ChatModel Bean，`"*"`=全部
 
 ## 代码风格
 
