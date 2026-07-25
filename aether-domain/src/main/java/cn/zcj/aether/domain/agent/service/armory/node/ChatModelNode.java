@@ -28,7 +28,9 @@ import javax.annotation.Resource;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 // NOTE 13，路由到ChatModelNode节点，这个节点的作用是根据配置构建ChatModel实例，
 //  并放入上下文对象中，供后续节点使用，最后路由到AgentNode节点
@@ -58,6 +60,9 @@ public class ChatModelNode extends AbstractArmorySupport {
     @Resource
     private ModelProviderRegistry modelProviderRegistry;  // P0-2 新增
 
+    /** M4: MCP 连接缓存 —— 按 name@baseUri 去重，避免重复创建 SSE/Stdio 连接 */
+    private final Map<String, ToolCallback[]> mcpCallbackCache = new ConcurrentHashMap<>();
+
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         log.info("Ai Agent 装配操作 - ChatModelNode");
@@ -73,8 +78,17 @@ public class ChatModelNode extends AbstractArmorySupport {
 
         if (null != toolMcpList && !toolMcpList.isEmpty()) {
             for (AiAgentConfigTableVO.Module.ChatModel.ToolMcp toolMcp : toolMcpList) {
-                TooMcpCreateService tooMcpCreateService = defaultMcpClientFactory.getTooMcpCreateService(toolMcp);
-                ToolCallback[] toolCallbacks = tooMcpCreateService.buildToolCallback(toolMcp);
+                String key = dedupKey(toolMcp);
+                ToolCallback[] toolCallbacks = mcpCallbackCache.computeIfAbsent(key, k -> {
+                    try {
+                        TooMcpCreateService tooMcpCreateService = defaultMcpClientFactory.getTooMcpCreateService(toolMcp);
+                        ToolCallback[] built = tooMcpCreateService.buildToolCallback(toolMcp);
+                        log.info("MCP 连接已创建: key={}", key);
+                        return built;
+                    } catch (Exception e) {
+                        throw new RuntimeException("MCP 连接创建失败: key=" + key, e);
+                    }
+                });
                 toolCallbackList.addAll(List.of(toolCallbacks));
             }
         }
@@ -294,6 +308,25 @@ public class ChatModelNode extends AbstractArmorySupport {
     @Override
     public StrategyHandler<ArmoryCommandEntity, DefaultArmoryFactory.DynamicContext, AiAgentRegisterVO> get(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         return agentNode;
+    }
+
+    /**
+     * M4: 构建 MCP 连接去重 key。
+     * SSE: name@baseUri | Stdio: name@command | Local: name
+     */
+    private String dedupKey(AiAgentConfigTableVO.Module.ChatModel.ToolMcp toolMcp) {
+        if (toolMcp.getSse() != null) {
+            return "sse:" + toolMcp.getSse().getName() + "@" + toolMcp.getSse().getBaseUri();
+        }
+        if (toolMcp.getStdio() != null) {
+            var params = toolMcp.getStdio().getServerParameters();
+            String cmd = params != null ? params.getCommand() : "unknown";
+            return "stdio:" + toolMcp.getStdio().getName() + "@" + cmd;
+        }
+        if (toolMcp.getLocal() != null) {
+            return "local:" + toolMcp.getLocal().getName();
+        }
+        return "unknown:" + System.identityHashCode(toolMcp);
     }
 
 }
