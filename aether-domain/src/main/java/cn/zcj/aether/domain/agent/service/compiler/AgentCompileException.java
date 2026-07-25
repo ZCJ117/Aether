@@ -5,6 +5,8 @@ package cn.zcj.aether.domain.agent.service.compiler;
  */
 public class AgentCompileException extends RuntimeException {
 
+    private static final long serialVersionUID = 1L;
+
     public AgentCompileException(String message) {
         super(message);
     }
