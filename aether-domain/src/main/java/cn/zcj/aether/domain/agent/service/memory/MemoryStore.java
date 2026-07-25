@@ -12,6 +12,8 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
+import cn.zcj.aether.domain.agent.service.memory.RecallFlow;
+
 /**
  * 记忆存储系统 — P1-4 扩展：实现 VectorStore 接口。
  *
@@ -29,6 +31,9 @@ public class MemoryStore implements VectorStore {
 
     @Value("${ai.agent.config.memory-dir:}")
     private String configuredMemoryDir;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private RecallFlow recallFlow;
 
     // 参考项目B memdir/memdir.ts:34-35
     private static final int MAX_ENTRYPOINT_LINES = 200;
@@ -251,34 +256,42 @@ public class MemoryStore implements VectorStore {
     @Override
     public CompletableFuture<List<MemorySearchResult>> search(
             float[] queryVector, int topK, List<MemoryScope> scopes) {
-        return CompletableFuture.supplyAsync(() -> {
-            // 文件后端：回退到关键词匹配搜索
-            List<MemorySearchResult> results = new ArrayList<>();
-            try {
-                Path memoryDir = resolveMemoryDir();
-                if (memoryDir == null || !Files.exists(memoryDir)) return results;
 
-                // 简单实现：遍历 memory 目录中的文件
-                try (DirectoryStream<Path> stream = Files.newDirectoryStream(memoryDir, "*.json")) {
-                    for (Path file : stream) {
-                        String content = Files.readString(file);
-                        // 提取内容字段用于匹配评分
-                        double score = 0.1; // 基础分数
-                        MemoryRecord record = MemoryRecord.builder()
-                            .id(file.getFileName().toString())
-                            .content(content)
-                            .scope(MemoryScope.global())
-                            .importance(0.5f)
-                            .build();
-                        results.add(new MemorySearchResult(record, score));
-                    }
-                }
-            } catch (IOException e) {
-                log.warn("记忆搜索失败", e);
+        // C3: 委托 RecallFlow 进行真正的语义搜索
+        if (recallFlow != null) {
+            var options = new MemoryFacade.RecallOptions(
+                MemoryFacade.RecallOptions.RecallDepth.SHALLOW,
+                scopes,
+                topK,
+                0.6f, 0.3f, 0.1f);
+
+            // 从 queryVector 尝试还原查询文本（文件存储模式下无法还原，传空字符串走关键词匹配）
+            String queryText = extractQueryFromVector(queryVector);
+            return recallFlow.recallShallow(queryText != null ? queryText : "", options);
+        }
+
+        // 回退: 无 RecallFlow 时返回空结果
+        log.warn("RecallFlow 未注入，MemoryStore 语义搜索返回空结果");
+        return CompletableFuture.completedFuture(List.of());
+    }
+
+    /**
+     * 从查询向量中提取文本 query（文件存储模式下向量为伪向量，无法还原文本）
+     */
+    private String extractQueryFromVector(float[] queryVector) {
+        if (queryVector == null) return null;
+        // 检查是否为默认维度的零向量（伪向量信号）
+        boolean allZero = true;
+        for (float v : queryVector) {
+            if (v != 0.0f) {
+                allZero = false;
+                break;
             }
-            results.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
-            return results.subList(0, Math.min(results.size(), topK));
-        });
+        }
+        if (allZero) {
+            return null;
+        }
+        return null; // 文件存储模式下不支持向量→文本还原
     }
 
     @Override
