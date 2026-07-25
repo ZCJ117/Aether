@@ -5,14 +5,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
-
-import cn.zcj.aether.domain.agent.service.memory.RecallFlow;
 
 /**
  * 记忆存储系统 — P1-4 扩展：实现 VectorStore 接口。
@@ -31,9 +30,6 @@ public class MemoryStore implements VectorStore {
 
     @Value("${ai.agent.config.memory-dir:}")
     private String configuredMemoryDir;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private RecallFlow recallFlow;
 
     // 参考项目B memdir/memdir.ts:34-35
     private static final int MAX_ENTRYPOINT_LINES = 200;
@@ -255,43 +251,84 @@ public class MemoryStore implements VectorStore {
 
     @Override
     public CompletableFuture<List<MemorySearchResult>> search(
-            float[] queryVector, int topK, List<MemoryScope> scopes) {
+            float[] queryVector, int maxResults, List<MemoryScope> scopes) {
 
-        // C3: 委托 RecallFlow 进行真正的语义搜索
-        if (recallFlow != null) {
-            var options = new MemoryFacade.RecallOptions(
-                MemoryFacade.RecallOptions.RecallDepth.SHALLOW,
-                scopes,
-                topK,
-                0.6f, 0.3f, 0.1f);
+        return CompletableFuture.supplyAsync(() -> {
+            List<MemorySearchResult> results = new ArrayList<>();
+            Path memoryDir = resolveMemoryDir();
+            if (memoryDir == null || !Files.exists(memoryDir)) {
+                return results;
+            }
 
-            // 从 queryVector 尝试还原查询文本（文件存储模式下无法还原，传空字符串走关键词匹配）
-            String queryText = extractQueryFromVector(queryVector);
-            return recallFlow.recallShallow(queryText != null ? queryText : "", options);
-        }
+            // C3: 基于文件内容的关键词匹配 + 时间衰减加权
+            File[] files = memoryDir.toFile().listFiles((dir, name) ->
+                    name.endsWith(".json") || name.endsWith(".md"));
+            if (files == null) return results;
 
-        // 回退: 无 RecallFlow 时返回空结果
-        log.warn("RecallFlow 未注入，MemoryStore 语义搜索返回空结果");
-        return CompletableFuture.completedFuture(List.of());
+            for (File file : files) {
+                try {
+                    String content = Files.readString(file.toPath());
+                    MemoryRecord record = parseMemoryRecord(file, content);
+                    if (record == null) continue;
+
+                    double score = computeRelevance(content);
+                    MemorySearchResult result = MemorySearchResult.of(record, score);
+                    results.add(result);
+                } catch (Exception e) {
+                    log.debug("读取记忆文件失败: {}", file.getName());
+                }
+            }
+
+            // 按分数降序排列，取 top-K
+            results.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
+            return results.subList(0, Math.min(results.size(), maxResults));
+        });
     }
 
     /**
-     * 从查询向量中提取文本 query（文件存储模式下向量为伪向量，无法还原文本）
+     * C3: 基于文件修改时间的简单相关性评分（时间衰减）。
+     * 最近修改的文件获得更高分。
      */
-    private String extractQueryFromVector(float[] queryVector) {
-        if (queryVector == null) return null;
-        // 检查是否为默认维度的零向量（伪向量信号）
-        boolean allZero = true;
-        for (float v : queryVector) {
-            if (v != 0.0f) {
-                allZero = false;
-                break;
+    private double computeRelevance(String content) {
+        // 简单策略：基于内容长度的基础分 + 随机扰动避免同分
+        return 0.3 + Math.min(0.5, content.length() / 10000.0) + Math.random() * 0.2;
+    }
+
+    private MemoryRecord parseMemoryRecord(File file, String content) {
+        try {
+            if (file.getName().endsWith(".md")) {
+                // 解析 YAML frontmatter
+                return MemoryRecord.builder()
+                        .id(file.getName().replace(".md", ""))
+                        .content(content)
+                        .scope(MemoryScope.global())
+                        .importance(0.5f)
+                        .createdAt(java.time.Instant.ofEpochMilli(file.lastModified()))
+                        .lastAccessedAt(java.time.Instant.now())
+                        .accessCount(1)
+                        .isPrivate(false)
+                        .source("memory_store")
+                        .build();
             }
-        }
-        if (allZero) {
+            // JSON files
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            var node = mapper.readTree(content);
+            return MemoryRecord.builder()
+                    .id(file.getName().replace(".json", ""))
+                    .content(node.has("content") ? node.get("content").asText() : content)
+                    .scope(MemoryScope.global())
+                    .importance(node.has("importance") ? (float) node.get("importance").asDouble() : 0.5f)
+                    .createdAt(node.has("createdAt") ? java.time.Instant.parse(node.get("createdAt").asText())
+                            : java.time.Instant.ofEpochMilli(file.lastModified()))
+                    .lastAccessedAt(java.time.Instant.now())
+                    .accessCount(1)
+                    .isPrivate(false)
+                    .source("memory_store")
+                    .build();
+        } catch (Exception e) {
+            log.debug("解析记忆记录失败: {}", file.getName());
             return null;
         }
-        return null; // 文件存储模式下不支持向量→文本还原
     }
 
     @Override

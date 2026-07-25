@@ -18,37 +18,37 @@ class ModelInvokerTest {
 
     @Test
     void shouldClassifyConnectionResetAsRetryable() {
-        assertTrue(invoker.isRetryable(new java.net.SocketException("Connection reset")));
+        assertTrue(invoker.isRetryable(new java.net.SocketException("Connection reset"), "test-model"));
     }
 
     @Test
     void shouldClassifyTimeoutAsRetryable() {
-        assertTrue(invoker.isRetryable(new java.util.concurrent.TimeoutException("timeout")));
+        assertTrue(invoker.isRetryable(new java.util.concurrent.TimeoutException("timeout"), "test-model"));
     }
 
     @Test
     void shouldClassify503AsRetryable() {
-        assertTrue(invoker.isRetryable(new RuntimeException("HTTP 503 Service Unavailable")));
+        assertTrue(invoker.isRetryable(new RuntimeException("HTTP 503 Service Unavailable"), "test-model"));
     }
 
     @Test
     void shouldClassify429AsRetryable() {
-        assertTrue(invoker.isRetryable(new RuntimeException("HTTP 429 Too Many Requests")));
+        assertTrue(invoker.isRetryable(new RuntimeException("HTTP 429 Too Many Requests"), "test-model"));
     }
 
     @Test
     void shouldNotRetryOn401() {
-        assertFalse(invoker.isRetryable(new RuntimeException("HTTP 401 Unauthorized")));
+        assertFalse(invoker.isRetryable(new RuntimeException("HTTP 401 Unauthorized"), "test-model"));
     }
 
     @Test
     void shouldNotRetryOn403() {
-        assertFalse(invoker.isRetryable(new RuntimeException("HTTP 403 Forbidden")));
+        assertFalse(invoker.isRetryable(new RuntimeException("HTTP 403 Forbidden"), "test-model"));
     }
 
     @Test
     void shouldNotRetryOn404() {
-        assertFalse(invoker.isRetryable(new RuntimeException("HTTP 404 Not Found")));
+        assertFalse(invoker.isRetryable(new RuntimeException("HTTP 404 Not Found"), "test-model"));
     }
 
     @Test

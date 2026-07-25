@@ -252,7 +252,9 @@ public class GraphExecutor {
                 AgentNodeDef resolved = AgentNodeDef.builder()
                         .name(def.getName())
                         .instruction(resolvedInstruction)
+                        .description(def.getDescription())
                         .outputKey(def.getOutputKey())
+                        .toolNames(def.getToolNames())
                         .modelRef(def.getModelRef())
                         .agentType(def.getAgentType())
                         .build();

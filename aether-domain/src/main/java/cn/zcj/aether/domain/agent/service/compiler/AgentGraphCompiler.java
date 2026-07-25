@@ -29,6 +29,9 @@ import java.util.Set;
 @Service
 public class AgentGraphCompiler {
 
+    // 运行时模板占位符（非 outputKey），不需校验
+    private static final Set<String> RUNTIME_PLACEHOLDERS = Set.of("memory");
+
     public AgentGraph compile(AiAgentConfigTableVO config) {
         String appName = config.getAppName();
         AiAgentConfigTableVO.Agent agent = config.getAgent();
@@ -185,6 +188,9 @@ public class AgentGraphCompiler {
 
             Set<String> referencedKeys = extractTemplateKeys(instruction);
             for (String key : referencedKeys) {
+                if (RUNTIME_PLACEHOLDERS.contains(key)) {
+                    continue;  // 运行时占位符，跳过校验
+                }
                 if (!availableKeys.contains(key)) {
                     throw new AgentCompileException(
                         "Agent [" + def.getName() + "] 的 instruction 引用了未定义的 outputKey: {" +
