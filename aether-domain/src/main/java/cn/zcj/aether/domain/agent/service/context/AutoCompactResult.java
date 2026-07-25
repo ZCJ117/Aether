@@ -1,5 +1,6 @@
 package cn.zcj.aether.domain.agent.service.context;
 
+import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -17,6 +18,7 @@ public class AutoCompactResult {
     private List compressedMessages;
     private int preCompactTokens;
     private int postCompactTokens;
+    private RuntimeEvent internalLlmCallEvent;  // C2
 
     public static AutoCompactResult notNeeded() {
         return AutoCompactResult.builder().compacted(false).build();
@@ -30,6 +32,19 @@ public class AutoCompactResult {
                 .compressedMessages(compactMessages)
                 .preCompactTokens(preTokens)
                 .postCompactTokens(postTokens)
+                .build();
+    }
+
+    public static AutoCompactResult compacted(String summary, List compactMessages,
+                                               int preTokens, int postTokens,
+                                               RuntimeEvent llmCallEvent) {
+        return AutoCompactResult.builder()
+                .compacted(true)
+                .summary(summary)
+                .compressedMessages(compactMessages)
+                .preCompactTokens(preTokens)
+                .postCompactTokens(postTokens)
+                .internalLlmCallEvent(llmCallEvent)
                 .build();
     }
 }

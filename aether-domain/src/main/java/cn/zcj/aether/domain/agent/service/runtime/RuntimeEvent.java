@@ -20,6 +20,10 @@ public class RuntimeEvent {
     private String compactSummary;        // compactBoundary
     private int turnCount;                // turnComplete
     private String errorMessage;          // error
+    private String internalLlmSource;     // C2: "context-compaction" | "memory-encoding"
+    private String internalLlmModel;      // C2: 使用的模型名
+    private long internalLlmDurationMs;   // C2: 耗时（毫秒）
+    private boolean internalLlmSuccess;   // C2: 是否成功
 
     public enum EventType {
         textDelta,
@@ -29,7 +33,8 @@ public class RuntimeEvent {
         turnComplete,
         done,
         maxTurnsReached,
-        error
+        error,
+        internalLlmCall   // C2: 非主循环 LLM 调用
     }
 
     public static RuntimeEvent text(String delta) {
@@ -42,5 +47,16 @@ public class RuntimeEvent {
 
     public static RuntimeEvent error(String msg) {
         return RuntimeEvent.builder().type(EventType.error).errorMessage(msg).build();
+    }
+
+    public static RuntimeEvent internalLlmCall(String source, String model,
+                                                long durationMs, boolean success) {
+        return RuntimeEvent.builder()
+                .type(EventType.internalLlmCall)
+                .internalLlmSource(source)
+                .internalLlmModel(model)
+                .internalLlmDurationMs(durationMs)
+                .internalLlmSuccess(success)
+                .build();
     }
 }

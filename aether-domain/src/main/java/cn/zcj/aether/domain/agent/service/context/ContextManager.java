@@ -1,5 +1,6 @@
 package cn.zcj.aether.domain.agent.service.context;
 
+import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -155,9 +156,13 @@ public class ContextManager {
         List<TurnMessage> toCompact = new ArrayList<>(
                 messages.subList(0, Math.max(0, messages.size() - keepRecent)));
 
-        // 调用 LLM 生成摘要，失败时降级为字符串拼接
+        // C2: 调用 LLM 生成摘要（包裹计时 + 事件记录），失败时降级
+        long llmStart = System.currentTimeMillis();
         String summary = generateSummary(toCompact);
-        if (summary == null || summary.isBlank()) {
+        long llmDuration = System.currentTimeMillis() - llmStart;
+        boolean llmSuccess = summary != null && !summary.isBlank();
+
+        if (!llmSuccess) {
             summary = fallbackSummary(toCompact);
         }
 
@@ -166,9 +171,15 @@ public class ContextManager {
         compacted.addAll(recent);
 
         int postTokens = estimateTokens(compacted);
-        log.info("压缩完成: {} tokens → {} tokens", currentTokens, postTokens);
+        log.info("压缩完成: {} → {} tokens (LLM={}ms, success={})",
+                currentTokens, postTokens, llmDuration, llmSuccess);
 
-        return AutoCompactResult.compacted(summary, compacted, currentTokens, postTokens);
+        // C2: 创建内部 LLM 调用事件
+        RuntimeEvent llmCallEvent = RuntimeEvent.internalLlmCall(
+                "context-compaction", modelName, llmDuration, llmSuccess);
+
+        return AutoCompactResult.compacted(summary, compacted,
+                currentTokens, postTokens, llmCallEvent);
     }
 
     public boolean isAtBlockingLimit(List<TurnMessage> messages, String modelName) {

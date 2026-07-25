@@ -152,6 +152,11 @@ public class ReActAgent extends BaseAgent {
                         .type(RuntimeEvent.EventType.compactBoundary)
                         .compactSummary(compactResult.getSummary())
                         .build());
+
+                // C2: 发射内部 LLM 调用事件（context compaction）
+                if (compactResult.getInternalLlmCallEvent() != null) {
+                    emitter.onNext(compactResult.getInternalLlmCallEvent());
+                }
             }
 
             // ====== Phase 2: Model Call ======

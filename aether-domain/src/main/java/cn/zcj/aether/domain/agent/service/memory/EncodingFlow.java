@@ -64,14 +64,17 @@ public class EncodingFlow {
             return EncodeResult.defaults();
         }
 
+        long startMs = System.currentTimeMillis();
         try {
             String prompt = String.format(ENCODE_PROMPT, content);
             var response = chatModel.call(new Prompt(new SystemMessage(prompt)));
             String text = response.getResult().getOutput().getText();
-            return parseResponse(text);
+            EncodeResult result = parseResponse(text);
+            return result.withLlmCallStats(true, System.currentTimeMillis() - startMs);
         } catch (Exception e) {
             log.warn("LLM 记忆编码失败，使用默认元数据: error={}", e.getMessage());
-            return EncodeResult.defaults();
+            return EncodeResult.defaults()
+                    .withLlmCallStats(false, System.currentTimeMillis() - startMs);
         }
     }
 
@@ -96,22 +99,32 @@ public class EncodingFlow {
                 : 0.5f;
             boolean shouldConsolidate = node.has("shouldConsolidate") && node.get("shouldConsolidate").asBoolean();
             String hint = node.has("consolidationHint") ? node.get("consolidationHint").asText() : "";
-            return new EncodeResult(categories, importance, shouldConsolidate, hint);
+            return new EncodeResult(categories, importance, shouldConsolidate, hint, false, false, 0);
         } catch (Exception e) {
             log.warn("解析 LLM 记忆编码结果失败: text=[{}], error={}", text, e.getMessage());
             return EncodeResult.defaults();
         }
     }
 
-    /** 编码结果 */
+    /** 编码结果 — C2: 新增 LLM 调用统计字段 */
     public record EncodeResult(
         List<String> categories,
         float importance,
         boolean shouldConsolidate,
-        String consolidationHint
+        String consolidationHint,
+        boolean llmCalled,
+        boolean llmSuccess,
+        long llmDurationMs
     ) {
         public static EncodeResult defaults() {
-            return new EncodeResult(Collections.emptyList(), 0.5f, false, "");
+            return new EncodeResult(Collections.emptyList(), 0.5f, false, "", false, false, 0);
+        }
+
+        /** 附加 LLM 调用统计 */
+        public EncodeResult withLlmCallStats(boolean success, long durationMs) {
+            return new EncodeResult(
+                this.categories, this.importance, this.shouldConsolidate,
+                this.consolidationHint, true, success, durationMs);
         }
     }
 }

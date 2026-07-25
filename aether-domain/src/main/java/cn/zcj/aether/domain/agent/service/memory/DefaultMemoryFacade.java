@@ -1,5 +1,6 @@
 package cn.zcj.aether.domain.agent.service.memory;
 
+import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +24,9 @@ public class DefaultMemoryFacade implements MemoryFacade {
 
     private final ExecutorService storeExecutor = Executors.newSingleThreadExecutor();
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AgentEventPublisher eventPublisher;
+
     public DefaultMemoryFacade(EncodingFlow encodingFlow, RecallFlow recallFlow, VectorStore vectorStore) {
         this.encodingFlow = encodingFlow;
         this.recallFlow = recallFlow;
@@ -43,6 +47,11 @@ public class DefaultMemoryFacade implements MemoryFacade {
                     encoded = encodingFlow.encode(content);
                 } else {
                     encoded = EncodingFlow.EncodeResult.defaults();
+                }
+
+                // C2: 记录内部 LLM 调用（记忆编码）
+                if (eventPublisher != null && encoded.llmCalled()) {
+                    log.debug("记忆编码 LLM: success={}, {}ms", encoded.llmSuccess(), encoded.llmDurationMs());
                 }
 
                 // 2. 如果应合并，搜索相似记忆
