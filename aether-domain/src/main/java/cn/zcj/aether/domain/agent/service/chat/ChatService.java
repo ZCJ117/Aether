@@ -276,7 +276,12 @@ public class ChatService implements IChatService {
                 memoryBlock.append("</auto-memory>");
 
                 if (instruction == null) return memoryBlock.toString();
-                return instruction.replace("{memory}", memoryBlock.toString());
+                String enriched = instruction.replace("{memory}", memoryBlock.toString());
+                if (enriched.equals(instruction)) {
+                    log.warn("Agent [{}] 的 instruction 缺少 {{memory}} 占位符，记忆内容未被注入。" +
+                             "请在 instruction 中添加 {{memory}} 以启用记忆功能（MemoryFacade 路径）。", agentId);
+                }
+                return enriched;
             }
         }
 
@@ -284,6 +289,11 @@ public class ChatService implements IChatService {
         String memoryPrompt = memoryStore.loadMemoryPrompt(userMessage);
         if (memoryPrompt == null || memoryPrompt.isEmpty()) return instruction;
         if (instruction == null) return memoryPrompt;
-        return instruction.replace("{memory}", memoryPrompt);
+        String enriched = instruction.replace("{memory}", memoryPrompt);
+        if (enriched.equals(instruction)) {
+            log.warn("Agent [{}] 的 instruction 缺少 {{memory}} 占位符，记忆内容未被注入。" +
+                     "请在 instruction 中添加 {{memory}} 以启用记忆功能（MemoryStore 回退路径）。", agentId);
+        }
+        return enriched;
     }
 }
