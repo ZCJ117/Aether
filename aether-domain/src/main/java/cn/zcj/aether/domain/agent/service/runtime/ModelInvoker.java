@@ -133,7 +133,7 @@ public class ModelInvoker {
 
             } catch (Exception e) {
                 lastException = e;
-                if (!isRetryable(e)) {
+                if (!isRetryable(e, modelName)) {
                     log.error("不可重试的模型调用错误: {}", e.getMessage());
                     log.error("异常完整链路: type={}, cause={}, causeMsg={}",
                             e.getClass().getName(),
@@ -169,7 +169,7 @@ public class ModelInvoker {
      * 400 → 重试（非标准 API 瞬时错误）
      * 401 / 403 / 404 → 不重试
      */
-    boolean isRetryable(Exception e) {
+    boolean isRetryable(Exception e, String modelRef) {
         String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
 
         // IO/网络层错误 → 重试
@@ -200,8 +200,11 @@ public class ModelInvoker {
         if (msg.contains("401") || msg.contains("403") || msg.contains("404"))
             return false;
 
-        // 400 → 重试（非标准 API 可能在初始化阶段返回瞬时 400）
-        if (msg.contains("400")) return true;
+        // 400 → 仅小觅 API（api.xiaomimimo.com）可重试
+        // 其他 Provider 的 400 为真正的客户端错误，不应重试
+        if (msg.contains("400")) {
+            return modelRef != null && modelRef.toLowerCase().contains("mimo");
+        }
 
         return false;
     }
