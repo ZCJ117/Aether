@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aether.zcj.cn/schemas/agent-config.schema.json",
+  "title": "Aether Agent YAML Configuration Schema",
+  "description": "Aether Agent 的 ai.agent.config.tables.* YAML 配置校验。将此文件放在项目根目录，VSCode/IDEA 的 YAML 插件自动加载。",
+  "type": "object",
+  "properties": {
+    "ai": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "object",
+          "properties": {
+            "config": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean", "description": "是否启用 Agent 自动装配", "default": false },
+                "tables": {
+                  "type": "object",
+                  "description": "Agent 配置表（key = 配置名）",
+                  "additionalProperties": { "$ref": "#/definitions/AgentConfigTable" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "AgentConfigTable": {
+      "type": "object",
+      "required": ["module"],
+      "properties": {
+        "app-name": { "type": "string" },
+        "agent": { "type": "object", "properties": { "agent-id": {"type":"string"}, "agent-name": {"type":"string"} } },
+        "module": {
+          "type": "object",
+          "required": ["ai-api", "chat-model", "agents", "runner"],
+          "properties": {
+            "ai-api": {
+              "type": "object",
+              "required": ["base-url", "api-key"],
+              "properties": {
+                "base-url": { "type": "string", "format": "uri", "examples": ["https://api.deepseek.com"] },
+                "api-key": { "type": "string", "description": "API 密钥（支持${ENV_VAR}环境变量）" },
+                "completions-path": { "type": "string", "default": "v1/chat/completions" },
+                "embeddings-path": { "type": "string", "default": "v1/embeddings" }
+              }
+            },
+            "chat-model": {
+              "type": "object",
+              "required": ["model"],
+              "properties": {
+                "model": { "type": "string", "description": "全局默认模型ID", "examples": ["deepseek-chat","gpt-4o"] },
+                "tool-mcp-list": { "type": "array", "items": {"$ref":"#/definitions/ToolMcp"} },
+                "tool-skills-list": { "type": "array", "items": {"$ref":"#/definitions/ToolSkills"} }
+              }
+            },
+            "agents": { "type": "array", "minItems": 1, "items": {"$ref":"#/definitions/Agent"} },
+            "agent-workflows": { "type": "array", "items": {"$ref":"#/definitions/AgentWorkflow"} },
+            "runner": {
+              "type": "object",
+              "required": ["agent-name"],
+              "properties": {
+                "agent-name": { "type": "string", "description": "入口Agent或Workflow名称" },
+                "plugin-name-list": { "type": "array", "items": {"type":"string"} }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Agent": {
+      "type": "object",
+      "required": ["name", "instruction"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9_]+$", "description": "Agent名称(英文+数字+下划线)" },
+        "instruction": { "type": "string", "minLength": 1, "description": "系统提示词。支持{outputKey}和{memory}" },
+        "description": {"type":"string"},
+        "outputKey": {"type":"string", "description":"跨Agent输出键名"},
+        "toolNames": { "type": "array", "items":{"type":"string"}, "description":"Agent可用工具名列表。'*'=全部" },
+        "model": {"$ref":"#/definitions/AgentModel"}
+      }
+    },
+    "AgentWorkflow": {
+      "type": "object",
+      "required": ["type", "name", "subAgents"],
+      "properties": {
+        "type": { "type":"string", "enum":["sequential","parallel","loop","graphflow"] },
+        "name": {"type":"string"},
+        "description": {"type":"string"},
+        "subAgents": {"type":"array","items":{"type":"string"},"description":"子Agent或嵌套Workflow名称列表"},
+        "maxIterations": {"type":"integer","minimum":1,"maximum":50,"default":3},
+        "nodes": {
+          "type":"array",
+          "items":{"type":"object","required":["id","agent"],"properties":{"id":{"type":"string"},"agent":{"type":"string"}}},
+          "description":"GRAPHFLOW类型的节点列表"
+        },
+        "edges": {
+          "type":"array",
+          "items":{"type":"object","required":["from","to"],"properties":{"from":{"type":"string"},"to":{"type":"string"},"condition":{"type":"string"},"activation":{"enum":["all","any"]},"exit-condition":{"type":"string"}}},
+          "description":"GRAPHFLOW类型的边列表"
+        }
+      }
+    },
+    "ToolMcp": {
+      "type": "object",
+      "oneOf": [
+        {"properties":{"sse":{"type":"object","required":["name","baseUri"],"properties":{"name":{"type":"string"},"baseUri":{"type":"string","format":"uri"},"sseEndpoint":{"type":"string","default":"/sse"},"requestTimeout":{"type":"integer","default":30000}}}}},
+        {"properties":{"stdio":{"type":"object","required":["name","serverParameters"],"properties":{"name":{"type":"string"},"serverParameters":{"type":"object","required":["command"],"properties":{"command":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"env":{"type":"object"}}}}}}},
+        {"properties":{"local":{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}}}
+      ]
+    },
+    "ToolSkills": {
+      "type": "object",
+      "required": ["type", "path"],
+      "properties": {
+        "type": {"type":"string","enum":["resource","directory"]},
+        "path": {"type":"string"}
+      }
+    },
+    "AgentModel": {
+      "type": "object",
+      "properties": {
+        "modelId": {"type":"string","description":"Agent专属模型ID"},
+        "baseUrl": {"type":"string","format":"uri"},
+        "apiKey": {"type":"string"}
+      }
+    }
+  }
+}
