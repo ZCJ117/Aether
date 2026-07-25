@@ -67,6 +67,7 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **MemoryFacade 统一门面**：`remember()`（LLM 推断元数据）+ `recall()`（自适应召回，Shallow/Deep 双模式）
 - **RecallFlow**：Shallow（单次语义搜索 + 时间衰减）→ Deep（LLM 查询分解 → 多子查询并行搜索 → 去重合并 → LLM 重排序）
 - **MemoryScope 层级隔离**：`"crew/research/agent/analyst"`，支持祖先路径遍历
+- **{memory} 占位符注入**：通过 `ChatService.injectMemory()` 注入记忆到 Agent instruction。instruction 缺少 `{memory}` 占位符时 → WARN 日志提示（不静默丢弃）
 
 ### 2.7 会话持久化
 
@@ -74,12 +75,14 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **双实现**：`MySqlSessionRepository`（JdbcTemplate + UPSERT）+ `RedisSessionRepository`
 - **SessionPersistenceHook**：在 `onAfterExecute` / `onError` 时异步持久化 `Agent.saveState()` JSON
 - **会话恢复**：请求带 `sessionId` → 数据库加载 `state_json` → 反序列化 → `agent.loadState()` 恢复
+- **会话隔离**：`createSession()` 每次调用生成新 UUID（不复用 userId 缓存），多客户端/标签页独立会话互不干扰
 
 ### 2.8 工具生态
 
 - **MCP 协议工具**：`DefaultMcpClientFactory` 按传输类型路由（SSE / Stdio / Local），经 `McpToolAdapter` 适配到 `Tool` 接口
 - **Skills 技能库**：`ToolSkillsCreateService`，支持 resource 和 directory 两种来源，经 `SkillsToolAdapter` 适配
 - **Agent 级工具作用域**：每个 Agent 可配置 `toolNames` allowlist，装配阶段按名过滤 ToolCallback 创建独立 ChatModel Bean（`"chatModel-{agentName}"`）。未配置或 `"*"` = 全部工具（向后兼容）
+- **MCP 连接复用**：`ConcurrentHashMap` 按 `name@baseUri` 缓存 ToolCallback，同一 MCP 端点仅创建一次连接（避免重复 SSE/Stdio 连接）
 - **ToolExecutor 并发编排**：安全组并发 + 不安全组串行，60s 超时保护
 - **指数退避重试**：`ModelInvoker` 自动重试 3 次（1s → 2s → 4s），智能识别 Connection Reset / Timeout / 503 / 429。HTTP 400 仅非标准 API（mimo）可重试，标准 Provider 的 400 不重试
 
