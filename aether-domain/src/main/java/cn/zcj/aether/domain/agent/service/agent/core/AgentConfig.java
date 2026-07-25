@@ -34,6 +34,14 @@ public class AgentConfig {
     @Builder.Default
     String agentType = "react";
 
+    /** P0-#8: 是否启用检查点（默认 true，每 checkpointInterval 轮自动保存） */
+    @Builder.Default
+    boolean checkpointEnabled = true;
+
+    /** P0-#8: 检查点保存间隔（轮数） */
+    @Builder.Default
+    int checkpointInterval = 5;
+
     /**
      * 从现有的 AgentNodeDef 转换（兼容过渡期）
      */

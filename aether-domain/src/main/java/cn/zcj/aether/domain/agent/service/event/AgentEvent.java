@@ -22,6 +22,7 @@ import java.util.UUID;
     @JsonSubTypes.Type(value = AgentEvent.ToolCallCompleted.class, name = "tool.call.completed"),
     @JsonSubTypes.Type(value = AgentEvent.CompactTriggered.class, name = "compact.triggered"),
     @JsonSubTypes.Type(value = AgentEvent.ErrorOccurred.class, name = "error.occurred"),
+    @JsonSubTypes.Type(value = AgentEvent.CheckpointCreated.class, name = "checkpoint.created"),
 })
 public interface AgentEvent {
 
@@ -117,4 +118,15 @@ public interface AgentEvent {
                  agentId, sessionId, correlationId, errorType, errorMessage, turnNumber);
         }
     }
+
+    /** P0-#8: 检查点创建事件（WAL 日志） */
+    record CheckpointCreated(
+        String eventId,
+        java.time.Instant timestamp,
+        String agentId,
+        String sessionId,
+        String correlationId,
+        int turnNumber,
+        int messageCount
+    ) implements AgentEvent {}
 }

@@ -122,6 +122,17 @@ public class AgentEventPublisher {
         log.error("error_occurred: {}", toJson(event));
     }
 
+    /**
+     * P0-#8: 发布检查点事件（WAL 日志）
+     */
+    public void publishCheckpoint(String agentId, String sessionId, String correlationId,
+                                   int turnNumber, int messageCount) {
+        AgentEvent.CheckpointCreated event = new AgentEvent.CheckpointCreated(
+                java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
+                agentId, sessionId, correlationId, turnNumber, messageCount);
+        log.info("checkpoint_created: {}", toJson(event));
+    }
+
     private String toJson(Object obj) {
         try { return MAPPER.writeValueAsString(obj); } catch (Exception e) { return obj.toString(); }
     }

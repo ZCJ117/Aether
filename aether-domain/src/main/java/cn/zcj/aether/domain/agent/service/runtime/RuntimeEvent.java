@@ -24,6 +24,8 @@ public class RuntimeEvent {
     private String internalLlmModel;      // C2: 使用的模型名
     private long internalLlmDurationMs;   // C2: 耗时（毫秒）
     private boolean internalLlmSuccess;   // C2: 是否成功
+    private String checkpointSessionId;  // P0-#8
+    private int checkpointTurnNumber;    // P0-#8
 
     public enum EventType {
         textDelta,
@@ -34,7 +36,8 @@ public class RuntimeEvent {
         done,
         maxTurnsReached,
         error,
-        internalLlmCall   // C2: 非主循环 LLM 调用
+        internalLlmCall,   // C2: 非主循环 LLM 调用
+        checkpoint          // P0-#8: Agent 检查点事件
     }
 
     public static RuntimeEvent text(String delta) {
@@ -57,6 +60,14 @@ public class RuntimeEvent {
                 .internalLlmModel(model)
                 .internalLlmDurationMs(durationMs)
                 .internalLlmSuccess(success)
+                .build();
+    }
+
+    public static RuntimeEvent checkpoint(String sessionId, int turnNumber) {
+        return RuntimeEvent.builder()
+                .type(EventType.checkpoint)
+                .checkpointSessionId(sessionId)
+                .checkpointTurnNumber(turnNumber)
                 .build();
     }
 }
