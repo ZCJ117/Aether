@@ -1,5 +1,6 @@
 package cn.zcj.aether.domain.agent.model.valobj;
 
+import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 import java.util.List;
@@ -67,7 +68,9 @@ public class AiAgentConfigTableVO {
             //NOTE: 这里的 AiApi 是为了适配 DeepSeek 兼容 OpenAI 协议的 API 配置，
             // 如果后续接入其他大模型，可以在这里扩展更多字段。
             //Note 为什么有这些字段？参考SequentialAgentTest中的OpenAiApi配置，以及SpringAiToolTest中的OpenAiApi配置。
+            @NotBlank(message = "ai-api.base-url 不能为空")
             private String baseUrl; //基础的URL，最终会和 embeddingsPath或者completionsPath 拼接成完整的API地址
+            @NotBlank(message = "ai-api.api-key 不能为空")
             private String apiKey;  //鉴权用的 API Key
             private String completionsPath = "/v1/chat/completions"; //聊天接口路径,"v1"要和官方文档保持一致
             private String embeddingsPath = "/v1/embeddings"; //向量接口路径
@@ -77,6 +80,7 @@ public class AiAgentConfigTableVO {
         @Data
         public static class ChatModel {
 
+            @NotBlank(message = "chat-model.model 不能为空")
             private String model;
 
             private List<ToolMcp> toolMcpList; // MCP 服务器配置列表，智能体通过这些 MCP 服务器连接工具，获取工具调用结果
@@ -146,7 +150,9 @@ public class AiAgentConfigTableVO {
 
         @Data
         public static class Agent {
+            @NotBlank(message = "agent.name 不能为空")
             private String name;
+            @NotBlank(message = "agent.instruction 不能为空")
             private String instruction;
             private String description;
             private String outputKey;

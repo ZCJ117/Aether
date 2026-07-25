@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.stream.Collectors;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -33,6 +34,8 @@ public class AgentGraphCompiler {
     private static final Set<String> RUNTIME_PLACEHOLDERS = Set.of("memory");
 
     public AgentGraph compile(AiAgentConfigTableVO config) {
+        validateConfigSchema(config);
+
         String appName = config.getAppName();
         AiAgentConfigTableVO.Agent agent = config.getAgent();
         AiAgentConfigTableVO.Module module = config.getModule();
@@ -201,6 +204,68 @@ public class AgentGraphCompiler {
 
         log.info("outputKey 引用校验通过: {} 个 Agent，{} 个已定义 outputKey",
                 agentDefs.size(), definedOutputKeys.size());
+    }
+
+    /**
+     * P0-#12: 编译前校验配置完整性。
+     * 校验 agent 引用、workflow subAgents 引用、runner 引用是否都存在。
+     * 借鉴 MetaGPT 的就地校验模式（校验逻辑与业务类紧耦合）。
+     */
+    private void validateConfigSchema(AiAgentConfigTableVO config) {
+        var module = config.getModule();
+        if (module == null) {
+            throw new AgentCompileException("配置缺少 module 节点");
+        }
+
+        String runnerAgentName = module.getRunner() != null
+                ? module.getRunner().getAgentName() : null;
+        if (runnerAgentName == null || runnerAgentName.isBlank()) {
+            throw new AgentCompileException("配置缺少 runner.agent-name，无法确定入口 Agent");
+        }
+
+        var agents = module.getAgents();
+        if (agents == null || agents.isEmpty()) {
+            throw new AgentCompileException("配置缺少 agents[] 列表");
+        }
+
+        var agentNames = agents.stream()
+                .map(AiAgentConfigTableVO.Module.Agent::getName)
+                .collect(Collectors.toSet());
+        var workflowNames = new HashSet<String>();
+        if (module.getAgentWorkflows() != null) {
+            module.getAgentWorkflows().forEach(wf -> workflowNames.add(wf.getName()));
+        }
+
+        if (!agentNames.contains(runnerAgentName) && !workflowNames.contains(runnerAgentName)) {
+            throw new AgentCompileException("runner.agent-name [" + runnerAgentName
+                    + "] 不在 agents[] 或 agent-workflows[] 中");
+        }
+
+        if (module.getAgentWorkflows() != null) {
+            for (var wf : module.getAgentWorkflows()) {
+                if (wf.getSubAgents() != null) {
+                    for (String subAgent : wf.getSubAgents()) {
+                        if (!agentNames.contains(subAgent) && !workflowNames.contains(subAgent)) {
+                            throw new AgentCompileException("Workflow [" + wf.getName()
+                                    + "] 的 subAgent [" + subAgent + "] 未在 agents[] 中定义");
+                        }
+                    }
+                }
+                if (wf.getNodes() != null) {
+                    for (var node : wf.getNodes()) {
+                        String nodeAgent = node.getAgent();
+                        if (nodeAgent != null && !agentNames.contains(nodeAgent)
+                                && !workflowNames.contains(nodeAgent)) {
+                            throw new AgentCompileException("Workflow [" + wf.getName()
+                                    + "] 的 node.agent [" + nodeAgent + "] 未在 agents[] 中定义");
+                        }
+                    }
+                }
+            }
+        }
+
+        log.info("配置 Schema 校验通过: {} 个 Agent, {} 个 Workflow, entryPoint={}",
+                agentNames.size(), workflowNames.size(), runnerAgentName);
     }
 
     /**
