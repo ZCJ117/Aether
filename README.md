@@ -1,8 +1,8 @@
 # Aether: 企业级多 Agent 协作架构
 
-Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
+Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
 
-设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架，累计 55+ 源文件、9 个测试类。
+设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架，累计 60+ 源文件、9 个测试类（93 个测试用例）。
 
 ---
 
@@ -11,14 +11,16 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 ### 2.1 Agent 引擎与编排
 
 - **Agent 接口驱动**：统一的 `Agent` 核心接口（身份标识 → 执行 → 生命周期 → 状态序列化 → 能力声明），通过 `AgentFactory` 注册表按 `agentType` 创建不同实现
-- **ReActAgent 主循环**：Think-Act-Observe 四阶段执行—上下文压缩 → 模型调用 → 退出判断 → 工具执行，最大 100 轮
+- **ReActAgent 主循环**：Think-Act-Observe 四阶段执行—上下文压缩 → 模型调用 → 退出判断 → 工具执行，最大 100 轮，连续 3 轮工具全失败自动熔断
+- **Agent 级工具作用域**（借鉴 AgentScope Java + cc-haha）：YAML 中 `toolNames: [read, write]` 显式声明每个 Agent 可用的工具子集，编译期校验工具存在性，装配期创建 per-agent ChatModel Bean（独立工具集）。`"*"` 通配符 = 全部工具（向后兼容）
 - **四种多 Agent 协作模式**：
   - `SEQUENTIAL` — 串行流水线，`{outputKey}` 模板跨 Agent 传递结果
   - `PARALLEL` — 并发执行，CountDownLatch 同步 + 事件安全转发 → 结果合并
   - `LOOP` — 循环迭代至收敛（连续两轮输出相同）
   - `GRAPHFLOW` — **DAG 图编排**：拓扑排序 + 就绪队列调度 + SpEL 条件路由 + fan-in/fan-out + 条件循环退出
 - **Per-Agent 异构模型**：不同 Agent 可配置不同模型（GPT-4o + Claude Sonnet + DeepSeek 混合编队）
-- **上下文压缩引擎**：三层压缩（工具结果截断 → 冗余清理 → LLM 摘要压缩），Token 估算驱动自动触发
+- **上下文压缩引擎**：三层压缩（工具结果截断 → 冗余清理 → LLM 摘要压缩），Token 估算驱动自动触发。LLM 摘要调用通过 `internalLlmCall` 事件透明化
+- **{outputKey} 编译期校验**（借鉴 MetaGPT ActionNode）：启动时验证 Agent instruction 中所有 `{key}` 引用均在上下游 Agent 的 `outputKey` 中有定义。`{memory}` 等运行时占位符自动豁免。未解析引用 → `AgentCompileException` 启动失败
 
 ### 2.2 模型提供商可插拔
 
@@ -77,8 +79,9 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 
 - **MCP 协议工具**：`DefaultMcpClientFactory` 按传输类型路由（SSE / Stdio / Local），经 `McpToolAdapter` 适配到 `Tool` 接口
 - **Skills 技能库**：`ToolSkillsCreateService`，支持 resource 和 directory 两种来源，经 `SkillsToolAdapter` 适配
+- **Agent 级工具作用域**：每个 Agent 可配置 `toolNames` allowlist，装配阶段按名过滤 ToolCallback 创建独立 ChatModel Bean（`"chatModel-{agentName}"`）。未配置或 `"*"` = 全部工具（向后兼容）
 - **ToolExecutor 并发编排**：安全组并发 + 不安全组串行，60s 超时保护
-- **指数退避重试**：`ModelInvoker` 自动重试 3 次（1s → 2s → 4s），智能识别 Connection Reset / Timeout / 503 / 429
+- **指数退避重试**：`ModelInvoker` 自动重试 3 次（1s → 2s → 4s），智能识别 Connection Reset / Timeout / 503 / 429。HTTP 400 仅非标准 API（mimo）可重试，标准 Provider 的 400 不重试
 
 ### 2.9 测试覆盖
 
@@ -408,7 +411,7 @@ agent-workflows:
     subAgents: [writer, reviewer]
 ```
 
-### 6.3 Per-Agent 异构模型配置
+### 6.3 Per-Agent 异构模型与工具作用域
 
 ```yaml
 agents:
@@ -429,6 +432,11 @@ agents:
   - name: writer
     instruction: "你是撰写者..."
     # 不配置 model → 使用全局 chat-model
+
+  - name: code-assistant
+    instruction: "你是代码助手，只能读写文件..."
+    toolNames: [read_file, write_file, edit_file]  # ← Agent 级工具作用域
+    # 不配置 model → 使用全局 chat-model，但只暴露三个文件工具
 ```
 
 ### 6.4 GraphFlow DAG 条件路由配置
@@ -549,10 +557,12 @@ npm run dev
 | 并行 Agent 超时 | `GraphExecutor.executeParallel()` | 10min |
 | 模型调用重试 | `ModelInvoker.java` | 3 次，退避 1s→2s→4s，上限 15s |
 | 可重试错误 | `ModelInvoker.isRetryable()` | Connection reset, Broken pipe, Timeout, 503, 502, 429 |
-| 不可重试错误 | `ModelInvoker.isRetryable()` | 400, 401, 403, 404 |
+| HTTP 400 重试 | `ModelInvoker.isRetryable()` | 仅 mimo Provider 可重试（非标准 API 瞬时错误），其他 Provider 视为客户端错误 |
+| 不可重试错误 | `ModelInvoker.isRetryable()` | 401, 403, 404 |
 | 上下文压缩阈值 | `ContextManager.java` | `(contextWindow - 20000) × 0.9` |
 | 工具结果截断 | `ContextManager.applyToolResultBudget()` | >50000 字符 → 500 字符 + 警告 |
 | 最大轮次 | `ReActAgent.MAX_TURNS` | 100 |
+| 连续工具失败熔断 | `ReActAgent.queryLoop()` | 连续 3 轮全部工具调用失败 → 强制退出 |
 | 消息修剪 | `ReActAgent.queryLoop()` | >500 条 → 保留第一条 + 最近 200 条 |
 | RateLimit 窗口 | `RateLimitMiddleware` | 可配置（默认每窗口 10 次） |
 
@@ -563,10 +573,10 @@ npm run dev
 | 参考框架 | 语言 | 借鉴的设计 |
 |---------|------|-----------|
 | **AutoGen** (Microsoft) | Python | Agent 协议 + DiGraph & GraphFlowManager + AssistantAgent Per-Agent 模型 + OTel Span |
-| **AgentScope Java** (阿里) | Java | AgentState 双模式访问 + Hook 系统 + MiddlewareBase 五层洋葱 + AgentEvent 多态 + PermissionEngine |
-| **CrewAI** | Python | BaseAgent 可序列化实体 + BaseLLM 类层次 + EncodingFlow/RecallFlow 记忆管线 + CheckpointConfig |
-| **MetaGPT** | Python | RoleContext.llm per-role + Working/LongTerm Memory 分层 + ProjectRepo 持久化 |
-| **cc-haha** | TypeScript | cost-tracker token 核算 + SessionMemory 后台 Fork Agent + PermissionMode 四级模式 |
+| **AgentScope Java** (阿里) | Java | AgentState 双模式访问 + Hook 系统 + MiddlewareBase 五层洋葱 + AgentEvent 多态 + **Per-Agent Toolkit 深拷贝**（→ Agent 级工具作用域） + PermissionEngine |
+| **CrewAI** | Python | BaseAgent 可序列化实体 + BaseLLM 类层次 + **EncodingFlow/RecallFlow 记忆管线**（→ llmRerank 真实实现） + CheckpointConfig + EventBus（→ internalLlmCall 事件化） |
+| **MetaGPT** | Python | RoleContext.llm per-role + Working/LongTerm Memory 分层 + ProjectRepo 持久化 + **ActionNode 编译期校验**（→ {outputKey} 启动时校验） |
+| **cc-haha** | TypeScript | cost-tracker token 核算 + SessionMemory 后台 Fork Agent + **显式 allow/deny 工具列表**（→ toolNames YAML 配置） + PermissionMode 四级模式 |
 
 ---
 
