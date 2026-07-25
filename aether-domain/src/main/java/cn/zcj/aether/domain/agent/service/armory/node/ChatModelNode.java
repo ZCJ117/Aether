@@ -129,6 +129,12 @@ public class ChatModelNode extends AbstractArmorySupport {
         // 计算该 Agent 允许的工具名集合
         Set<String> allowedToolNames = resolveToolNames(agent);
 
+        // 优化：无工具定制 + 无模型定制 → 复用全局 ChatModel，无需创建 per-agent Bean
+        if (allowedToolNames == null && (agent.getModel() == null || agent.getModel().getModelId() == null)) {
+            log.debug("Agent [{}] 使用全局工具和模型，跳过 per-agent ChatModel", agent.getName());
+            return;
+        }
+
         // 按 allowlist 过滤 ToolCallback
         List<ToolCallback> filteredCallbacks;
         if (allowedToolNames == null) {
