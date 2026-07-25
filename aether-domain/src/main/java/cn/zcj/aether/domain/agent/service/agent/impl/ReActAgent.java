@@ -1,5 +1,7 @@
 package cn.zcj.aether.domain.agent.service.agent.impl;
 
+import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointCollector;
+import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointData;
 import cn.zcj.aether.domain.agent.service.agent.core.*;
 import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
 import cn.zcj.aether.domain.agent.service.agent.middleware.AgentMiddleware;
@@ -41,6 +43,9 @@ public class ReActAgent extends BaseAgent {
     private final ContextManager contextManager;
     private final AgentEventPublisher eventPublisher;  // P0-6: 可选，无 Bean 时为 null
 
+    /** P0-#8: 检查点收集器（可选注入，无 Bean 时为 null） */
+    private final CheckpointCollector checkpointCollector;
+
     private Instant startTime;
 
     public ReActAgent(AgentConfig config,
@@ -48,13 +53,15 @@ public class ReActAgent extends BaseAgent {
                       ModelInvoker modelInvoker,
                       ToolExecutor toolExecutor,
                       ContextManager contextManager,
-                      AgentEventPublisher eventPublisher) {
+                      AgentEventPublisher eventPublisher,
+                      CheckpointCollector checkpointCollector) {
         super(config);
         this.chatModel = chatModel;
         this.modelInvoker = modelInvoker;
         this.toolExecutor = toolExecutor;
         this.contextManager = contextManager;
         this.eventPublisher = eventPublisher;
+        this.checkpointCollector = checkpointCollector;
     }
 
     @Override
@@ -277,6 +284,12 @@ public class ReActAgent extends BaseAgent {
                         results.size(), turnDurationMs);
             }
 
+            // P0-#8: 每 N 轮自动保存检查点（借鉴 CrewAI 多粒度检查点 + cc-haha WAL 日志模式）
+            if (config.isCheckpointEnabled()
+                    && state.getCurrentTurn() % config.getCheckpointInterval() == 0) {
+                saveCheckpoint(ctx, emitter, state.getCurrentTurn());
+            }
+
             emitter.onNext(RuntimeEvent.builder()
                     .type(RuntimeEvent.EventType.turnComplete)
                     .turnCount(state.getCurrentTurn())
@@ -343,6 +356,44 @@ public class ReActAgent extends BaseAgent {
             return objectMapper.writeValueAsString(input);
         } catch (Exception e) {
             return String.valueOf(input);
+        }
+    }
+
+    /**
+     * P0-#8: 保存检查点快照。
+     * 通过 FileCheckpointCollector 写入 .claude/checkpoints/ 目录（文件快照），
+     * 同时通过 AgentEventPublisher 写入结构化 JSON 日志（WAL），
+     * 并发射 checkpoint SSE 事件供前端展示检查点标记。
+     *
+     * 异常不阻断主循环——检查点保存是尽力而为的。
+     */
+    private void saveCheckpoint(RuntimeContext ctx,
+            FlowableEmitter<RuntimeEvent> emitter, int turnNumber) {
+        try {
+            java.util.Map<String, Object> stateJson = saveState();
+            CheckpointData ckpt = CheckpointData.create(
+                    ctx.sessionId(), getId(), turnNumber,
+                    stateJson, state.messagesMutable().size());
+
+            // 文件快照
+            if (checkpointCollector != null) {
+                checkpointCollector.save(ckpt);
+            }
+
+            // WAL 日志（结构化事件）
+            if (eventPublisher != null) {
+                eventPublisher.publishCheckpoint(getId(), ctx.sessionId(),
+                        ctx.correlationId(), turnNumber, ckpt.getMessageCount());
+            }
+
+            // SSE 事件（前端展示）
+            emitter.onNext(RuntimeEvent.checkpoint(ctx.sessionId(), turnNumber));
+
+            log.debug("检查点已保存: agentId={}, sessionId={}, turn={}, messages={}",
+                    getId(), ctx.sessionId(), turnNumber, ckpt.getMessageCount());
+        } catch (Exception e) {
+            log.warn("检查点保存失败（不阻断主循环）: agentId={}, sessionId={}, turn={}",
+                    getId(), ctx.sessionId(), turnNumber, e);
         }
     }
 }

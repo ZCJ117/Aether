@@ -2,6 +2,7 @@ package cn.zcj.aether.domain.agent.service.agent;
 
 import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
+import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointCollector;
 import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
 import cn.zcj.aether.domain.agent.service.agent.impl.ReActAgent;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
@@ -55,8 +56,15 @@ public class DefaultAgentFactory {
                 } catch (Exception ignored) {
                     // 无 EventPublisher 时不影响 Agent 创建
                 }
+                // P0-#8: 注入 CheckpointCollector（可选）
+                CheckpointCollector checkpointCollector = null;
+                try {
+                    checkpointCollector = applicationContext.getBean(CheckpointCollector.class);
+                } catch (Exception ignored) {
+                    // 无 CheckpointCollector 时不影响 Agent 创建
+                }
                 ReActAgent agent = new ReActAgent(config, chatModel, modelInvoker,
-                        toolExecutor, contextManager, publisher);
+                        toolExecutor, contextManager, publisher, checkpointCollector);
                 injectHooks(agent);
                 return agent;
             }
