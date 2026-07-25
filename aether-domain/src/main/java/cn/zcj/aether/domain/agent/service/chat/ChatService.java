@@ -8,6 +8,8 @@ import cn.zcj.aether.domain.agent.model.valobj.AiAgentRegisterVO;
 import cn.zcj.aether.domain.agent.model.valobj.properties.AiAgentAutoConfigProperties;
 import cn.zcj.aether.domain.agent.service.IChatService;
 import cn.zcj.aether.domain.agent.service.agent.DefaultAgentFactory;
+import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointCollector;
+import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointData;
 import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentState;
@@ -74,6 +76,13 @@ public class ChatService implements IChatService {
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private SessionRepository sessionRepository;
+
+    /**
+     * P0-#8 新增：检查点收集器（用于从文件检查点恢复 Agent 状态）。
+     * required=false：未配置检查点收集器时不影响启动。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private CheckpointCollector checkpointCollector;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -250,6 +259,36 @@ public class ChatService implements IChatService {
                 chatCommandEntity.getTexts() != null && !chatCommandEntity.getTexts().isEmpty()
                         ? chatCommandEntity.getTexts().get(0).getMessage()
                         : "");
+    }
+
+    /**
+     * P0-#8: 从最新检查点恢复会话。
+     * 如果存在检查点，加载 agentState → 返回给调用方用于 loadState()。
+     * 无检查点则抛出 AppException。
+     *
+     * 借鉴 CrewAI 的 from_checkpoint（快照恢复）+ MetaGPT 的 recovered 标志。
+     */
+    public java.util.Map<String, Object> resumeFromCheckpoint(String agentId, String sessionId) {
+        if (checkpointCollector == null) {
+            throw new AppException(ResponseCode.E0001.getCode(), "检查点收集器未配置");
+        }
+
+        var ckpt = checkpointCollector.loadLatest(sessionId)
+                .orElseThrow(() -> new AppException(ResponseCode.E0001.getCode(),
+                        "会话 " + sessionId + " 无可用检查点"));
+
+        log.info("从检查点恢复: agentId={}, sessionId={}, turnNumber={}, messageCount={}",
+                agentId, sessionId, ckpt.getTurnNumber(), ckpt.getMessageCount());
+
+        return ckpt.getAgentState();
+    }
+
+    /**
+     * P0-#8: 列出会话的所有检查点（按时间倒序）
+     */
+    public java.util.List<CheckpointData> listCheckpoints(String sessionId) {
+        if (checkpointCollector == null) return List.of();
+        return checkpointCollector.listCheckpoints(sessionId);
     }
 
     /**
