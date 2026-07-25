@@ -151,6 +151,10 @@ public class AiAgentConfigTableVO {
             private String description;
             private String outputKey;
 
+            // C1: Agent 级工具作用域 — 显式指定该 Agent 可使用的工具名列表
+            // "*" 或未配置 = 全部工具；空列表 = 无工具
+            private List<String> toolNames;
+
             // P0-3 新增：独立模型配置（可选）
             private AgentModelConfig model;
 

@@ -1,0 +1,46 @@
+# EVAL LOG: agent-architecture-upgrade
+
+## Run #1 — 2026-06-17 10:44 CST
+
+### Build
+- `mvn clean compile`: **PASS** (0 errors, 0 warnings)
+
+### Tests
+- `mvn test -pl aether-domain`: **PASS** — 94/94 tests passed
+- 1 test fixed pre-run: `agentEdgeTypeShouldThrowForNull` renamed to `agentEdgeTypeShouldReturnNullForNull` — P1-1 intentionally changed `fromYamlType(null)` behavior from throw to return-null
+
+### Capability Evals — Code-Based (33/33 PASS)
+
+| Module | Evals | Pass | Fail |
+|--------|-------|------|------|
+| P0-1: Agent Core | C1.1–C1.4 | 4 | 0 |
+| P1-1: GraphFlow DAG | C2.1–C2.6 | 6 | 0 |
+| P1-2: Middleware Chain | C3.1–C3.5 | 5 | 0 |
+| P1-3: Permission Engine | C4.1–C4.5 | 5 | 0 |
+| P1-4: Memory Facade | C5.1–C5.5 | 5 | 0 |
+| P1-5: Observability | C6.1–C6.5 | 5 | 0 |
+| P1-6: Hooks System | C7.1–C7.3 | 3 | 0 |
+
+### Regression Evals (10/10 PASS)
+
+| # | Eval | Status |
+|---|------|--------|
+| R1 | Maven 全量编译 | PASS |
+| R2 | 所有域测试通过 | PASS (94/94) |
+| R3 | 未知类型抛出 AppException | PASS |
+| R4 | null 安全返回 null | PASS |
+| R5 | 空 edges → 单 Agent | PASS |
+| R6 | 非空 edges → 多 Agent | PASS |
+| R7 | AgentConfig 字段映射 | PASS |
+| R8 | forkSource 隔离 | PASS |
+| R9 | resolveTemplate 多键 | PASS |
+| R10 | AgentState 防御性拷贝 | PASS |
+
+### Metrics
+- pass@1: **100%** (33/33 capability + 10/10 regression)
+- pass^3: TBD (needs 2 more independent runs)
+
+### Notes
+- All capability evals are **code-based** (deterministic grep checks) — no model-based grading needed
+- 1 test updated: `agentEdgeTypeShouldThrowForNull` → `agentEdgeTypeShouldReturnNullForNull`
+- Next run: verify pass^3 by re-running with clean state

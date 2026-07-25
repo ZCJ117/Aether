@@ -1,0 +1,52 @@
+{
+  "eval": "agent-architecture-upgrade",
+  "commit": "03f6c86",
+  "date": "2026-06-17",
+  "tests": {
+    "total": 94,
+    "passed": 94,
+    "failed": 0,
+    "skipped": 0,
+    "modules": ["aether-domain"],
+    "note": "1 test fixed (agentEdgeTypeShouldThrowForNull → agentEdgeTypeShouldReturnNullForNull) — P1-1 intentionally changed behavior from throw to return-null"
+  },
+  "build": {
+    "mvnCleanCompile": "PASS",
+    "exitCode": 0
+  },
+  "capability_evals": {
+    "total": 33,
+    "passed": 33,
+    "failed": 0,
+    "modules": {
+      "P0-1_agent_core": { "total": 4, "passed": 4, "failed": 0 },
+      "P1-1_graphflow_dag": { "total": 6, "passed": 6, "failed": 0 },
+      "P1-2_middleware_chain": { "total": 5, "passed": 5, "failed": 0 },
+      "P1-3_permission_engine": { "total": 5, "passed": 5, "failed": 0 },
+      "P1-4_memory_facade": { "total": 5, "passed": 5, "failed": 0 },
+      "P1-5_observability": { "total": 5, "passed": 5, "failed": 0 },
+      "P1-6_hooks_system": { "total": 3, "passed": 3, "failed": 0 }
+    }
+  },
+  "regression_evals": {
+    "total": 10,
+    "passed": 10,
+    "failed": 0,
+    "details": {
+      "R1_build": "PASS",
+      "R2_all_tests": "PASS (94/94)",
+      "R3_unknown_type_throws": "PASS",
+      "R4_null_returns_null": "PASS (fixed test)",
+      "R5_empty_edges_single": "PASS",
+      "R6_nonempty_edges_multi": "PASS",
+      "R7_config_from_node_def": "PASS",
+      "R8_fork_source_isolation": "PASS",
+      "R9_template_resolve_multi": "PASS",
+      "R10_defensive_copy": "PASS"
+    }
+  },
+  "metrics": {
+    "pass@1": 1.0,
+    "pass^3_target": "TBD — needs 3 separate runs"
+  }
+}

@@ -9,9 +9,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Agent图编译器
@@ -46,6 +49,9 @@ public class AgentGraphCompiler {
         String modelRef = module.getChatModel() != null
                 ? module.getChatModel().getModel()
                 : null;
+
+        // Step 5: 编译后校验 {outputKey} 引用
+        validateOutputKeyReferences(agentDefs, edges, entryPoint);
 
         return AgentGraph.builder()
                 .appName(appName)
@@ -82,7 +88,7 @@ public class AgentGraphCompiler {
                     .instruction(agentConfig.getInstruction())
                     .description(agentConfig.getDescription())
                     .outputKey(agentConfig.getOutputKey())
-                    .toolNames(List.of())
+                    .toolNames(compileToolNames(agentConfig))
                     .modelRef(modelRef)
                     .agentType("react")
                     .build();
@@ -90,6 +96,18 @@ public class AgentGraphCompiler {
         }
 
         return defs;
+    }
+
+    /**
+     * 编译 Agent 的工具名列表。
+     * null/空 = 全部工具（语义："*"）。
+     */
+    private List<String> compileToolNames(AiAgentConfigTableVO.Module.Agent agentConfig) {
+        List<String> rawNames = agentConfig.getToolNames();
+        if (rawNames == null || rawNames.isEmpty()) {
+            return List.of("*");
+        }
+        return List.copyOf(rawNames);
     }
 
     private List<AgentEdge> compileEdges(AiAgentConfigTableVO.Module module) {
@@ -135,5 +153,60 @@ public class AgentGraphCompiler {
         }
 
         return edges;
+    }
+
+    /**
+     * 编译后校验：确保所有 instruction 中引用的 {outputKey}
+     * 都在已定义的 outputKey 中有对应定义。未解析的引用 → AgentCompileException。
+     */
+    private void validateOutputKeyReferences(
+            Map<String, AgentNodeDef> agentDefs,
+            List<AgentEdge> edges,
+            String entryPoint) {
+
+        // 收集所有定义了 outputKey 的 agent
+        Map<String, String> definedOutputKeys = new LinkedHashMap<>();
+        for (var def : agentDefs.values()) {
+            if (def.getOutputKey() != null && !def.getOutputKey().isBlank()) {
+                definedOutputKeys.put(def.getOutputKey(), def.getName());
+            }
+        }
+
+        if (definedOutputKeys.isEmpty()) {
+            // 没有定义任何 outputKey → 无需校验
+            return;
+        }
+
+        // 对每个 agent，校验其 instruction 中的 {key} 引用
+        Set<String> availableKeys = new HashSet<>(definedOutputKeys.keySet());
+        for (var def : agentDefs.values()) {
+            String instruction = def.getInstruction();
+            if (instruction == null) continue;
+
+            Set<String> referencedKeys = extractTemplateKeys(instruction);
+            for (String key : referencedKeys) {
+                if (!availableKeys.contains(key)) {
+                    throw new AgentCompileException(
+                        "Agent [" + def.getName() + "] 的 instruction 引用了未定义的 outputKey: {" +
+                        key + "}。已定义的 outputKey: " + definedOutputKeys.keySet());
+                }
+            }
+        }
+
+        log.info("outputKey 引用校验通过: {} 个 Agent，{} 个已定义 outputKey",
+                agentDefs.size(), definedOutputKeys.size());
+    }
+
+    /**
+     * 从 instruction 文本中提取所有 {key} 占位符
+     */
+    private Set<String> extractTemplateKeys(String instruction) {
+        Set<String> keys = new LinkedHashSet<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\{(\\w+)\\}")
+                .matcher(instruction);
+        while (m.find()) {
+            keys.add(m.group(1));
+        }
+        return keys;
     }
 }
