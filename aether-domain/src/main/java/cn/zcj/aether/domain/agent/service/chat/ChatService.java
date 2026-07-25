@@ -29,7 +29,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * AI Agent对话服务 — 基于自研AgentRuntime (替代Google ADK)
@@ -78,7 +77,6 @@ public class ChatService implements IChatService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final Map<String, String> userSessions = new ConcurrentHashMap<>();
 
     @Override
     public List<AiAgentConfigTableVO.Agent> queryAiAgentConfigList() {
@@ -102,11 +100,9 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.E0001.getCode());
         }
 
-        return userSessions.computeIfAbsent(userId, uid -> {
-            String sessionId = UUID.randomUUID().toString();
-            log.info("创建会话 agentId={} userId={} sessionId={}", agentId, userId, sessionId);
-            return sessionId;
-        });
+        String sessionId = UUID.randomUUID().toString().replace("-", "");
+        log.info("创建会话 agentId={} userId={} sessionId={}", agentId, userId, sessionId);
+        return sessionId;
     }
 
     @Override
