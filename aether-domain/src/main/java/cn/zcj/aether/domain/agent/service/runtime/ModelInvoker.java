@@ -30,12 +30,51 @@ import java.util.Map;
 @Service
 public class ModelInvoker {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private ModelCallCache modelCallCache;
+
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     // 重试配置
     private static final int MAX_RETRIES = 3;
     private static final long INITIAL_BACKOFF_MS = 1000;
     private static final long MAX_BACKOFF_MS = 15000;
+
+    /**
+     * P1-#2: 带缓存的流式调用。
+     * 缓存命中 → 直接返回；未命中 → callWithStream → 写入缓存。
+     */
+    public ModelCallResult callWithStreamCached(
+            ChatModel chatModel,
+            List<Message> messages,
+            String systemPrompt,
+            String modelName,
+            boolean cacheEnabled,
+            int cacheTtlSeconds) {
+
+        if (!cacheEnabled) {
+            return callWithStream(chatModel, messages, systemPrompt, modelName);
+        }
+
+        String key = ModelCallCache.cacheKey(modelName, messages);
+        ModelCallResult cached = modelCallCache.get(key);
+        if (cached != null) {
+            return ModelCallResult.builder()
+                    .events(cached.getEvents())
+                    .fullText(cached.getFullText())
+                    .toolCalls(cached.getToolCalls())
+                    .inputTokens(cached.getInputTokens())
+                    .outputTokens(cached.getOutputTokens())
+                    .cacheTokens(cached.getOutputTokens())
+                    .build();
+        }
+
+        ModelCallResult result = callWithStream(chatModel, messages, systemPrompt, modelName);
+        if (!result.hasError()) {
+            modelCallCache.put(key, result, cacheTtlSeconds);
+        }
+        return result;
+    }
 
     @SuppressWarnings("unchecked")
     public ModelCallResult callWithStream(
