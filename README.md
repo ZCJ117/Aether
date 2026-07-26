@@ -1,8 +1,8 @@
 # Aether: 企业级多 Agent 协作架构
 
-Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
+Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、**PlanActAgent 规划执行模式**、**检查点/恢复机制**、**LLM 响应缓存**、工具沙箱、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
 
-设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架，累计 60+ 源文件、9 个测试类（93 个测试用例）。
+设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架，累计 75+ 源文件、9 个测试类（93 个测试用例）。
 
 ---
 
@@ -19,8 +19,12 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
   - `LOOP` — 循环迭代至收敛（连续两轮输出相同）
   - `GRAPHFLOW` — **DAG 图编排**：拓扑排序 + 就绪队列调度 + SpEL 条件路由 + fan-in/fan-out + 条件循环退出
 - **Per-Agent 异构模型**：不同 Agent 可配置不同模型（GPT-4o + Claude Sonnet + DeepSeek 混合编队）
+- **PlanActAgent 规划执行模式**（借鉴 MetaGPT PLAN_AND_ACT + AutoGen MagenticOne）：三阶段执行——Plan（LLM 生成 JSON 步骤计划）→ Act（每步独立 ReAct 子循环）→ Synthesize（合并结果）。`agentType: plan_act`
+- **检查点/恢复机制**（借鉴 CrewAI 多粒度检查点 + cc-haha WAL 日志）：ReActAgent 每 5 轮自动保存快照到 `.claude/checkpoints/`，通过 `AgentEventPublisher` 写 WAL 事件日志，`ChatService.resumeFromCheckpoint()` 恢复。PlanActAgent 每步自动保存检查点
+- **LLM 响应缓存**（借鉴 MetaGPT 消息级去重 + AgentScope Middleware 拦截）：Caffeine LRU 内存缓存，key = modelName + messages 内容哈希，TTL 60s，最大 1000 条。`ModelInvoker.callWithStreamCachedAsync()` 透明拦截，缓存命中直接返回（节省 token）
 - **上下文压缩引擎**：三层压缩（工具结果截断 → 冗余清理 → LLM 摘要压缩），Token 估算驱动自动触发。LLM 摘要调用通过 `internalLlmCall` 事件透明化
 - **{outputKey} 编译期校验**（借鉴 MetaGPT ActionNode）：启动时验证 Agent instruction 中所有 `{key}` 引用均在上下游 Agent 的 `outputKey` 中有定义。`{memory}` 等运行时占位符自动豁免。未解析引用 → `AgentCompileException` 启动失败
+- **YAML Schema 三重校验**：编辑期（JSON Schema 文件 → IDE 实时提示）+ 启动期（`@NotBlank` Jakarta Bean Validation）+ 编译期（`AgentGraphCompiler.validateConfigSchema()` 校验引用完整性）
 
 ### 2.2 模型提供商可插拔
 
@@ -40,12 +44,13 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
   - `onReasoning` — 模型调用前（注入记忆/上下文）
   - `onModelCall` — 模型调用包装（缓存/切换模型）
   - `onActing` — 工具执行拦截（权限检查/参数改写）
-- **内置中间件**：`RateLimitMiddleware`（滑动窗口限流）、`GracefulShutdownMiddleware`（优雅关闭）、`PermissionMiddleware`（权限门控）
+- **内置中间件**：`RateLimitMiddleware`（滑动窗口限流）、`GracefulShutdownMiddleware`（优雅关闭）、`PermissionMiddleware`（权限门控 + 工具沙箱）
 
 ### 2.4 权限与安全
 
 - **四级权限模式**：`DEFAULT`（正常检查）→ `PLAN`（只允许只读工具）→ `ACCEPT_EDITS`（信任模式）→ `BYPASS`（开发者模式）
-- **PermissionEngine 规则链**：`PermissionRule` 接口 + 优先级排序 + 链式评估（第一个非 null 的结果作为最终决策，默认 DENY）
+- **PermissionEngine 规则链**（借鉴 AgentScope Java）：5 条规则按优先级执行——`SensitiveArgMaskRule`(p=5, 参数脱敏) → `ReadOnlyAllowRule`(p=10) → `ToolAllowlistRule`(p=15, YAML 白/黑名单) → `PlanModeDenyWriteRule`(p=20) → 默认 DENY
+- **工具沙箱**（P1-#9）：`SensitiveArgMaskRule` 自动脱敏 apiKey/password/token → `"***"`；`ToolAllowlistRule` 支持 YAML `toolSecurity.allowlist/denylist` 配置；`Module` 级统一注入
 - **内置规则**：`ReadOnlyAllowRule`（只读工具放行）、`PlanModeDenyWriteRule`（计划模式下禁止写入）
 
 ### 2.5 可观测性
@@ -442,7 +447,25 @@ agents:
     # 不配置 model → 使用全局 chat-model，但只暴露三个文件工具
 ```
 
-### 6.4 GraphFlow DAG 条件路由配置
+### 6.4 PlanActAgent 规划执行 + 工具安全配置
+
+```yaml
+agents:
+  - name: coding-orchestrator
+    instruction: "你是软件项目经理，先制定计划再逐步执行"
+    agentType: plan_act                # ← Plan-Act-Synthesize 三阶段
+    planSettings:
+      maxSteps: 10
+      autoApprove: false               # 每步是否需要人工确认
+
+# 工具安全配置（可选——白名单/黑名单）
+module:
+  tool-security:
+    allowlist: [read_file, write_file, grep, glob]  # 白名单：只允许这些工具
+    denylist: [bash, python_exec]                   # 黑名单：禁止这些工具
+```
+
+### 6.5 GraphFlow DAG 条件路由配置
 
 ```yaml
 agent-workflows:
@@ -567,6 +590,11 @@ npm run dev
 | 最大轮次 | `ReActAgent.MAX_TURNS` | 100 |
 | 连续工具失败熔断 | `ReActAgent.queryLoop()` | 连续 3 轮全部工具调用失败 → 强制退出 |
 | 消息修剪 | `ReActAgent.queryLoop()` | >500 条 → 保留第一条 + 最近 200 条 |
+| 检查点间隔 | `ReActAgent.saveCheckpoint()` | 每 5 轮自动保存（`checkpointInterval=5`，可配置） |
+| 检查点存储 | `FileCheckpointCollector` | `.claude/checkpoints/{sessionId}/ckpt-{turn:04d}.json` |
+| LLM 缓存 TTL | `ModelCallCache` | 60s（可配置），最大 1000 条（Caffeine LRU） |
+| PlanActAgent 最大步骤 | `PlanActAgent` | 10 步（可配置 `planSettings.maxSteps`） |
+| 工具安全 | `PermissionEngine` | `SensitiveArgMaskRule`(参数脱敏) → `ToolAllowlistRule`(白/黑名单) → YAML `toolSecurity` 驱动 |
 | RateLimit 窗口 | `RateLimitMiddleware` | 可配置（默认每窗口 10 次） |
 
 ---
@@ -575,11 +603,11 @@ npm run dev
 
 | 参考框架 | 语言 | 借鉴的设计 |
 |---------|------|-----------|
-| **AutoGen** (Microsoft) | Python | Agent 协议 + DiGraph & GraphFlowManager + AssistantAgent Per-Agent 模型 + OTel Span |
-| **AgentScope Java** (阿里) | Java | AgentState 双模式访问 + Hook 系统 + MiddlewareBase 五层洋葱 + AgentEvent 多态 + **Per-Agent Toolkit 深拷贝**（→ Agent 级工具作用域） + PermissionEngine |
-| **CrewAI** | Python | BaseAgent 可序列化实体 + BaseLLM 类层次 + **EncodingFlow/RecallFlow 记忆管线**（→ llmRerank 真实实现） + CheckpointConfig + EventBus（→ internalLlmCall 事件化） |
-| **MetaGPT** | Python | RoleContext.llm per-role + Working/LongTerm Memory 分层 + ProjectRepo 持久化 + **ActionNode 编译期校验**（→ {outputKey} 启动时校验） |
-| **cc-haha** | TypeScript | cost-tracker token 核算 + SessionMemory 后台 Fork Agent + **显式 allow/deny 工具列表**（→ toolNames YAML 配置） + PermissionMode 四级模式 |
+| **AutoGen** (Microsoft) | Python | Agent 协议 + DiGraph & GraphFlowManager + AssistantAgent Per-Agent 模型 + OTel Span + **MagenticOne 编排器**（→ PlanActAgent） |
+| **AgentScope Java** (阿里) | Java | AgentState 双模式访问 + Hook 系统 + MiddlewareBase 五层洋葱 + AgentEvent 多态 + **Per-Agent Toolkit 深拷贝**（→ Agent 级工具作用域） + **PermissionEngine 规则链**（→ 工具沙箱） + **Project Reactor**（→ ModelInvoker 异步化） |
+| **CrewAI** | Python | BaseAgent 可序列化实体 + BaseLLM 类层次 + **EncodingFlow/RecallFlow 记忆管线**（→ llmRerank 真实实现） + **CheckpointConfig + from_checkpoint**（→ 检查点/恢复机制） + EventBus（→ internalLlmCall 事件化） |
+| **MetaGPT** | Python | RoleContext.llm per-role + Working/LongTerm Memory 分层 + ProjectRepo 持久化 + **ActionNode 编译期校验**（→ {outputKey} 启动时校验） + **PLAN_AND_ACT 模式**（→ PlanActAgent）+ 消息级去重（→ LLM 缓存） |
+| **cc-haha** | TypeScript | cost-tracker token 核算 + SessionMemory 后台 Fork Agent + **显式 allow/deny 工具列表**（→ toolNames YAML 配置） + **WAL 日志模式 jsonl**（→ 检查点 WAL） + PermissionMode 四级模式 |
 
 ---
 
