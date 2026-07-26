@@ -45,6 +45,12 @@
             <version>3.1.9</version>
         </dependency>
 
+        <!-- P1-#2: Caffeine 本地缓存 -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- P1-3: OpenTelemetry API（编译时需要） -->
         <dependency>
             <groupId>io.opentelemetry</groupId>

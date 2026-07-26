@@ -42,6 +42,14 @@ public class AgentConfig {
     @Builder.Default
     int checkpointInterval = 5;
 
+    /** P1-#2: 是否启用 LLM 响应缓存 */
+    @Builder.Default
+    boolean cacheEnabled = true;
+
+    /** P1-#2: 缓存 TTL（秒） */
+    @Builder.Default
+    int cacheTtlSeconds = 60;
+
     /**
      * 从现有的 AgentNodeDef 转换（兼容过渡期）
      */
