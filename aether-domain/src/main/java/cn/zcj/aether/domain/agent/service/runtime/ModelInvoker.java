@@ -78,6 +78,41 @@ public class ModelInvoker {
     }
 
     /**
+     * P1-#2 + P1-#1: 带缓存的异步流式调用。
+     * 缓存命中 → Mono.just(cached)；未命中 → callWithStreamAsync → 写缓存。
+     */
+    public reactor.core.publisher.Mono<ModelCallResult> callWithStreamCachedAsync(
+            ChatModel chatModel,
+            List<Message> messages,
+            String systemPrompt,
+            String modelName,
+            boolean cacheEnabled,
+            int cacheTtlSeconds) {
+
+        if (!cacheEnabled) {
+            return callWithStreamAsync(chatModel, messages, systemPrompt, modelName);
+        }
+
+        String key = ModelCallCache.cacheKey(modelName, messages);
+        ModelCallResult cached = modelCallCache.get(key);
+        if (cached != null) {
+            return reactor.core.publisher.Mono.just(ModelCallResult.builder()
+                    .events(cached.getEvents())
+                    .fullText(cached.getFullText())
+                    .toolCalls(cached.getToolCalls())
+                    .cacheTokens(cached.getOutputTokens())
+                    .build());
+        }
+
+        return callWithStreamAsync(chatModel, messages, systemPrompt, modelName)
+                .doOnNext(result -> {
+                    if (!result.hasError()) {
+                        modelCallCache.put(key, result, cacheTtlSeconds);
+                    }
+                });
+    }
+
+    /**
      * P1-#1: 异步流式调用 —— 返回 Mono 而非 blocking。
      * 借鉴 AgentScope Java 的 Mono.defer() + Flux.collectList() 非阻塞收集。
      */

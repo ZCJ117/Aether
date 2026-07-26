@@ -60,6 +60,9 @@ public class ChatModelNode extends AbstractArmorySupport {
     @Resource
     private ModelProviderRegistry modelProviderRegistry;  // P0-2 新增
 
+    @Resource
+    private cn.zcj.aether.domain.agent.service.agent.permission.PermissionEngine permissionEngine;  // P1-#9
+
     /** M4: MCP 连接缓存 —— 按 name@baseUri 去重，避免重复创建 SSE/Stdio 连接 */
     private final Map<String, ToolCallback[]> mcpCallbackCache = new ConcurrentHashMap<>();
 
@@ -125,6 +128,9 @@ public class ChatModelNode extends AbstractArmorySupport {
                 registerPerAgentChatModel(agent, dynamicContext, toolCallbackList);
             }
         }
+
+        // P1-#9: 注入 YAML 配置的工具安全策略到 PermissionEngine
+        configureToolSecurity(aiAgentConfigTableVO.getModule());
 
         return router(requestParameter, dynamicContext);
     }
@@ -327,6 +333,27 @@ public class ChatModelNode extends AbstractArmorySupport {
             return "local:" + toolMcp.getLocal().getName();
         }
         return "unknown:" + System.identityHashCode(toolMcp);
+    }
+
+    /**
+     * P1-#9: 从 YAML 配置注入工具安全策略到 PermissionEngine。
+     * 读取 module.toolSecurity 的 allowlist/denylist 并设置到 ToolAllowlistRule。
+     */
+    private void configureToolSecurity(AiAgentConfigTableVO.Module module) {
+        var toolSecurity = module.getToolSecurity();
+        if (toolSecurity == null) return;
+
+        var rule = permissionEngine.getToolAllowlistRule();
+        if (rule == null) return;
+
+        if (toolSecurity.getAllowlist() != null && !toolSecurity.getAllowlist().isEmpty()) {
+            rule.setAllowlist(new java.util.HashSet<>(toolSecurity.getAllowlist()));
+            log.info("工具白名单已配置: {}", toolSecurity.getAllowlist());
+        }
+        if (toolSecurity.getDenylist() != null && !toolSecurity.getDenylist().isEmpty()) {
+            rule.setDenylist(new java.util.HashSet<>(toolSecurity.getDenylist()));
+            log.info("工具黑名单已配置: {}", toolSecurity.getDenylist());
+        }
     }
 
 }

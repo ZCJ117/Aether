@@ -20,13 +20,20 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class PermissionEngine {
 
     private final List<PermissionRule> rules = new CopyOnWriteArrayList<>();
+    private final ToolAllowlistRule toolAllowlistRule;  // P1-#9: 外部可配置
 
     public PermissionEngine() {
+        this.toolAllowlistRule = new ToolAllowlistRule();
         // 内置默认规则
         registerRule(new SensitiveArgMaskRule());      // p=5: 参数脱敏最先
         registerRule(new ReadOnlyAllowRule());          // p=10
-        registerRule(new ToolAllowlistRule());          // p=15: 白名单/黑名单
+        registerRule(toolAllowlistRule);                // p=15: 白名单/黑名单（外部可配置）
         registerRule(new PlanModeDenyWriteRule());      // p=20
+    }
+
+    /** P1-#9: 获取 ToolAllowlistRule 引用，供外部注入 YAML 配置的 allowlist/denylist */
+    public ToolAllowlistRule getToolAllowlistRule() {
+        return toolAllowlistRule;
     }
 
     public void registerRule(PermissionRule rule) {

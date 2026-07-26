@@ -178,17 +178,19 @@ public class ReActAgent extends BaseAgent {
                 hook.onBeforeModelCall(this, ctx, state.getCurrentTurn());
             }
 
-            // P1-#1: 优先使用异步 Mono 调用，失败回退同步
+            // P1-#2 + P1-#1: 带缓存的异步调用，失败回退同步（不带缓存）
             var modelResult = chain.applyModelCall(
                 () -> {
                     try {
-                        return modelInvoker.callWithStreamAsync(chatModel,
-                                enrichedMessages, enrichedInstruction, config.getModelRef())
+                        return modelInvoker.callWithStreamCachedAsync(chatModel,
+                                enrichedMessages, enrichedInstruction, config.getModelRef(),
+                                config.isCacheEnabled(), config.getCacheTtlSeconds())
                                 .block(java.time.Duration.ofMinutes(5));
                     } catch (Exception e) {
-                        log.warn("异步调用失败，回退同步: {}", e.getMessage());
-                        return modelInvoker.callWithStream(chatModel, enrichedMessages,
-                                enrichedInstruction, config.getModelRef());
+                        log.warn("异步缓存调用失败，回退同步: {}", e.getMessage());
+                        return modelInvoker.callWithStreamCached(chatModel, enrichedMessages,
+                                enrichedInstruction, config.getModelRef(),
+                                config.isCacheEnabled(), config.getCacheTtlSeconds());
                     }
                 },
                 config.getModelRef());
