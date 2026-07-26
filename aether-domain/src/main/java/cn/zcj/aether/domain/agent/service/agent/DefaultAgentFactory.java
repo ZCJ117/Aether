@@ -4,6 +4,7 @@ import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointCollector;
 import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
+import cn.zcj.aether.domain.agent.service.agent.impl.PlanActAgent;
 import cn.zcj.aether.domain.agent.service.agent.impl.ReActAgent;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
@@ -49,24 +50,26 @@ public class DefaultAgentFactory {
             @Override
             public Agent create(AgentConfig config) {
                 ChatModel chatModel = resolveChatModel(config);
-                // P0-6: 注入 AgentEventPublisher（可选）
-                AgentEventPublisher publisher = null;
-                try {
-                    publisher = applicationContext.getBean(AgentEventPublisher.class);
-                } catch (Exception ignored) {
-                    // 无 EventPublisher 时不影响 Agent 创建
-                }
-                // P0-#8: 注入 CheckpointCollector（可选）
-                CheckpointCollector checkpointCollector = null;
-                try {
-                    checkpointCollector = applicationContext.getBean(CheckpointCollector.class);
-                } catch (Exception ignored) {
-                    // 无 CheckpointCollector 时不影响 Agent 创建
-                }
+                AgentEventPublisher publisher = resolveBean(AgentEventPublisher.class);
+                CheckpointCollector checkpointCollector = resolveBean(CheckpointCollector.class);
                 ReActAgent agent = new ReActAgent(config, chatModel, modelInvoker,
                         toolExecutor, contextManager, publisher, checkpointCollector);
                 injectHooks(agent);
                 return agent;
+            }
+        });
+
+        // P1-#4: PlanActAgent 工厂
+        factoryMap.put("plan_act", new AgentFactory() {
+            @Override
+            public String supportedType() { return "plan_act"; }
+            @Override
+            public Agent create(AgentConfig config) {
+                ChatModel chatModel = resolveChatModel(config);
+                AgentEventPublisher publisher = resolveBean(AgentEventPublisher.class);
+                CheckpointCollector collector = resolveBean(CheckpointCollector.class);
+                return new PlanActAgent(config, chatModel, modelInvoker,
+                        toolExecutor, contextManager, publisher, collector);
             }
         });
     }
@@ -108,5 +111,14 @@ public class DefaultAgentFactory {
     private void injectHooks(ReActAgent agent) {
         Map<String, AgentHook> hookBeans = applicationContext.getBeansOfType(AgentHook.class);
         hookBeans.values().forEach(agent::addHook);
+    }
+
+    /** 可选解析 Spring Bean，不存在时返回 null */
+    private <T> T resolveBean(Class<T> clazz) {
+        try {
+            return applicationContext.getBean(clazz);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 }
