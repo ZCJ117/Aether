@@ -13,6 +13,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.net.SocketException;
@@ -74,6 +75,70 @@ public class ModelInvoker {
             modelCallCache.put(key, result, cacheTtlSeconds);
         }
         return result;
+    }
+
+    /**
+     * P1-#1: 异步流式调用 —— 返回 Mono 而非 blocking。
+     * 借鉴 AgentScope Java 的 Mono.defer() + Flux.collectList() 非阻塞收集。
+     */
+    public Mono<ModelCallResult> callWithStreamAsync(
+            ChatModel chatModel,
+            List<Message> messages,
+            String systemPrompt,
+            String modelName) {
+
+        log.info("异步模型调用: model={}, messagesCount={}", modelName, messages.size());
+
+        List<Message> fullMessages = new ArrayList<>();
+        fullMessages.add(new org.springframework.ai.chat.messages.SystemMessage(systemPrompt));
+        fullMessages.addAll(messages);
+
+        Prompt prompt = new Prompt(fullMessages);
+
+        return chatModel.stream(prompt)
+                .collectList()
+                .map(responses -> {
+                    List<RuntimeEvent> events = new ArrayList<>();
+                    StringBuilder fullText = new StringBuilder();
+                    List<ToolCallDef> toolCalls = new ArrayList<>();
+
+                    if (responses != null) {
+                        for (ChatResponse response : responses) {
+                            var generations = response.getResults();
+                            if (generations == null) continue;
+                            for (var gen : generations) {
+                                var output = gen.getOutput();
+                                if (output == null) continue;
+                                String text = output.getText();
+                                if (text != null && !text.isEmpty()) {
+                                    fullText.append(text);
+                                    events.add(RuntimeEvent.text(text));
+                                }
+                                var tcList = output.getToolCalls();
+                                if (tcList != null && !tcList.isEmpty()) {
+                                    for (var tc : tcList) {
+                                        Map<String, Object> parsedArgs = parseArguments(tc.arguments());
+                                        toolCalls.add(ToolCallDef.builder()
+                                                .id(tc.id()).name(tc.name()).input(parsedArgs).build());
+                                        events.add(RuntimeEvent.builder()
+                                                .type(RuntimeEvent.EventType.toolCall)
+                                                .toolCallId(tc.id()).toolName(tc.name())
+                                                .toolInput(tc.arguments()).build());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    log.info("异步模型调用完成: model={}, textLength={}, toolCalls={}",
+                            modelName, fullText.length(), toolCalls.size());
+
+                    return ModelCallResult.builder()
+                            .events(events)
+                            .fullText(fullText.toString())
+                            .toolCalls(toolCalls)
+                            .build();
+                });
     }
 
     @SuppressWarnings("unchecked")
