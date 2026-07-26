@@ -63,6 +63,9 @@ public class AiAgentConfigTableVO {
 
         private Runner runner;
 
+        /** P1-#9: 工具安全配置 */
+        private ToolSecurity toolSecurity;
+
         @Data
         public static class AiApi {
             //NOTE: 这里的 AiApi 是为了适配 DeepSeek 兼容 OpenAI 协议的 API 配置，
@@ -210,6 +213,12 @@ public class AiAgentConfigTableVO {
         public static class Runner {
             private String agentName;
             private List<String> pluginNameList;
+        }
+
+        @Data
+        public static class ToolSecurity {
+            private List<String> allowlist;
+            private List<String> denylist;
         }
     }
 

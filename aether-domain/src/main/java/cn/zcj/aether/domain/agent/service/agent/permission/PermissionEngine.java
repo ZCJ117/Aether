@@ -23,8 +23,10 @@ public class PermissionEngine {
 
     public PermissionEngine() {
         // 内置默认规则
-        registerRule(new ReadOnlyAllowRule());
-        registerRule(new PlanModeDenyWriteRule());
+        registerRule(new SensitiveArgMaskRule());      // p=5: 参数脱敏最先
+        registerRule(new ReadOnlyAllowRule());          // p=10
+        registerRule(new ToolAllowlistRule());          // p=15: 白名单/黑名单
+        registerRule(new PlanModeDenyWriteRule());      // p=20
     }
 
     public void registerRule(PermissionRule rule) {
