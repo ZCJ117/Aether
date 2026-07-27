@@ -1,8 +1,8 @@
 # Aether: 企业级多 Agent 协作架构
 
-Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、**PlanActAgent 规划执行模式**、**检查点/恢复机制**、**LLM 响应缓存**、工具沙箱、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
+Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、**PlanActAgent 规划执行模式**、**检查点/恢复机制**、**LLM 响应缓存**、**上下文工程架构升级**（Token 预算 + AgentScope 6步压缩管道 + 信号策展 + 运行时即时检索 + 子Agent 物理隔离 + 外部笔记）、工具沙箱、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
 
-设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架，累计 75+ 源文件、9 个测试类（93 个测试用例）。
+设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架，累计 100+ 源文件、9 个测试类（93 个测试用例）。
 
 ---
 
@@ -22,9 +22,22 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **PlanActAgent 规划执行模式**（借鉴 MetaGPT PLAN_AND_ACT + AutoGen MagenticOne）：三阶段执行——Plan（LLM 生成 JSON 步骤计划）→ Act（每步独立 ReAct 子循环）→ Synthesize（合并结果）。`agentType: plan_act`
 - **检查点/恢复机制**（借鉴 CrewAI 多粒度检查点 + cc-haha WAL 日志）：ReActAgent 每 5 轮自动保存快照到 `.claude/checkpoints/`，通过 `AgentEventPublisher` 写 WAL 事件日志，`ChatService.resumeFromCheckpoint()` 恢复。PlanActAgent 每步自动保存检查点
 - **LLM 响应缓存**（借鉴 MetaGPT 消息级去重 + AgentScope Middleware 拦截）：Caffeine LRU 内存缓存，key = modelName + messages 内容哈希，TTL 60s，最大 1000 条。`ModelInvoker.callWithStreamCachedAsync()` 透明拦截，缓存命中直接返回（节省 token）
-- **上下文压缩引擎**：三层压缩（工具结果截断 → 冗余清理 → LLM 摘要压缩），Token 估算驱动自动触发。LLM 摘要调用通过 `internalLlmCall` 事件透明化
+- **上下文压缩管道**（借鉴 AgentScope 6步管线 + CrewAI 并发分块摘要）：
+  - **三层旧压缩**（保留）：工具结果截断 → 冗余编辑清理 → LLM 摘要自动压缩
+  - **六步新管道**（互补触发）：双阈值检查（消息数/Token数任一超标）→ 安全切点搜索（不切断 tool-call/tool-result 配对）→ 工具参数截断 → 记忆泄流（预留）→ JSONL 会话泄流 → LLM 分块摘要
+  - **并发分块摘要**：大对话前缀按段落边界切分为独立 chunk，串行 LLM 调用摘要后合并；合并超标时递归压缩。LLM 失败 → 降级字符串拼接
 - **{outputKey} 编译期校验**（借鉴 MetaGPT ActionNode）：启动时验证 Agent instruction 中所有 `{key}` 引用均在上下游 Agent 的 `outputKey` 中有定义。`{memory}` 等运行时占位符自动豁免。未解析引用 → `AgentCompileException` 启动失败
 - **YAML Schema 三重校验**：编辑期（JSON Schema 文件 → IDE 实时提示）+ 启动期（`@NotBlank` Jakarta Bean Validation）+ 编译期（`AgentGraphCompiler.validateConfigSchema()` 校验引用完整性）
+
+### 2.2 上下文工程架构升级（新增）
+
+- **Token 预算三层模型**：固定开销层（系统提示词 ~15%）+ 弹性层（对话/工具 ~70%）+ 预留层（输出 ~15%）。`tryConsume()` 消费弹性预算，耗尽时触发压缩。分角色 Token 估算（英文 3.0 / 代码 2.5 / 中文 4.0 chars-per-token），运行时监控事件（使用率 >80% WARN、>95% ERROR）。
+- **信号策展管道**（`curation/`）：`CurationPipeline` 对所有工具结果执行类型分类（CODE/LOG/DOC/STRUCTURED/UNSTRUCTURED）→ 按类型差异化摘要（grep 保留匹配行±2行上下文、Bash 仅保留 ERROR/WARN、文档截断到 500 字）→ 预算驱动的降序填充。异常时降级返回原始内容前 500 字。
+- **运行时即时检索**（禁止预埋式检索）：Agent 主体仅携带 `IdentifierRegistry` 生成的轻量标识符（项目文件路径 <500 tokens + 文档标题大纲），推理时通过 `code_search`/`file_read`/`doc_read` 工具按需获取详细数据。两级文档检索——Level 1 标题大纲预加载，Level 2 `doc_read` 按章节深挖。
+- **子Agent 物理隔离**：`SubAgentOrchestrator` 派遣独立子任务 → `SubAgentBoundary` 创建隔离配置（独立消息历史 + 独立工具集 ≤5 个 + 独立 TokenBudget 父预算 30% + 独立 CancelToken 60s 超时）→ `ResultRefiner` 规则提取（零 LLM 调用）→ 仅向主控返回 ≤500 字结构化摘要。`Semaphore(5)` 限制最多 5 个并发子Agent。
+- **结构化外部笔记**：`ExternalNotes` 持久化 TODO/NOTES 到 `.aether/notes/{sessionId}.json`。`todo_write` / `note_write` 工具供 Agent 操作。上下文窗口压缩重启后，`buildSummaryBlock()` 注入当前 TODO 进行中任务 + 关键决策，确保 Agent 无缝继续。
+- **最小可行工具集**：每个 Agent 最多 15 个工具。超限时按优先级裁剪（写工具 > 核心读工具 > 辅助读工具 > MCP/Skills）。
+- **工具描述编译期校验**：`ToolDescriptionValidator` 禁止模糊词（"可能/大概/或许/等/etc"），启动时检测并抛出 `AgentCompileException`。
 
 ### 2.2 模型提供商可插拔
 
@@ -222,15 +235,46 @@ aether/
 │           │   ├── ConditionEvaluator.java  # SpEL 条件求值
 │           │   └── ExecutionState.java   # 模板解析 + 输出合并
 │           │
-│           ├── chat/ChatService.java     # ★ 对话入口：单/多 Agent 路由 + 记忆注入 + 会话恢复
+│           ├── chat/ChatService.java     # ★ 对话入口：单/多 Agent 路由 + 记忆注入 + 标识符上下文注入
 │           ├── compiler/AgentGraphCompiler.java  # YAML → AgentGraph IR
+│           │   └── ToolDescriptionValidator.java # 工具描述编译期校验（禁止模糊词）
 │           ├── runtime/                  # 运行时引擎
 │           │   ├── AgentRuntime.java     # @Deprecated 服务聚合（逻辑已迁移到 ReActAgent）
-│           │   ├── ModelInvoker.java     # LLM 调用 + 指数退避重试
-│           │   ├── RuntimeEvent.java     # 运行时事件类型
+│           │   ├── ModelInvoker.java     # LLM 调用 + 指数退避重试 + Token 用量追踪
+│           │   ├── RuntimeEvent.java     # 运行时事件类型（含 tokenBudget 事件）
 │           │   └── TurnMessage.java      # 轮次消息封装
-│           ├── context/                  # 上下文管理（三层压缩）
-│           └── tool/                     # 工具系统（Tool/ToolRegistry/ToolExecutor/Adapters）
+│           ├── context/                  # 上下文管理
+│           │   ├── ContextManager.java   # 三层压缩 + 管道集成
+│           │   ├── TokenEstimator.java   # 分角色 Token 估算
+│           │   ├── TokenBudget.java      # ★ 三层 Token 预算模型
+│           │   ├── AutoCompactResult.java
+│           │   └── compaction/           # ★ 六步压缩管道（AgentScope 模式）
+│           │       ├── CompactionPipeline.java   # 管道编排
+│           │       ├── CompactionTrigger.java    # 双阈值触发
+│           │       ├── SafeCutoffFinder.java     # 安全切点（不切断 tool 配对）
+│           │       ├── ChunkSummarizer.java      # 并发分块摘要（CrewAI 模式）
+│           │       └── MessageOffloader.java     # JSONL 会话泄流
+│           ├── curation/                 # ★ 信号策展层
+│           │   ├── CurationPipeline.java  # 策展编排
+│           │   ├── SignalScorer.java      # 三因子评分（CrewAI 模式）
+│           │   └── ResultSummarizer.java  # 按类型摘要策略
+│           ├── retrieval/                # ★ 运行时即时检索
+│           │   ├── IdentifierRegistry.java # 轻量标识符注册表
+│           │   ├── DynamicLoader.java      # 按需数据加载
+│           │   ├── CodeExplorer.java       # grep/glob 搜索工具
+│           │   └── DocRetriever.java       # 两级文档检索工具
+│           ├── subagent/                 # ★ 子Agent 物理隔离
+│           │   ├── SubAgentOrchestrator.java # 派遣编排（Semaphore 5 并发）
+│           │   ├── SubAgentBoundary.java     # 隔离配置工厂
+│           │   └── ResultRefiner.java        # 结果精炼（零 LLM 调用）
+│           ├── notes/                    # ★ 外部笔记
+│           │   ├── ExternalNotes.java     # 持久化 TODO/NOTES
+│           │   └── NotesTools.java        # todo_write + note_write 工具
+│           └── tool/                     # 工具系统
+│               ├── Tool.java / ToolRegistry.java / ToolExecutor.java
+│               ├── MinimalToolSet.java   # ★ 最小可行工具集（硬限制 15 个）
+│               ├── SessionSearchTool.java # ★ 会话历史检索
+│               └── ToolResult.java / ToolContext.java / Adapters
 │
 ├── aether-infrastructure/  # 基础设施层
 │   └── src/main/java/cn/zcj/aether/repository/
@@ -305,15 +349,22 @@ POST /api/v1/chat → ChatService.handleMessage()
   │           │     └─ onBeforeToolCall → onAfterToolCall
   │           │
   │           └─ queryLoop()
-  │                 ├─ Phase 1: ContextManager 三层压缩
+  │                 ├─ Phase 1: ContextManager 上下文管理
+  │                 │     ├─ applyToolResultBudget() → 超长工具结果截断
+  │                 │     ├─ microCompact() → 冗余编辑清理
+  │                 │     ├─ autoCompactIfNeeded() → LLM 摘要（兜底）
+  │                 │     └─ CompactionPipeline ★ → 六步压缩管道
+  │                 │           └─ ExternalNotes → 笔记注入
   │                 ├─ Phase 2: chain.applyModelCall() → ModelProvider
   │                 ├─ Phase 3: 无 tool_use → emit done + 退出
   │                 └─ Phase 4: chain.applyActing() → PermissionEngine
+  │                       └─ CurationPipeline ★ → 信号策展
   │
   └─ 多 Agent（graph.edges 非空） → GraphExecutor.execute(graph)
         ├─ SEQUENTIAL → 串行推进，{outputKey} 模板传递
         ├─ PARALLEL   → CachedThreadPool 并发，CountDownLatch，事件同步转发
         ├─ LOOP       → 循环迭代至收敛
+        ├─ SUBAGENT   → SubAgentOrchestrator ★ 派遣子任务（Semaphore 5 并发）
         └─ GRAPHFLOW  → 拓扑排序 + 就绪队列 + SpEL 条件路由
 ```
 
@@ -596,6 +647,16 @@ npm run dev
 | PlanActAgent 最大步骤 | `PlanActAgent` | 10 步（可配置 `planSettings.maxSteps`） |
 | 工具安全 | `PermissionEngine` | `SensitiveArgMaskRule`(参数脱敏) → `ToolAllowlistRule`(白/黑名单) → YAML `toolSecurity` 驱动 |
 | RateLimit 窗口 | `RateLimitMiddleware` | 可配置（默认每窗口 10 次） |
+| **上下文压缩触发** | `CompactionTrigger` | 消息数 > 150 或 Token > 80,000 ← **新增** |
+| **压缩保留尾部** | `CompactionTrigger` | 保留最近 20 条消息 或 10,000 tokens ← **新增** |
+| **信号评分权重** | `SignalScorer` | recency=0.3, semantic=0.5, importance=0.2 ← **新增** |
+| **信号衰减半衰期** | `SignalScorer` | 24 小时 ← **新增** |
+| **最大工具数** | `MinimalToolSet` | 每个 Agent 最多 15 个工具 ← **新增** |
+| **子Agent 超时** | `SubAgentBoundary` | 60s（CancelToken 截止时间） ← **新增** |
+| **子Agent 最大并发** | `SubAgentOrchestrator` | 5 个（Semaphore 限制） ← **新增** |
+| **动态加载行数上限** | `DynamicLoader` | 每次最多加载 200 行 ← **新增** |
+| **文档检索输出上限** | `DocRetriever` | 每次最多 2,000 字符（约 500 tokens） ← **新增** |
+| **会话检索上限** | `SessionSearchTool` | 每次最多 10 条结果 ← **新增** |
 
 ---
 
