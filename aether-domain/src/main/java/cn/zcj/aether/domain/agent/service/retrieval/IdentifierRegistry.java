@@ -1,6 +1,7 @@
 package cn.zcj.aether.domain.agent.service.retrieval;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
@@ -24,6 +25,7 @@ import java.util.stream.Stream;
  * </p>
  */
 @Slf4j
+@Component
 public final class IdentifierRegistry {
 
     private static final int MAX_FILE_PATHS = 200;

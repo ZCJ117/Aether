@@ -123,7 +123,13 @@ public class CompactionPipeline {
         messageOffloader.offload(sessionId, prefix, startTurn);
 
         // Step 6: summarizePrefix — 生成摘要
-        String summary = chunkSummarizer.summarize(prefix);
+        String summary;
+        try {
+            summary = chunkSummarizer.summarize(prefix);
+        } catch (Exception e) {
+            log.warn("CompactionPipeline: 摘要生成失败", e);
+            summary = "[压缩摘要生成失败: " + e.getMessage() + "]";
+        }
 
         // 组装压缩后的消息列表
         List<TurnMessage> compacted = new ArrayList<>();

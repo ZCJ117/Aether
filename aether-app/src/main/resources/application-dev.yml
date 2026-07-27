@@ -16,7 +16,8 @@ thread:
 spring:
   config:
     import:
-       - classpath:agent/agents.yml
+#       - classpath:agent/agents.yml
+         classpath:agent/fable.yml
       # NOTE 3.在加载application-dev.yml之后，上面又导入agents.yml配置文件
   datasource:
     username: root

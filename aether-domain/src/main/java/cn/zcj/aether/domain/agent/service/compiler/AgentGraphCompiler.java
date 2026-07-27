@@ -91,7 +91,8 @@ public class AgentGraphCompiler {
                     modelRef);
             AgentNodeDef def = AgentNodeDef.builder()
                     .name(agentConfig.getName())
-                    .instruction(agentConfig.getInstruction())
+                    .instruction(InstructionResolver.resolve(
+                            agentConfig.getInstruction(), agentConfig.getName()))
                     .description(agentConfig.getDescription())
                     .outputKey(agentConfig.getOutputKey())
                     .toolNames(compileToolNames(agentConfig))

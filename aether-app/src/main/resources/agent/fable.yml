@@ -1,0 +1,34 @@
+ai:
+  agent:
+    config:
+      tables:
+        Agent01:
+          app-name: Agent117
+          agent:
+            agent-id: 000117
+            agent-name: fable 5
+            agent-desc: Anthropic最强AI模型
+          module:
+            ai-api:
+              base-url: https://api.deepseek.com
+              api-key: ***REMOVED-CREDENTIAL***
+              completions-path: v1/chat/completions
+              embeddings-path: v1/embeddings
+            chat-model:
+              model: deepseek-v4-flash
+              tool-mcp-list:
+                - sse:
+                    name: baidu-search
+                    base-uri: http://appbuilder.baidu.com/v2/ai_search/mcp/
+                    sse-endpoint: sse?api_key=***REMOVED-CREDENTIAL***
+                    request-timeout: 500000
+              tool-skills-list:
+                - type: resource
+                  path: agent/skills
+            agents:
+              - name: Agent117
+                description: fable 5
+                instruction:
+                  classpath:agent/CLAUDE-FABLE-5.md
+            runner:
+              agent-name: Agent117

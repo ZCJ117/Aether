@@ -62,7 +62,10 @@ public class SubAgentOrchestrator {
                     null, null, task, Map.of(), null);
             List<TurnMessage> collected = new ArrayList<>();
             long start = System.currentTimeMillis();
-            subAgent.execute(ctx).blockingForEach(event -> {
+            subAgent.execute(ctx)
+                    .takeUntil((io.reactivex.rxjava3.functions.Predicate<RuntimeEvent>) event ->
+                            config.getCancelToken().isCancelled())
+                    .blockingForEach(event -> {
                 if (event.getType() == RuntimeEvent.EventType.textDelta
                         && event.getText() != null) {
                     collected.add(TurnMessage.assistant(event.getText()));

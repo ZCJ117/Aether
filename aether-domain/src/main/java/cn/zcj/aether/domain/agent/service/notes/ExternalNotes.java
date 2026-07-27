@@ -126,7 +126,7 @@ public class ExternalNotes {
             MAPPER.writeValue(filePath.toFile(), doc);
             log.debug("ExternalNotes 已持久化: sessionId={}", sessionId);
         } catch (IOException e) {
-            log.error("ExternalNotes 持久化失败: sessionId={}", sessionId, e);
+            log.warn("ExternalNotes 持久化失败: sessionId={}", sessionId, e);
         }
     }
 
