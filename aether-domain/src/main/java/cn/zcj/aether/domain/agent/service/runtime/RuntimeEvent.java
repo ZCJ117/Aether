@@ -26,6 +26,9 @@ public class RuntimeEvent {
     private boolean internalLlmSuccess;   // C2: 是否成功
     private String checkpointSessionId;  // P0-#8
     private int checkpointTurnNumber;    // P0-#8
+    private int budgetUsed;          // tokenBudget: 已用弹性预算
+    private int budgetTotal;         // tokenBudget: 弹性预算总额
+    private double budgetPercent;    // tokenBudget: 使用比例 (0-1)
 
     public enum EventType {
         textDelta,
@@ -37,7 +40,8 @@ public class RuntimeEvent {
         maxTurnsReached,
         error,
         internalLlmCall,   // C2: 非主循环 LLM 调用
-        checkpoint          // P0-#8: Agent 检查点事件
+        checkpoint,         // P0-#8: Agent 检查点事件
+        tokenBudget        // Token 预算监控事件
     }
 
     public static RuntimeEvent text(String delta) {
@@ -68,6 +72,15 @@ public class RuntimeEvent {
                 .type(EventType.checkpoint)
                 .checkpointSessionId(sessionId)
                 .checkpointTurnNumber(turnNumber)
+                .build();
+    }
+
+    public static RuntimeEvent tokenBudget(int used, int total) {
+        return RuntimeEvent.builder()
+                .type(EventType.tokenBudget)
+                .budgetUsed(used)
+                .budgetTotal(total)
+                .budgetPercent(total > 0 ? (double) used / total : 0)
                 .build();
     }
 }
