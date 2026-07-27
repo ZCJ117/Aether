@@ -8,6 +8,8 @@ import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
+import cn.zcj.aether.domain.agent.service.subagent.ResultRefiner;
+import cn.zcj.aether.domain.agent.service.subagent.SubAgentOrchestrator;
 import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.FlowableEmitter;
@@ -35,6 +37,9 @@ public class GraphExecutor {
 
     @Resource
     private ConditionEvaluator conditionEvaluator;
+
+    @Resource
+    private SubAgentOrchestrator subAgentOrchestrator;
 
     private final ExecutorService parallelPool = Executors.newCachedThreadPool();
 
@@ -76,6 +81,8 @@ public class GraphExecutor {
                         case PARALLEL -> executeParallel(
                                 graph, edge, userId, sessionId, state, emitter);
                         case LOOP -> executeLoop(
+                                graph, edge, userId, sessionId, state, emitter);
+                        case SUBAGENT -> executeSubAgents(
                                 graph, edge, userId, sessionId, state, emitter);
                     }
                 }
@@ -270,6 +277,51 @@ public class GraphExecutor {
                 break;
             }
             previousOutput = currentOutput;
+        }
+    }
+
+    /**
+     * 执行 SUBAGENT 边 — 通过 SubAgentOrchestrator 派遣子Agent。
+     */
+    private void executeSubAgents(
+            AgentGraph graph, AgentEdge edge,
+            String userId, String sessionId,
+            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
+
+        List<String> agentNames = edge.getSubAgents();
+        log.info("SUBAGENT 派遣: subAgents={}", agentNames);
+
+        for (String agentName : agentNames) {
+            AgentNodeDef def = graph.getAgentDefs().get(agentName);
+            if (def == null) {
+                log.warn("SUBAGENT: Agent not found: {}", agentName);
+                continue;
+            }
+
+            String task = def.getInstruction();
+            if (task == null || task.isBlank()) {
+                log.warn("SUBAGENT: Agent {} 无 instruction", agentName);
+                continue;
+            }
+
+            List<String> toolNames = def.getToolNames() != null
+                    ? def.getToolNames() : List.of();
+
+            ResultRefiner.SubAgentResult result = subAgentOrchestrator.dispatch(
+                    task, toolNames, null, def.getModelRef(), userId, sessionId);
+
+            // 将子Agent结果作为文本事件发送给客户端
+            String summaryText = "[子Agent: " + agentName + "] " + result.summary();
+            emitter.onNext(RuntimeEvent.text(summaryText));
+
+            // 存储输出到状态
+            String outputKey = def.getOutputKey() != null
+                    ? def.getOutputKey() : agentName;
+            state.appendOutput(outputKey, result.summary());
+            state.setFinalOutput(outputKey, result.summary());
+            state.setLastAgentName(agentName);
+
+            log.info("SUBAGENT 完成: agent={} status={}", agentName, result.status());
         }
     }
 

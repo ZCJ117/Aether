@@ -7,11 +7,11 @@ import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.context.TokenBudget;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
-import cn.zcj.aether.domain.agent.service.tool.Tool;
-import lombok.RequiredArgsConstructor;
+import cn.zcj.aether.domain.agent.service.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.Resource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -24,25 +24,34 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class SubAgentOrchestrator {
     private final DefaultAgentFactory agentFactory;
     private final SubAgentBoundary boundary;
     private final ResultRefiner refiner;
     private final Semaphore semaphore = new Semaphore(5);
 
+    @Resource
+    private ToolRegistry toolRegistry;
+
+    public SubAgentOrchestrator(DefaultAgentFactory agentFactory,
+            SubAgentBoundary boundary, ResultRefiner refiner) {
+        this.agentFactory = agentFactory;
+        this.boundary = boundary;
+        this.refiner = refiner;
+    }
+
     /**
      * 派遣一个子Agent执行子任务。
      *
      * @param task             子任务描述
-     * @param tools            可用工具列表（最多取前5个）
-     * @param parentBudget     父Agent的Token预算（预留，当前未使用）
+     * @param toolNames        可用工具名称列表（最多取前5个）
+     * @param parentBudget     父Agent的Token预算（可为null，null时跳过预算检查）
      * @param modelRef         模型引用
      * @param userId           用户标识
      * @param parentSessionId  父会话标识
      * @return 结构化子Agent结果
      */
-    public ResultRefiner.SubAgentResult dispatch(String task, List<Tool> tools,
+    public ResultRefiner.SubAgentResult dispatch(String task, List<String> toolNames,
             TokenBudget parentBudget, String modelRef, String userId, String parentSessionId) {
         try {
             if (!semaphore.tryAcquire(30, TimeUnit.SECONDS)) {
@@ -54,7 +63,6 @@ public class SubAgentOrchestrator {
             return new ResultRefiner.SubAgentResult("失败", "[子任务被中断]", Map.of());
         }
         try {
-            List<String> toolNames = tools.stream().map(Tool::name).limit(5).toList();
             AgentConfig config = boundary.createIsolatedConfig(parentSessionId,
                     task, toolNames, modelRef);
             Agent subAgent = agentFactory.create(config);
