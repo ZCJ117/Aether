@@ -47,10 +47,17 @@ public class Plan {
             if (stepsNode != null && stepsNode.isArray()) {
                 int idx = 1;
                 for (var node : stepsNode) {
+                    List<Integer> dependsOn = new ArrayList<>();
+                    if (node.has("dependsOn") && node.get("dependsOn").isArray()) {
+                        for (var depNode : node.get("dependsOn")) {
+                            dependsOn.add(depNode.asInt());
+                        }
+                    }
                     steps.add(Step.builder()
                             .id(idx++)
                             .description(node.has("description") ? node.get("description").asText() : "")
                             .expectedOutput(node.has("expectedOutput") ? node.get("expectedOutput").asText() : "")
+                            .dependsOn(dependsOn)
                             .build());
                 }
             }

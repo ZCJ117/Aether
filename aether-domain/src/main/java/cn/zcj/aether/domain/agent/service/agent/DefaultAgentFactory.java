@@ -84,7 +84,8 @@ public class DefaultAgentFactory {
                 AgentEventPublisher publisher = resolveBean(AgentEventPublisher.class);
                 CheckpointCollector collector = resolveBean(CheckpointCollector.class);
                 return new PlanActAgent(config, chatModel, modelInvoker,
-                        toolExecutor, contextManager, publisher, collector);
+                        toolExecutor, contextManager, publisher, collector,
+                        createTokenBudget(config), curationPipeline, externalNotes);
             }
         });
     }

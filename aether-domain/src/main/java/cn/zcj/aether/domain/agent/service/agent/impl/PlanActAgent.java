@@ -5,7 +5,10 @@ import cn.zcj.aether.domain.agent.service.agent.core.*;
 import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
 import cn.zcj.aether.domain.agent.service.agent.middleware.MiddlewareChain;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
+import cn.zcj.aether.domain.agent.service.context.TokenBudget;
+import cn.zcj.aether.domain.agent.service.curation.CurationPipeline;
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
+import cn.zcj.aether.domain.agent.service.notes.ExternalNotes;
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
@@ -35,6 +38,9 @@ public class PlanActAgent extends BaseAgent {
     private final ContextManager contextManager;
     private final AgentEventPublisher eventPublisher;
     private final CheckpointCollector checkpointCollector;
+    private final TokenBudget tokenBudget;
+    private final CurationPipeline curationPipeline;
+    private final ExternalNotes externalNotes;
 
     public PlanActAgent(AgentConfig config,
                          ChatModel chatModel,
@@ -42,7 +48,10 @@ public class PlanActAgent extends BaseAgent {
                          ToolExecutor toolExecutor,
                          ContextManager contextManager,
                          AgentEventPublisher eventPublisher,
-                         CheckpointCollector checkpointCollector) {
+                         CheckpointCollector checkpointCollector,
+                         TokenBudget tokenBudget,
+                         CurationPipeline curationPipeline,
+                         ExternalNotes externalNotes) {
         super(config);
         this.chatModel = chatModel;
         this.modelInvoker = modelInvoker;
@@ -50,6 +59,9 @@ public class PlanActAgent extends BaseAgent {
         this.contextManager = contextManager;
         this.eventPublisher = eventPublisher;
         this.checkpointCollector = checkpointCollector;
+        this.tokenBudget = tokenBudget;
+        this.curationPipeline = curationPipeline;
+        this.externalNotes = externalNotes;
     }
 
     @Override
@@ -140,7 +152,7 @@ public class PlanActAgent extends BaseAgent {
 
                     ReActAgent subAgent = new ReActAgent(stepConfig, chatModel, modelInvoker,
                             toolExecutor, contextManager, eventPublisher, checkpointCollector,
-                            null, null, null);
+                            tokenBudget, curationPipeline, externalNotes);
 
                     RuntimeContext stepCtx = new RuntimeContext(
                             ctx.userId(), ctx.sessionId() + "-s" + step.getId(),
