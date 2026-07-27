@@ -2,6 +2,7 @@ package cn.zcj.aether.domain.agent.service.context;
 
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
+import cn.zcj.aether.domain.agent.service.context.compaction.CompactionPipeline;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,9 @@ public class ContextManager {
     @Resource
     @org.springframework.context.annotation.Lazy
     private ChatModel chatModel;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private CompactionPipeline compactionPipeline;
 
     private static final int MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000;
     private static final int MAX_TOOL_RESULT_CHARS = 50_000;
@@ -184,6 +188,21 @@ public class ContextManager {
 
     public boolean isAtBlockingLimit(List<TurnMessage> messages, String modelName) {
         return estimateTokens(messages) >= tokenEstimator.getContextWindow(modelName);
+    }
+
+    /**
+     * 运行 CompactionPipeline 六步压缩管道。
+     *
+     * @param messages  当前完整消息列表
+     * @param modelName 模型名称
+     * @param sessionId 会话 ID
+     * @param startTurn 起始回合号
+     * @return 压缩结果
+     */
+    public CompactionPipeline.CompactionResult runCompactionPipeline(
+            List<TurnMessage> messages, String modelName,
+            String sessionId, int startTurn) {
+        return compactionPipeline.compactIfNeeded(messages, modelName, sessionId, startTurn);
     }
 
     // ============ private helpers ============
