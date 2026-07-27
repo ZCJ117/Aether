@@ -95,6 +95,7 @@ public class PlanActAgent extends BaseAgent {
                             .modelRef(config.getModelRef())
                             .agentType("react")
                             .checkpointEnabled(false)
+                            .cancelToken(new CancelToken())
                             .build();
 
                     ReActAgent subAgent = new ReActAgent(stepConfig, chatModel, modelInvoker,

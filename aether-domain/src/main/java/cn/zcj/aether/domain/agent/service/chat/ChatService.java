@@ -13,6 +13,7 @@ import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointData;
 import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentState;
+import cn.zcj.aether.domain.agent.service.agent.core.CancelToken;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.armory.AgentRegistry;
 import cn.zcj.aether.domain.agent.service.session.SessionRepository;
@@ -168,9 +169,28 @@ public class ChatService implements IChatService {
                 .toolNames(entry.getToolNames())
                 .modelRef(entry.getModelRef())
                 .agentType(entry.getAgentType() != null ? entry.getAgentType() : "react")
+                .cancelToken(new CancelToken())
                 .build();
 
         Agent agent = agentFactory.create(agentConfig);
+
+        // P0-4: 会话恢复 —— 加载已保存的状态（仅在 sessionRepository 可用时）
+        if (sessionRepository != null && sessionId != null) {
+            try {
+                var opt = sessionRepository.findBySessionId(sessionId);
+                if (opt.isPresent()) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> savedState = objectMapper.readValue(
+                            opt.get().getStateJson(), Map.class);
+                    agent.loadState(savedState);
+                    log.info("恢复会话: sessionId={}, turnCount={}",
+                            sessionId, savedState.getOrDefault("currentTurn", 0));
+                }
+            } catch (Exception e) {
+                log.warn("会话状态 JSON 解析失败，将作为新会话处理: sessionId={}", sessionId, e);
+            }
+        }
+
         RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, null, null);
 
         List<String> outputs = new ArrayList<>();
@@ -224,6 +244,7 @@ public class ChatService implements IChatService {
                 .toolNames(entry.getToolNames())
                 .modelRef(entry.getModelRef())
                 .agentType(entry.getAgentType() != null ? entry.getAgentType() : "react")
+                .cancelToken(new CancelToken())
                 .build();
 
         Agent agent = agentFactory.create(agentConfig);
