@@ -41,5 +41,3 @@ public interface Tool {
     }
 }
 
-/** 工具执行上下文 */
-record ToolContext(String userId, String sessionId, String toolCallId) {}
