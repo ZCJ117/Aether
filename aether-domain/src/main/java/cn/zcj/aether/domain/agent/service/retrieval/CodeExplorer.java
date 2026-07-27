@@ -4,6 +4,7 @@ import cn.zcj.aether.domain.agent.service.tool.Tool;
 import cn.zcj.aether.domain.agent.service.tool.ToolContext;
 import cn.zcj.aether.domain.agent.service.tool.ToolResult;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
@@ -27,6 +28,7 @@ import java.util.stream.Stream;
  * </p>
  */
 @Slf4j
+@Component
 public final class CodeExplorer implements Tool {
 
     private static final String TOOL_NAME = "code_search";

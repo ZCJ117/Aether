@@ -2,6 +2,7 @@ package cn.zcj.aether.domain.agent.service.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,6 +16,7 @@ import java.util.stream.Collectors;
  * 读取 .aether/sessions/{sessionId}.jsonl，按关键词搜索，返回匹配片段。
  */
 @Slf4j
+@Component
 public class SessionSearchTool implements Tool {
 
     private static final String SESSIONS_DIR = ".aether/sessions";

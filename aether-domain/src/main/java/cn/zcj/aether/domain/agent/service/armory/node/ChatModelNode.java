@@ -63,6 +63,18 @@ public class ChatModelNode extends AbstractArmorySupport {
     @Resource
     private cn.zcj.aether.domain.agent.service.agent.permission.PermissionEngine permissionEngine;  // P1-#9
 
+    // P1 工具注册修复：注入内置 Tool Bean 并在 registerToolsToRegistry 中注册
+    @Resource
+    private cn.zcj.aether.domain.agent.service.retrieval.CodeExplorer codeExplorer;
+    @Resource
+    private cn.zcj.aether.domain.agent.service.retrieval.DocRetriever docRetriever;
+    @Resource
+    private cn.zcj.aether.domain.agent.service.tool.SessionSearchTool sessionSearchTool;
+    @Resource
+    private cn.zcj.aether.domain.agent.service.notes.NotesTools.TodoWriteTool todoWriteTool;
+    @Resource
+    private cn.zcj.aether.domain.agent.service.notes.NotesTools.NoteWriteTool noteWriteTool;
+
     /** M4: MCP 连接缓存 —— 按 name@baseUri 去重，避免重复创建 SSE/Stdio 连接 */
     private final Map<String, ToolCallback[]> mcpCallbackCache = new ConcurrentHashMap<>();
 
@@ -256,6 +268,29 @@ public class ChatModelNode extends AbstractArmorySupport {
                     log.error("Skills 工具注册失败: type={} path={}", toolSkills.getType(), toolSkills.getPath(), e);
                 }
             }
+        }
+
+        // P1 修复：注册内置 Tool Bean（CodeExplorer, DocRetriever, SessionSearchTool, NotesTools）
+        registerBuiltinTool(codeExplorer, "CodeExplorer");
+        registerBuiltinTool(docRetriever, "DocRetriever");
+        registerBuiltinTool(sessionSearchTool, "SessionSearchTool");
+        registerBuiltinTool(todoWriteTool, "TodoWriteTool");
+        registerBuiltinTool(noteWriteTool, "NoteWriteTool");
+    }
+
+    /**
+     * P1 修复：注册单个内置工具到 ToolRegistry，失败时仅日志告警不阻断启动。
+     */
+    private void registerBuiltinTool(Tool tool, String label) {
+        if (tool == null) {
+            log.info("内置工具 Bean 未就绪，跳过: {}", label);
+            return;
+        }
+        try {
+            toolRegistry.register(tool);
+            log.info("内置工具已注册: {} (name={})", label, tool.name());
+        } catch (Exception e) {
+            log.error("内置工具注册失败: {}", label, e);
         }
     }
 
