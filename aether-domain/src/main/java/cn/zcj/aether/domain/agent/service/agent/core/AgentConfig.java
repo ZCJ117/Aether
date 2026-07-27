@@ -50,6 +50,10 @@ public class AgentConfig {
     @Builder.Default
     int cacheTtlSeconds = 60;
 
+    /** 可取消执行令牌（默认无超时） */
+    @Builder.Default
+    CancelToken cancelToken = new CancelToken();
+
     /**
      * 从现有的 AgentNodeDef 转换（兼容过渡期）
      */
