@@ -85,6 +85,9 @@ public class ChatService implements IChatService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private CheckpointCollector checkpointCollector;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private cn.zcj.aether.domain.agent.service.retrieval.IdentifierRegistry identifierRegistry;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
 
@@ -316,6 +319,16 @@ public class ChatService implements IChatService {
      * P1-4: 记忆注入（优先使用 MemoryFacade 语义搜索，回退文件存储关键词匹配）。
      */
     private String injectMemory(String instruction, String userMessage, String agentId) {
+        // Phase 9: 注入标识符上下文（项目文件结构+文档索引）
+        try {
+            String identifierCtx = identifierRegistry.buildIdentifierContext();
+            if (instruction != null && !identifierCtx.isEmpty()) {
+                instruction = instruction + "\n\n" + identifierCtx;
+            }
+        } catch (Exception e) {
+            log.debug("标识符上下文生成失败: {}", e.getMessage());
+        }
+
         // P1-4: 优先使用 MemoryFacade 语义搜索
         if (memoryFacade != null) {
             MemoryScope scope = MemoryScope.global().subscope("agent").subscope(agentId);

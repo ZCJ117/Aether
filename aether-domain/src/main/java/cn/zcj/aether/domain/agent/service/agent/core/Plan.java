@@ -31,6 +31,11 @@ public class Plan {
         @Builder.Default
         private String status = "pending";
         private String result;
+        @Builder.Default
+        private List<Integer> dependsOn = new ArrayList<>();
+
+        @Builder.Default
+        private int retryCount = 0;
     }
 
     public static Plan parse(String jsonText) {

@@ -8,6 +8,7 @@ import cn.zcj.aether.domain.agent.service.agent.middleware.AgentMiddleware;
 import cn.zcj.aether.domain.agent.service.agent.middleware.MiddlewareChain;
 import cn.zcj.aether.domain.agent.service.context.AutoCompactResult;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
+import cn.zcj.aether.domain.agent.service.context.TokenBudget;
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
@@ -46,6 +47,13 @@ public class ReActAgent extends BaseAgent {
     /** P0-#8: 检查点收集器（可选注入，无 Bean 时为 null） */
     private final CheckpointCollector checkpointCollector;
 
+    /** Phase 9: Token 预算 */
+    private final TokenBudget tokenBudget;
+    /** Phase 9: 策展管道 */
+    private final cn.zcj.aether.domain.agent.service.curation.CurationPipeline curationPipeline;
+    /** Phase 9: 外部笔记 */
+    private final cn.zcj.aether.domain.agent.service.notes.ExternalNotes externalNotes;
+
     private Instant startTime;
 
     public ReActAgent(AgentConfig config,
@@ -54,7 +62,10 @@ public class ReActAgent extends BaseAgent {
                       ToolExecutor toolExecutor,
                       ContextManager contextManager,
                       AgentEventPublisher eventPublisher,
-                      CheckpointCollector checkpointCollector) {
+                      CheckpointCollector checkpointCollector,
+                      TokenBudget tokenBudget,
+                      cn.zcj.aether.domain.agent.service.curation.CurationPipeline curationPipeline,
+                      cn.zcj.aether.domain.agent.service.notes.ExternalNotes externalNotes) {
         super(config);
         this.chatModel = chatModel;
         this.modelInvoker = modelInvoker;
@@ -62,6 +73,9 @@ public class ReActAgent extends BaseAgent {
         this.contextManager = contextManager;
         this.eventPublisher = eventPublisher;
         this.checkpointCollector = checkpointCollector;
+        this.tokenBudget = tokenBudget;
+        this.curationPipeline = curationPipeline;
+        this.externalNotes = externalNotes;
     }
 
     @Override
@@ -118,7 +132,7 @@ public class ReActAgent extends BaseAgent {
 
         int consecutiveToolFailures = 0;
 
-        while (state.getCurrentTurn() < MAX_TURNS && !aborted.get()) {
+        while (state.getCurrentTurn() < MAX_TURNS && !config.getCancelToken().isCancelled() && !aborted.get()) {
             state.incrementTurn();
             Instant turnStart = Instant.now();
 
@@ -163,6 +177,18 @@ public class ReActAgent extends BaseAgent {
                 // C2: 发射内部 LLM 调用事件（context compaction）
                 if (compactResult.getInternalLlmCallEvent() != null) {
                     emitter.onNext(compactResult.getInternalLlmCallEvent());
+                }
+            }
+
+            // Phase 9: Pipe compaction (六步压缩管道)
+            if (!compactResult.isCompacted() && externalNotes != null) {
+                var pipeResult = contextManager.runCompactionPipeline(messages, config.getModelRef(), ctx.sessionId(), state.getCurrentTurn());
+                if (pipeResult.compacted()) {
+                    messages.clear();
+                    messages.addAll(pipeResult.messages());
+                    String noteBlock = externalNotes.buildSummaryBlock(ctx.sessionId());
+                    if (!noteBlock.isEmpty()) messages.add(TurnMessage.user(noteBlock));
+                    emitter.onNext(RuntimeEvent.builder().type(RuntimeEvent.EventType.compactBoundary).compactSummary(pipeResult.summary()).build());
                 }
             }
 
@@ -261,17 +287,30 @@ public class ReActAgent extends BaseAgent {
                 hook.onAfterToolCall(this, ctx, results, toolDuration);
             }
 
+            // Phase 9: Token budget event
+            if (tokenBudget != null) {
+                emitter.onNext(RuntimeEvent.tokenBudget(tokenBudget.getCurrentElasticUsage(), tokenBudget.getElasticBudget()));
+            }
+
             boolean allFailed = true;
             for (ToolResult result : results) {
+                // Phase 9: 策展管道处理工具结果
+                String curatedContent = result.getContent();
+                if (curationPipeline != null && tokenBudget != null) {
+                    var curated = curationPipeline.curate(result.getContent(), result.getToolName(),
+                            tokenBudget.remainingElastic() / Math.max(1, results.size()));
+                    curatedContent = curated.summary();
+                }
+
                 emitter.onNext(RuntimeEvent.builder()
                         .type(RuntimeEvent.EventType.toolResult)
                         .toolCallId(result.getToolCallId())
                         .toolName(result.getToolName())
-                        .toolOutput(result.getContent())
+                        .toolOutput(curatedContent)
                         .toolError(result.isError())
                         .build());
                 messages.add(TurnMessage.toolResult(
-                        result.getToolCallId(), result.getToolName(), result.getContent()));
+                        result.getToolCallId(), result.getToolName(), curatedContent));
                 if (!result.isError()) allFailed = false;
             }
 

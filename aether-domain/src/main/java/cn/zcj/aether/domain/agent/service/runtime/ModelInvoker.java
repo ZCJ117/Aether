@@ -168,10 +168,23 @@ public class ModelInvoker {
                     log.info("异步模型调用完成: model={}, textLength={}, toolCalls={}",
                             modelName, fullText.length(), toolCalls.size());
 
+                    // Phase 9: 提取 token 使用量
+                    int inputTokens = 0, outputTokens = 0;
+                    if (responses != null && !responses.isEmpty()) {
+                        var lastResp = responses.get(responses.size() - 1);
+                        var metadata = lastResp.getMetadata();
+                        if (metadata != null && metadata.getUsage() != null) {
+                            inputTokens = (int) metadata.getUsage().getPromptTokens();
+                            outputTokens = (int) metadata.getUsage().getCompletionTokens();
+                        }
+                    }
+
                     return ModelCallResult.builder()
                             .events(events)
                             .fullText(fullText.toString())
                             .toolCalls(toolCalls)
+                            .inputTokens(inputTokens)
+                            .outputTokens(outputTokens)
                             .build();
                 });
     }
@@ -264,10 +277,24 @@ public class ModelInvoker {
                 // 成功 — 退出重试循环
                 log.info("模型调用完成: attempt={} textLength={} toolCalls={}",
                         attempt + 1, fullText.length(), toolCalls.size());
+
+                // Phase 9: 提取 token 使用量
+                int inputTokens = 0, outputTokens = 0;
+                if (responses != null && !responses.isEmpty()) {
+                    var lastResp = responses.get(responses.size() - 1);
+                    var metadata = lastResp.getMetadata();
+                    if (metadata != null && metadata.getUsage() != null) {
+                        inputTokens = (int) metadata.getUsage().getPromptTokens();
+                        outputTokens = (int) metadata.getUsage().getCompletionTokens();
+                    }
+                }
+
                 return ModelCallResult.builder()
                         .events(events)
                         .fullText(fullText.toString())
                         .toolCalls(toolCalls)
+                        .inputTokens(inputTokens)
+                        .outputTokens(outputTokens)
                         .build();
 
             } catch (Exception e) {

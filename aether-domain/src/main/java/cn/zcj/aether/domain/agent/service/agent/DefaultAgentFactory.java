@@ -7,7 +7,11 @@ import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
 import cn.zcj.aether.domain.agent.service.agent.impl.PlanActAgent;
 import cn.zcj.aether.domain.agent.service.agent.impl.ReActAgent;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
+import cn.zcj.aether.domain.agent.service.context.TokenBudget;
+import cn.zcj.aether.domain.agent.service.context.TokenEstimator;
+import cn.zcj.aether.domain.agent.service.curation.CurationPipeline;
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
+import cn.zcj.aether.domain.agent.service.notes.ExternalNotes;
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +43,15 @@ public class DefaultAgentFactory {
     @Resource
     private ContextManager contextManager;
 
+    @Resource
+    private CurationPipeline curationPipeline;
+
+    @Resource
+    private ExternalNotes externalNotes;
+
+    @Resource
+    private TokenEstimator tokenEstimator;
+
     /** 工厂注册表：agentType -> AgentFactory */
     private final Map<String, AgentFactory> factoryMap = new ConcurrentHashMap<>();
 
@@ -52,8 +65,10 @@ public class DefaultAgentFactory {
                 ChatModel chatModel = resolveChatModel(config);
                 AgentEventPublisher publisher = resolveBean(AgentEventPublisher.class);
                 CheckpointCollector checkpointCollector = resolveBean(CheckpointCollector.class);
+                TokenBudget tokenBudget = createTokenBudget(config);
                 ReActAgent agent = new ReActAgent(config, chatModel, modelInvoker,
-                        toolExecutor, contextManager, publisher, checkpointCollector);
+                        toolExecutor, contextManager, publisher, checkpointCollector,
+                        tokenBudget, curationPipeline, externalNotes);
                 injectHooks(agent);
                 return agent;
             }
@@ -120,5 +135,14 @@ public class DefaultAgentFactory {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    /** Phase 9: 创建 per-Agent TokenBudget */
+    private TokenBudget createTokenBudget(AgentConfig config) {
+        int contextWindow = tokenEstimator.getContextWindow(config.getModelRef());
+        int instructionTokens = tokenEstimator.estimate(config.getInstruction() != null ? config.getInstruction() : "");
+        int toolSchemaTokens = (config.getToolNames() != null ? config.getToolNames().size() : 0) * 200;
+        int estimatedFixedOverhead = instructionTokens + toolSchemaTokens;
+        return new TokenBudget(contextWindow, estimatedFixedOverhead);
     }
 }

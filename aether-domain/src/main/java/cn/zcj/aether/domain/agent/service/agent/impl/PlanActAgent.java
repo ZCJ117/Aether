@@ -79,13 +79,53 @@ public class PlanActAgent extends BaseAgent {
                 // ====== Phase 2: Act ======
                 log.info("[PlanActAgent] Phase 2: Act");
                 List<StepResult> stepResults = new ArrayList<>();
+                int stepIndex = 0;
+                int maxIterations = plan.getSteps().size() * 3; // 防止无限循环
 
-                for (var step : plan.getSteps()) {
-                    if (aborted.get()) break;
+                while (stepIndex < plan.getSteps().size() && !aborted.get() && maxIterations-- > 0) {
+                    var step = plan.getSteps().get(stepIndex);
+
+                    // 跳过已完成的步骤
+                    if ("completed".equals(step.getStatus())) {
+                        stepIndex++;
+                        continue;
+                    }
+
+                    // 跳过被阻塞的步骤
+                    if ("blocked".equals(step.getStatus())) {
+                        stepIndex++;
+                        continue;
+                    }
+
+                    // 跳过重试次数已耗尽失败的步骤
+                    if ("failed".equals(step.getStatus()) && step.getRetryCount() >= 2) {
+                        stepIndex++;
+                        continue;
+                    }
+
+                    // 检查依赖：如果有依赖步骤处于 failed 状态，标记为 blocked 并跳过
+                    boolean dependentsFailed = false;
+                    for (int depId : step.getDependsOn()) {
+                        for (var s : plan.getSteps()) {
+                            if (s.getId() == depId && "failed".equals(s.getStatus())) {
+                                dependentsFailed = true;
+                                break;
+                            }
+                        }
+                        if (dependentsFailed) break;
+                    }
+                    if (dependentsFailed) {
+                        step.setStatus("blocked");
+                        emitter.onNext(RuntimeEvent.text("\n⛔ 步骤" + step.getId() + " 因依赖失败被阻塞: " + step.getDescription() + "\n"));
+                        stepIndex++;
+                        continue;
+                    }
+
                     step.setStatus("running");
                     long stepStart = System.currentTimeMillis();
 
                     emitter.onNext(RuntimeEvent.text("\n▶ 步骤" + step.getId() + "/" + plan.getTotalSteps()
+                            + (step.getRetryCount() > 0 ? " (重试" + step.getRetryCount() + ")" : "")
                             + ": " + step.getDescription() + "\n"));
 
                     AgentConfig stepConfig = AgentConfig.builder()
@@ -99,7 +139,8 @@ public class PlanActAgent extends BaseAgent {
                             .build();
 
                     ReActAgent subAgent = new ReActAgent(stepConfig, chatModel, modelInvoker,
-                            toolExecutor, contextManager, eventPublisher, checkpointCollector);
+                            toolExecutor, contextManager, eventPublisher, checkpointCollector,
+                            null, null, null);
 
                     RuntimeContext stepCtx = new RuntimeContext(
                             ctx.userId(), ctx.sessionId() + "-s" + step.getId(),
@@ -124,9 +165,18 @@ public class PlanActAgent extends BaseAgent {
                             })
                             .blockingSubscribe();
 
-                    step.setStatus("completed");
-                    if (!stepResults.isEmpty()) {
-                        step.setResult(stepResults.get(stepResults.size() - 1).getOutput());
+                    // 检查最后一步结果是否失败
+                    boolean lastStepFailed = !stepResults.isEmpty() && !stepResults.get(stepResults.size() - 1).isSuccess();
+                    if (lastStepFailed && step.getRetryCount() < 2) {
+                        step.setRetryCount(step.getRetryCount() + 1);
+                        step.setStatus("failed");
+                        // 不前进 stepIndex，重试同一步骤
+                    } else {
+                        step.setStatus("completed");
+                        if (!stepResults.isEmpty()) {
+                            step.setResult(stepResults.get(stepResults.size() - 1).getOutput());
+                        }
+                        stepIndex++;
                     }
                 }
 
