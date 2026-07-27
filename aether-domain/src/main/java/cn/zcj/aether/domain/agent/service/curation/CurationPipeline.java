@@ -18,9 +18,10 @@ public class CurationPipeline {
         try {
             String summary = summarizer.summarize(rawContent, toolName, budgetTokens);
             int curatedChars = summary.length();
-            log.info("CurationPipeline: tool={} rawChars={} curatedChars={} ratio={:.0%}",
+            double ratio = rawChars > 0 ? (double) curatedChars / rawChars : 1.0;
+            log.info("CurationPipeline: tool={} rawChars={} curatedChars={} ratio={}",
                     toolName, rawChars, curatedChars,
-                    rawChars > 0 ? (double) curatedChars / rawChars : 1.0);
+                    String.format("%.0f%%", ratio * 100));
             return new CurationResult(summary, rawChars, curatedChars);
         } catch (Exception e) {
             log.warn("CurationPipeline 策展异常，降级: toolName={}", toolName, e);

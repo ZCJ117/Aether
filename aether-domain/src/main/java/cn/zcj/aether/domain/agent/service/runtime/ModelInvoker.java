@@ -100,6 +100,8 @@ public class ModelInvoker {
                     .events(cached.getEvents())
                     .fullText(cached.getFullText())
                     .toolCalls(cached.getToolCalls())
+                    .inputTokens(cached.getInputTokens())
+                    .outputTokens(cached.getOutputTokens())
                     .cacheTokens(cached.getOutputTokens())
                     .build());
         }
