@@ -15,8 +15,12 @@ import java.util.stream.Stream;
  * 检查点存储路径: .claude/checkpoints/{sessionId}/
  * 文件命名: ckpt-{turnNumber:04d}.json
  *
- * 借鉴 cc-haha 的 agent-*.jsonl WAL 模式——文件即日志。
+ * <p>借鉴 cc-haha 的 agent-*.jsonl WAL 模式——文件即日志。
  * 每个检查点一个独立 JSON 文件，人类可读，cat 即可查看。
+ *
+ * <p>H5-步骤3 升级：写入原子化——先写 .tmp 再 ATOMIC_MOVE，
+ * 消除"崩溃留下半个 JSON 文件"的损坏窗口。
+ * 移植自 AgentScope {@code JsonFileAgentStateStore.atomicWriteString}（L319-323）。
  */
 @Slf4j
 @Component
@@ -34,7 +38,12 @@ public class FileCheckpointCollector implements CheckpointCollector {
             String filename = String.format("%s%04d%s",
                     CKPT_PREFIX, checkpoint.getTurnNumber(), CKPT_SUFFIX);
             Path file = dir.resolve(filename);
-            Files.writeString(file, checkpoint.toJson(), StandardCharsets.UTF_8);
+
+            // H5-步骤3: 原子写入——先写 .tmp 再 ATOMIC_MOVE（移植 AgentScope L319-323）
+            Path tmp = dir.resolve(filename + ".tmp");
+            Files.writeString(tmp, checkpoint.toJson(), StandardCharsets.UTF_8);
+            Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+
             log.debug("检查点已保存: sessionId={}, turn={}, file={}",
                     checkpoint.getSessionId(), checkpoint.getTurnNumber(), file);
         } catch (IOException e) {

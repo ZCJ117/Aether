@@ -78,17 +78,74 @@ public abstract class BaseAgent implements Agent {
         map.put("rollingSummary", state.getRollingSummary());
         map.put("status", state.getStatus().name());
         map.put("messages", List.copyOf(state.messagesMutable()));
+        // H4: 序列化权限挂起上下文
+        map.put("permissionContext", List.copyOf(state.askingMutable()));
+        // H5: 序列化槽位子上下文（每个槽位一个 key，对齐 AgentScope L61-79）
+        map.put("compactFailureCount", state.getCompactFailureCount());
+        map.put("toolContext", Map.of(
+                "activeToolGroup", state.getToolContext().getActiveToolGroup()
+        ));
         return map;
     }
 
     @SuppressWarnings("unchecked")
     @Override
     public void loadState(Map<String, Object> stateMap) {
-        if (stateMap.containsKey("currentTurn")) {
-            state.messagesMutable().clear();
-            List<TurnMessage> msgs = (List<TurnMessage>) stateMap.get("messages");
-            if (msgs != null) state.messagesMutable().addAll(msgs);
-            state.setStatus(AgentState.AgentStatus.IDLE);
+        // H5-步骤1: 全字段必需校验——缺字段响亮报错（对齐 autogen "恢复失败要响亮地失败"）
+        requireKeys(stateMap, "currentTurn", "rollingSummary", "status", "messages");
+
+        // 恢复轮次
+        state.setCurrentTurn(((Number) stateMap.get("currentTurn")).intValue());
+
+        // 恢复滚动摘要
+        state.setRollingSummary((String) stateMap.get("rollingSummary"));
+
+        // 恢复真实运行状态（不再硬置 IDLE——PAUSED 态对 H4 审批挂起至关重要）
+        state.setStatus(AgentState.AgentStatus.valueOf((String) stateMap.get("status")));
+
+        // 恢复消息历史
+        state.messagesMutable().clear();
+        List<TurnMessage> msgs = (List<TurnMessage>) stateMap.get("messages");
+        if (msgs != null) {
+            state.messagesMutable().addAll(msgs);
+        }
+
+        // H4: 恢复权限挂起上下文
+        if (stateMap.containsKey("permissionContext")) {
+            state.askingMutable().clear();
+            List<cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall> asking =
+                    (List<cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall>)
+                            stateMap.get("permissionContext");
+            if (asking != null) {
+                state.askingMutable().addAll(asking);
+            }
+        }
+
+        // H5: 恢复槽位字段（可选——旧版检查点可能不含这些字段，兼容处理）
+        if (stateMap.containsKey("compactFailureCount")) {
+            state.setCompactFailureCount(
+                    ((Number) stateMap.get("compactFailureCount")).intValue());
+        }
+        if (stateMap.containsKey("toolContext")) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> tc = (Map<String, Object>) stateMap.get("toolContext");
+            if (tc != null && tc.get("activeToolGroup") instanceof String ag) {
+                state.getToolContext().setActiveToolGroup(ag);
+            }
+        }
+    }
+
+    /**
+     * H5-步骤1: 校验 stateMap 包含所有必需字段。
+     * 缺失任一字段抛出 {@link cn.zcj.aether.types.exception.StateRestoreException}，
+     * 对齐 autogen 的"恢复失败要响亮地失败"语义。
+     */
+    private void requireKeys(Map<String, Object> stateMap, String... keys) {
+        for (String key : keys) {
+            if (!stateMap.containsKey(key)) {
+                throw new cn.zcj.aether.types.exception.StateRestoreException(
+                        "State restore failed: missing required field '" + key + "'", key);
+            }
         }
     }
 

@@ -7,6 +7,9 @@ import cn.zcj.aether.domain.agent.service.agent.DefaultAgentFactory;
 import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
+import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionContext;
+import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionHandler;
+import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionResult;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.subagent.ResultRefiner;
 import cn.zcj.aether.domain.agent.service.subagent.SubAgentOrchestrator;
@@ -19,14 +22,24 @@ import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 多Agent图执行器
+ * 多Agent图执行器。
  *
- * SEQUENTIAL → 串行推进，{outputKey} 传递
- * PARALLEL   → 多线程并发，事件实时转发到 emitter
- * LOOP       → 循环直到收敛或达到 maxIterations
+ * <p>H4-步骤7 更新：集成通道差异化拦截机制。
+ * <ul>
+ *   <li><b>DIRECT 通道</b>（SEQUENTIAL / LOOP / SUBAGENT）：
+ *       拦截异常回传调用方（Future.setException），阻断当前链路。</li>
+ *   <li><b>BROADCAST 通道</b>（PARALLEL / GRAPHFLOW 并发批次）：
+ *       拦截异常只记日志静默丢弃，不波及其他并发节点。
+ *       对齐 AutoGen _single_threaded_agent_runtime.py L748-750。</li>
+ * </ul>
+ *
+ * <p>SEQUENTIAL → 串行推进，{outputKey} 传递
+ * <br>PARALLEL   → 多线程并发，事件实时转发到 emitter
+ * <br>LOOP       → 循环直到收敛或达到 maxIterations
+ * <br>GRAPHFLOW  → DAG 拓扑排序 + 就绪队列
+ * <br>SUBAGENT   → 子Agent派遣
  */
 @Slf4j
 @Service
@@ -41,11 +54,14 @@ public class GraphExecutor {
     @Resource
     private SubAgentOrchestrator subAgentOrchestrator;
 
+    /** H4-步骤7: 拦截处理器（可选注入，无 Bean 时为 null） */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InterventionHandler interventionHandler;
+
     private final ExecutorService parallelPool = Executors.newCachedThreadPool();
 
-    /**
-     * P0-1 改造：不再需要 ChatModel 参数，由 AgentFactory 按 Agent 名称解析
-     */
+    // ========== 主入口 ==========
+
     public Flowable<RuntimeEvent> execute(
             AgentGraph graph,
             String userId,
@@ -62,19 +78,17 @@ public class GraphExecutor {
                     AgentNodeDef entry = agentDefs.get(graph.getEntryPoint());
                     if (entry != null) {
                         executeSingle(entry, userId, sessionId,
-                                initialMessage, state, emitter);
+                                initialMessage, state, emitter, "entry");
                     }
                     emitter.onComplete();
                     return;
                 }
 
                 for (AgentEdge edge : edges) {
-                    // ====== P1-1: GRAPHFLOW 路由 ======
                     if (edge.isGraphFlow()) {
                         executeGraphFlow(graph, userId, sessionId, initialMessage, emitter);
-                        return; // GraphFlow 是一次性执行整个 DAG
+                        return;
                     }
-                    // ====== 旧模式不变 ======
                     switch (edge.getType()) {
                         case SEQUENTIAL -> executeSequential(
                                 graph, edge, userId, sessionId, state, emitter);
@@ -97,6 +111,8 @@ public class GraphExecutor {
             }
         }, BackpressureStrategy.BUFFER);
     }
+
+    // ========== SEQUENTIAL (DIRECT 通道) ==========
 
     private void executeSequential(
             AgentGraph graph, AgentEdge edge,
@@ -126,17 +142,25 @@ public class GraphExecutor {
             String input = state.getLastOutput().isEmpty()
                     ? "" : state.getLastOutput();
 
+            // H4-步骤7: DIRECT 通道拦截
+            InterventionContext ictx = buildInterventionContext(
+                    InterventionContext.ChannelType.DIRECT,
+                    agentName, sessionId, userId,
+                    edge.getType().name(), edge.getWorkflowName());
+
+            boolean shouldProceed = applyDirectInterception(input, ictx, emitter);
+            if (!shouldProceed) {
+                log.warn("SEQUENTIAL 节点 [{}] 被拦截阻断，终止链路", agentName);
+                break; // BLOCK 语义：终止当前 SEQUENTIAL 链路
+            }
+
             executeSingle(resolved, userId,
-                    sessionId + "-" + agentName, input, state, emitter);
+                    sessionId + "-" + agentName, input, state, emitter, agentName);
         }
     }
 
-    /**
-     * 并行执行 — 事件实时转发到 emitter
-     *
-     * 使用 CountDownLatch 等待所有并行 Agent 完成
-     * 使用同步块保护 emitter.onNext() 避免并发发射问题
-     */
+    // ========== PARALLEL (BROADCAST 通道) ==========
+
     private void executeParallel(
             AgentGraph graph, AgentEdge edge,
             String userId, String sessionId,
@@ -170,9 +194,22 @@ public class GraphExecutor {
 
             ExecutionState localState = state.forkSource();
 
+            // H4-步骤7: BROADCAST 通道拦截 — 仅记日志，不波及其他节点
+            InterventionContext ictx = buildInterventionContext(
+                    InterventionContext.ChannelType.BROADCAST,
+                    agentName, sessionId, userId,
+                    edge.getType().name(), edge.getWorkflowName());
+
+            boolean shouldProceed = applyBroadcastInterception(
+                    resolvedInstruction, ictx, agentName);
+            if (!shouldProceed) {
+                // BROADCAST 通道：DROP 语义，仅跳过当前节点
+                latch.countDown();
+                continue;
+            }
+
             parallelPool.submit(() -> {
                 try {
-                    // P0-1: 通过 AgentFactory 创建 Agent 实例
                     AgentConfig agentConfig = AgentConfig.fromNodeDef(resolved);
                     Agent agent = agentFactory.create(agentConfig);
                     RuntimeContext ctx = new RuntimeContext(userId,
@@ -181,15 +218,12 @@ public class GraphExecutor {
                     List<RuntimeEvent> agentEvents = new ArrayList<>();
                     agent.execute(ctx)
                             .blockingForEach(event -> {
-                                // 收集到本地列表
                                 agentEvents.add(event);
-                                // 转发事件到主 emitter（同步保护）
                                 synchronized (emitter) {
                                     if (!emitter.isCancelled()) {
                                         emitter.onNext(event);
                                     }
                                 }
-                                // 收集文本输出
                                 if (event.getType() == RuntimeEvent.EventType.textDelta
                                         && event.getText() != null) {
                                     localState.appendOutput(def.getOutputKey(), event.getText());
@@ -213,7 +247,6 @@ public class GraphExecutor {
             });
         }
 
-        // 等待所有并行 Agent 完成（最多 10 分钟）
         try {
             boolean done = latch.await(10, TimeUnit.MINUTES);
             if (!done) {
@@ -224,7 +257,6 @@ public class GraphExecutor {
             log.warn("并行执行被中断");
         }
 
-        // 合并所有并行结果到主 state
         for (ExecutionState sub : subStates) {
             for (String agentName : agentNames) {
                 AgentNodeDef def = graph.getAgentDefs().get(agentName);
@@ -237,6 +269,8 @@ public class GraphExecutor {
         log.info("并行执行完成: {} 个Agent, {} 个子状态已合并",
                 agentNames.size(), subStates.size());
     }
+
+    // ========== LOOP (DIRECT 通道) ==========
 
     private void executeLoop(
             AgentGraph graph, AgentEdge edge,
@@ -266,9 +300,21 @@ public class GraphExecutor {
                         .agentType(def.getAgentType())
                         .build();
 
+                // H4-步骤7: DIRECT 通道拦截
+                InterventionContext ictx = buildInterventionContext(
+                        InterventionContext.ChannelType.DIRECT,
+                        agentName, sessionId, userId,
+                        edge.getType().name(), edge.getWorkflowName());
+
+                boolean shouldProceed = applyDirectInterception(input, ictx, emitter);
+                if (!shouldProceed) {
+                    log.warn("LOOP 节点 [{}] 被拦截阻断，终止循环", agentName);
+                    return; // BLOCK 语义：终止循环
+                }
+
                 executeSingle(resolved, userId,
                         sessionId + "-iter" + i + "-" + agentName,
-                        input, state, emitter);
+                        input, state, emitter, agentName);
             }
 
             String currentOutput = state.getLastOutput();
@@ -280,9 +326,8 @@ public class GraphExecutor {
         }
     }
 
-    /**
-     * 执行 SUBAGENT 边 — 通过 SubAgentOrchestrator 派遣子Agent。
-     */
+    // ========== SUBAGENT (DIRECT 通道) ==========
+
     private void executeSubAgents(
             AgentGraph graph, AgentEdge edge,
             String userId, String sessionId,
@@ -304,17 +349,27 @@ public class GraphExecutor {
                 continue;
             }
 
+            // H4-步骤7: DIRECT 通道拦截
+            InterventionContext ictx = buildInterventionContext(
+                    InterventionContext.ChannelType.DIRECT,
+                    agentName, sessionId, userId,
+                    edge.getType().name(), edge.getWorkflowName());
+
+            boolean shouldProceed = applyDirectInterception(task, ictx, emitter);
+            if (!shouldProceed) {
+                log.warn("SUBAGENT 节点 [{}] 被拦截阻断", agentName);
+                continue;
+            }
+
             List<String> toolNames = def.getToolNames() != null
                     ? def.getToolNames() : List.of();
 
             ResultRefiner.SubAgentResult result = subAgentOrchestrator.dispatch(
                     task, toolNames, null, def.getModelRef(), userId, sessionId);
 
-            // 将子Agent结果作为文本事件发送给客户端
             String summaryText = "[子Agent: " + agentName + "] " + result.summary();
             emitter.onNext(RuntimeEvent.text(summaryText));
 
-            // 存储输出到状态
             String outputKey = def.getOutputKey() != null
                     ? def.getOutputKey() : agentName;
             state.appendOutput(outputKey, result.summary());
@@ -325,31 +380,23 @@ public class GraphExecutor {
         }
     }
 
-    /**
-     * 执行 GraphFlow DAG。
-     * 算法：拓扑排序 → 就绪队列 → 每个就绪节点 fork 执行 → 完成后按边条件路由到子节点。
-     *
-     * 灵感来源：AutoGen DiGraph + GraphFlowManager（拓扑倒计数 + 就绪队列算法）。
-     */
+    // ========== GRAPHFLOW (BROADCAST 通道 per 并发批次) ==========
+
     private void executeGraphFlow(AgentGraph graph, String userId, String sessionId,
             String initialMessage, FlowableEmitter<RuntimeEvent> emitter) {
 
         List<AgentEdge> edges = graph.getEdges();
         Map<String, AgentNodeDef> nodeDefs = graph.getAgentDefs();
 
-        // ============ 第 1 步：构建邻接表 ============
-        // children[parentName] = List<(childName, edge)>
+        // 构建邻接表
         Map<String, List<Map.Entry<String, AgentEdge>>> children = new LinkedHashMap<>();
-        // parentCount[nodeName] = 入边数量
         Map<String, Integer> parentCount = new LinkedHashMap<>();
 
-        // 初始化所有节点的 parentCount 为 0
         for (String nodeName : nodeDefs.keySet()) {
             parentCount.put(nodeName, 0);
             children.put(nodeName, new ArrayList<>());
         }
 
-        // 遍历所有边，构建拓扑关系
         for (AgentEdge edge : edges) {
             if (!edge.isGraphFlow()) continue;
             String from = edge.getFrom();
@@ -358,7 +405,7 @@ public class GraphExecutor {
             parentCount.merge(to, 1, Integer::sum);
         }
 
-        // ============ 第 2 步：找到入口节点（parentCount == 0 的节点） ============
+        // 找到入口节点
         List<String> entryNodes = new ArrayList<>();
         for (Map.Entry<String, Integer> entry : parentCount.entrySet()) {
             if (entry.getValue() == 0) {
@@ -371,30 +418,23 @@ public class GraphExecutor {
             return;
         }
 
-        // ============ 第 3 步：创建运行时状态 ============
+        // 创建运行时状态
         Map<String, GraphFlowState> flowStates = new ConcurrentHashMap<>();
         for (Map.Entry<String, AgentNodeDef> entry : nodeDefs.entrySet()) {
             flowStates.put(entry.getKey(),
                 new GraphFlowState(entry.getValue(), parentCount.get(entry.getKey())));
         }
 
-        // 节点输出存储（nodeName → output text）
         Map<String, String> nodeOutputs = new ConcurrentHashMap<>();
-
-        // 就绪队列
         Queue<String> readyQueue = new ConcurrentLinkedQueue<>(entryNodes);
-
-        // 全局执行状态
         ExecutionState globalState = new ExecutionState();
 
-        // ============ 第 4 步：主调度循环 ============
         int maxIterations = 50;
         int iteration = 0;
 
         while (!readyQueue.isEmpty() && iteration < maxIterations) {
             iteration++;
 
-            // 取出本轮所有就绪节点
             List<String> currentBatch = new ArrayList<>();
             String nodeName;
             while ((nodeName = readyQueue.poll()) != null) {
@@ -405,29 +445,38 @@ public class GraphExecutor {
 
             // 并发执行本轮所有就绪节点
             CountDownLatch batchLatch = new CountDownLatch(currentBatch.size());
-            List<Thread> batchThreads = new ArrayList<>();
 
             for (String name : currentBatch) {
                 GraphFlowState flowState = flowStates.get(name);
                 flowState.setStatus(GraphFlowState.NodeStatus.RUNNING);
                 AgentNodeDef def = flowState.getNodeDef();
 
-                Thread t = new Thread(() -> {
+                // H4-步骤7: GRAPHFLOW 并发批次 → BROADCAST 通道
+                // 每个节点在执行前做广播拦截，失败的节点静默跳过
+                InterventionContext ictx = buildInterventionContext(
+                        InterventionContext.ChannelType.BROADCAST,
+                        name, sessionId, userId,
+                        "GRAPHFLOW", "graphflow-batch-" + iteration);
+
+                List<String> parentOutputs = flowState.getAccumulatedOutputs();
+                String input = buildNodeInput(def, parentOutputs, initialMessage);
+
+                boolean shouldProceed = applyBroadcastInterception(input, ictx, name);
+                if (!shouldProceed) {
+                    // BROADCAST 通道：DROP 语义，仅跳过当前节点
+                    flowState.setStatus(GraphFlowState.NodeStatus.SKIPPED);
+                    batchLatch.countDown();
+                    continue;
+                }
+
+                new Thread(() -> {
                     try {
-                        // 构建该节点的输入（合并所有父节点输出 + 初始消息）
-                        List<String> parentOutputs = flowState.getAccumulatedOutputs();
-                        String input = buildNodeInput(def, parentOutputs, initialMessage);
-
-                        // Fork 独立的 ExecutionState
                         ExecutionState localState = globalState.forkSource();
-
-                        // P0-1: 通过 AgentFactory 创建 Agent 实例
                         AgentConfig agentConfig = AgentConfig.fromNodeDef(def);
                         Agent agent = agentFactory.create(agentConfig);
                         RuntimeContext ctx = new RuntimeContext(userId,
                             sessionId + "-" + name, null, null, input, null, null);
 
-                        // 执行 Agent 并收集输出
                         agent.execute(ctx)
                             .blockingForEach(event -> {
                                 synchronized (emitter) {
@@ -439,21 +488,18 @@ public class GraphExecutor {
                                 }
                             });
 
-                        // 收集输出
                         String output = localState.getOutput(def.getOutputKey());
                         nodeOutputs.put(name, output);
                         flowState.setStatus(GraphFlowState.NodeStatus.COMPLETED);
 
-                        // ============ 第 5 步：按边条件路由到子节点 ============
+                        // 按边条件路由到子节点
                         synchronized (flowStates) {
                             for (Map.Entry<String, AgentEdge> childEntry : children.get(name)) {
                                 String childName = childEntry.getKey();
-                                AgentEdge edge = childEntry.getValue();
+                                AgentEdge childEdge = childEntry.getValue();
 
-                                // 评估条件边
-                                if (!conditionEvaluator.evaluate(edge.getCondition(), output)) {
-                                    log.debug("边 [{}→{}] 条件不满足，跳过: condition={}",
-                                        name, childName, edge.getCondition());
+                                if (!conditionEvaluator.evaluate(childEdge.getCondition(), output)) {
+                                    log.debug("边 [{}→{}] 条件不满足，跳过", name, childName);
                                     continue;
                                 }
 
@@ -462,19 +508,15 @@ public class GraphExecutor {
 
                                 boolean allParentsDone = childState.recordParentCompletion(output);
 
-                                // 检查激活语义
-                                String activation = edge.getActivation() != null
-                                    ? edge.getActivation() : "all";
+                                String activation = childEdge.getActivation() != null
+                                    ? childEdge.getActivation() : "all";
                                 boolean shouldActivate = "any".equalsIgnoreCase(activation)
-                                    ? true                           // any: 任意父完成即激活
-                                    : allParentsDone;                // all: 所有父完成才激活（默认）
+                                    ? true : allParentsDone;
 
                                 if (shouldActivate && childState.getStatus() == GraphFlowState.NodeStatus.PENDING) {
-                                    // 检查退出条件（用于循环边）
-                                    if (edge.getExitCondition() != null
-                                        && conditionEvaluator.evaluate(edge.getExitCondition(), output)) {
-                                        log.info("循环边 [{}→{}] 满足退出条件，不重新激活: exitCondition={}",
-                                            name, childName, edge.getExitCondition());
+                                    if (childEdge.getExitCondition() != null
+                                        && conditionEvaluator.evaluate(childEdge.getExitCondition(), output)) {
+                                        log.info("循环边 [{}→{}] 满足退出条件", name, childName);
                                         childState.setStatus(GraphFlowState.NodeStatus.SKIPPED);
                                     } else {
                                         readyQueue.offer(childName);
@@ -492,12 +534,9 @@ public class GraphExecutor {
                     } finally {
                         batchLatch.countDown();
                     }
-                }, "graphflow-" + name);
-                batchThreads.add(t);
-                t.start();
+                }, "graphflow-" + name).start();
             }
 
-            // 等待本轮所有节点完成
             try {
                 boolean ok = batchLatch.await(10, TimeUnit.MINUTES);
                 if (!ok) log.warn("GraphFlow 批次超时");
@@ -507,7 +546,6 @@ public class GraphExecutor {
             }
         }
 
-        // ============ 收集最终输出 ============
         for (Map.Entry<String, String> entry : nodeOutputs.entrySet()) {
             globalState.setFinalOutput(entry.getKey(), entry.getValue());
         }
@@ -516,7 +554,98 @@ public class GraphExecutor {
         emitter.onComplete();
     }
 
-    /** 构建 DAG 节点的输入文本 */
+    // ========== 拦截辅助方法 ==========
+
+    /**
+     * DIRECT 通道拦截 —— BLOCK 结果以异常形式回传调用方。
+     *
+     * @return true=放行，false=被阻断/DROP
+     */
+    private boolean applyDirectInterception(String message, InterventionContext ctx,
+            FlowableEmitter<RuntimeEvent> emitter) {
+        if (interventionHandler == null) return true;
+
+        try {
+            InterventionResult result = interventionHandler.onSend(message, ctx);
+            return handleInterventionResult(result, ctx, emitter);
+        } catch (Exception e) {
+            log.error("DIRECT 通道拦截异常: agent={}", ctx.agentId(), e);
+            // 拦截器本身的异常：阻塞链路，回传错误
+            emitter.onNext(RuntimeEvent.error("拦截异常: " + e.getMessage()));
+            return false;
+        }
+    }
+
+    /**
+     * BROADCAST 通道拦截 —— BLOCK 降级为 DROP + 日志。
+     *
+     * @return true=放行，false=被丢弃
+     */
+    private boolean applyBroadcastInterception(String message, InterventionContext ctx,
+            String agentName) {
+        if (interventionHandler == null) return true;
+
+        try {
+            InterventionResult result = interventionHandler.onPublish(message, ctx);
+            if (result.isPass()) return true;
+
+            if (result.isBlock()) {
+                // BROADCAST 通道：BLOCK 降级为 DROP
+                log.warn("BROADCAST 通道拦截 [{}] 降级为丢弃: reason={}",
+                        agentName, result.reason());
+                return false;
+            }
+
+            if (result.isDrop()) {
+                log.info("BROADCAST 通道消息被丢弃: agent={}, reason={}",
+                        agentName, result.reason());
+                return false;
+            }
+
+            return true;
+        } catch (Exception e) {
+            // BROADCAST 通道：拦截器异常只记日志，不影响其他节点
+            log.warn("BROADCAST 通道拦截异常 [{}]（已静默）: {}", agentName, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 统一处理拦截结果。
+     */
+    private boolean handleInterventionResult(InterventionResult result,
+            InterventionContext ctx, FlowableEmitter<RuntimeEvent> emitter) {
+        if (result.isPass()) return true;
+
+        if (result.isBlock()) {
+            log.warn("DIRECT 通道拦截阻断: agent={}, reason={}", ctx.agentId(), result.reason());
+            emitter.onNext(RuntimeEvent.error(
+                    "消息被拦截阻断: " + (result.reason() != null ? result.reason() : "未知原因")));
+            return false;
+        }
+
+        if (result.isDrop()) {
+            log.info("消息被丢弃: agent={}, reason={}", ctx.agentId(), result.reason());
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * 构建干预上下文。
+     */
+    private InterventionContext buildInterventionContext(
+            InterventionContext.ChannelType channelType,
+            String agentId, String sessionId, String userId,
+            String edgeType, String workflowName) {
+        return new InterventionContext(
+                channelType, agentId, sessionId, userId,
+                edgeType, workflowName, Map.of());
+    }
+
+    // ========== 工具方法 ==========
+
     private String buildNodeInput(AgentNodeDef def, List<String> parentOutputs, String initialMessage) {
         StringBuilder sb = new StringBuilder();
         if (initialMessage != null && !initialMessage.isEmpty()) {
@@ -531,21 +660,45 @@ public class GraphExecutor {
     private void executeSingle(
             AgentNodeDef def,
             String userId, String sessionId, String input,
-            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
+            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter,
+            String agentName) {
 
-        // P0-1: 通过 AgentFactory 创建 Agent 实例
         AgentConfig agentConfig = AgentConfig.fromNodeDef(def);
         Agent agent = agentFactory.create(agentConfig);
         RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, input, null, null);
+
+        // 收集输出用于 onResponse 回调
+        StringBuilder collectedOutput = new StringBuilder();
 
         agent.execute(ctx)
                 .blockingForEach(event -> {
                     if (event.getType() == RuntimeEvent.EventType.textDelta
                             && event.getText() != null) {
                         state.appendOutput(def.getOutputKey(), event.getText());
+                        collectedOutput.append(event.getText());
                     }
                     emitter.onNext(event);
                 });
+
+        // H4-步骤7: 执行完成后触发 onResponse 拦截
+        if (interventionHandler != null && collectedOutput.length() > 0) {
+            InterventionContext ictx = buildInterventionContext(
+                    InterventionContext.ChannelType.DIRECT,
+                    agentName != null ? agentName : def.getName(),
+                    sessionId, userId, def.getAgentType(), "response");
+            try {
+                InterventionResult responseResult = interventionHandler.onResponse(
+                        collectedOutput.toString(), ictx);
+                if (responseResult.isBlock()) {
+                    log.warn("DIRECT 通道响应被拦截阻断: agent={}, reason={}",
+                            agentName, responseResult.reason());
+                } else if (responseResult.isDrop()) {
+                    log.info("响应被丢弃: agent={}", agentName);
+                }
+            } catch (Exception e) {
+                log.warn("onResponse 拦截异常: agent={}", agentName, e);
+            }
+        }
 
         state.setLastAgentName(def.getName());
         if (def.getOutputKey() != null) {

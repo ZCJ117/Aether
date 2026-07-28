@@ -2,6 +2,8 @@ package cn.zcj.aether.domain.agent.service.model.impl;
 
 import cn.zcj.aether.domain.agent.service.model.ModelConfig;
 import cn.zcj.aether.domain.agent.service.model.ModelProvider;
+import cn.zcj.aether.domain.agent.service.model.failover.ClassifiedError;
+import cn.zcj.aether.domain.agent.service.model.failover.FailoverReason;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.model.ChatModel;

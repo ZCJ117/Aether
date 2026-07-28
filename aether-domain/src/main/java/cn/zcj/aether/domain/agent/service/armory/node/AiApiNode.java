@@ -42,13 +42,28 @@ public class AiApiNode extends AbstractArmorySupport {
         AiAgentConfigTableVO.Module.ChatModel chatModelConfig = aiAgentConfigTableVO.getModule().getChatModel();
 
         // P0-2 改造：构建 ModelConfig，存入 DynamicContext 供下游 ChatModelNode 使用
-        ModelConfig modelConfig = ModelConfig.builder()
+        ModelConfig.ModelConfigBuilder builder = ModelConfig.builder()
             .modelId(chatModelConfig.getModel())
             .baseUrl(aiApiConfig.getBaseUrl())
             .apiKey(aiApiConfig.getApiKey())
             .completionsPath(aiApiConfig.getCompletionsPath())
-            .embeddingsPath(aiApiConfig.getEmbeddingsPath())
-            .build();
+            .embeddingsPath(aiApiConfig.getEmbeddingsPath());
+
+        // P1 容错：从 YAML 读取重试/退避配置（覆盖默认值）
+        if (chatModelConfig.getMaxAttempts() != null) {
+            builder.maxAttempts(chatModelConfig.getMaxAttempts());
+        }
+        if (chatModelConfig.getInitialBackoffSeconds() != null) {
+            builder.initialBackoff(java.time.Duration.ofSeconds(chatModelConfig.getInitialBackoffSeconds()));
+        }
+        if (chatModelConfig.getMaxBackoffSeconds() != null) {
+            builder.maxBackoff(java.time.Duration.ofSeconds(chatModelConfig.getMaxBackoffSeconds()));
+        }
+        if (chatModelConfig.getFallbackModels() != null) {
+            builder.fallbackModels(chatModelConfig.getFallbackModels());
+        }
+
+        ModelConfig modelConfig = builder.build();
 
         ModelProvider provider = modelProviderRegistry.resolve(chatModelConfig.getModel());
         dynamicContext.setModelProvider(provider);

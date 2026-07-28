@@ -32,6 +32,13 @@
             <artifactId>lombok</artifactId>
         </dependency>
 
+        <!-- H5-步骤4: JGit —— Git 影子仓检查点存储 -->
+        <dependency>
+            <groupId>org.eclipse.jgit</groupId>
+            <artifactId>org.eclipse.jgit</artifactId>
+            <version>6.10.0.202406032230-r</version>
+        </dependency>
+
         <!-- 系统模块 -->
         <dependency>
             <groupId>cn.zcj.aether</groupId>

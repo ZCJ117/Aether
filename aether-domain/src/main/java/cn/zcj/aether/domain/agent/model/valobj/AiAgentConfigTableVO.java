@@ -90,6 +90,41 @@ public class AiAgentConfigTableVO {
 
             private List<ToolSkills> toolSkillsList; // 工具技能配置列表，智能体通过这些工具技能调用工具，获取工具调用结果，工具技能可以是用户配置的，也可以是放到工程下的资源文件
 
+            // ── P1 容错：Fallback 模型链配置 ──
+
+            /** P1: 简单 fallback 模型 ID 列表（复用全局 ai-api 配置） */
+            private List<String> fallbackModels;
+
+            /** P1: 完整 fallback 路由列表（每项可独立指定 provider/baseUrl/apiKey） */
+            private List<FallbackRoute> fallback;
+
+            /** P1: 最大重试次数（覆盖 ModelConfig 默认值 3） */
+            private Integer maxAttempts;
+
+            /** P1: 初始退避秒数（覆盖 ModelConfig 默认值 2s） */
+            private Integer initialBackoffSeconds;
+
+            /** P1: 最大退避秒数（覆盖 ModelConfig 默认值 30s） */
+            private Integer maxBackoffSeconds;
+
+            /**
+             * P1: Fallback 路由定义。
+             * YAML 格式: fallback: [{provider: "anthropic", model: "claude-sonnet-4-6"}, ...]
+             */
+            @Data
+            public static class FallbackRoute {
+                /** 模型 ID */
+                private String model;
+                /** Provider 名称（可选，从 model 自动推断） */
+                private String provider;
+                /** API Base URL（可选，复用全局） */
+                private String baseUrl;
+                /** API Key（可选，复用全局） */
+                private String apiKey;
+                /** Completions 路径（可选） */
+                private String completionsPath;
+            }
+
             @Data
             public static class ToolMcp {
 

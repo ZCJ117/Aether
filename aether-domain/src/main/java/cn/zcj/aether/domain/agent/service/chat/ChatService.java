@@ -15,8 +15,10 @@ import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentState;
 import cn.zcj.aether.domain.agent.service.agent.core.CancelToken;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
+import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
 import cn.zcj.aether.domain.agent.service.armory.AgentRegistry;
 import cn.zcj.aether.domain.agent.service.session.SessionRepository;
+import cn.zcj.aether.types.exception.StateRestoreException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import cn.zcj.aether.domain.agent.service.executor.GraphExecutor;
 import cn.zcj.aether.domain.agent.service.memory.MemoryFacade;
@@ -177,21 +179,16 @@ public class ChatService implements IChatService {
 
         Agent agent = agentFactory.create(agentConfig);
 
-        // P0-4: 会话恢复 —— 加载已保存的状态（仅在 sessionRepository 可用时）
+        // H5-步骤6: 会话恢复 —— 加载已保存的状态（仅在 sessionRepository 可用时）
         if (sessionRepository != null && sessionId != null) {
-            try {
-                var opt = sessionRepository.findBySessionId(sessionId);
-                if (opt.isPresent()) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> savedState = objectMapper.readValue(
-                            opt.get().getStateJson(), Map.class);
-                    agent.loadState(savedState);
-                    log.info("恢复会话: sessionId={}, turnCount={}",
-                            sessionId, savedState.getOrDefault("currentTurn", 0));
-                }
-            } catch (Exception e) {
-                log.warn("会话状态 JSON 解析失败，将作为新会话处理: sessionId={}", sessionId, e);
-            }
+            restoreSession(agent, sessionId);
+        }
+
+        // H4: 检查 Agent 是否处于 PAUSED 状态
+        if (agent.getState().getStatus() == AgentState.AgentStatus.PAUSED
+                && agent.getState().hasPendingAsking()) {
+            throw new AppException(ResponseCode.E0001.getCode(),
+                    "Agent 已暂停，等待用户确认。请先通过 /api/v1/confirm 提交确认结果。");
         }
 
         RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, null, null);
@@ -252,24 +249,87 @@ public class ChatService implements IChatService {
 
         Agent agent = agentFactory.create(agentConfig);
 
-        // P0-4: 会话恢复 —— 加载已保存的状态（仅在 sessionRepository 可用时）
+        // H5-步骤6: 会话恢复 —— 加载已保存的状态（仅在 sessionRepository 可用时）
         if (sessionRepository != null && sessionId != null) {
             try {
-                var opt = sessionRepository.findBySessionId(sessionId);
-                if (opt.isPresent()) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> savedState = objectMapper.readValue(
-                            opt.get().getStateJson(), Map.class);
-                    agent.loadState(savedState);
-                    log.info("恢复会话: sessionId={}, turnCount={}",
-                            sessionId, savedState.getOrDefault("currentTurn", 0));
-                }
-            } catch (Exception e) {
-                log.warn("会话状态 JSON 解析失败，将作为新会话处理: sessionId={}", sessionId, e);
+                restoreSession(agent, sessionId);
+            } catch (StateRestoreException e) {
+                // 状态恢复失败 → 响亮报错，不带病恢复（对齐 autogen 语义）
+                return Flowable.error(new AppException(ResponseCode.E0001.getCode(),
+                        "会话状态恢复失败: " + e.getMessage()));
             }
         }
 
-        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, null, null);
+        // H4: 检查 Agent 是否处于 PAUSED 状态，若是则需注入 confirmResults
+        Map<String, Object> metadata = new HashMap<>();
+        if (agent.getState().getStatus() == AgentState.AgentStatus.PAUSED
+                && agent.getState().hasPendingAsking()) {
+            // PAUSED 状态但没有确认回执 → 返回错误
+            return Flowable.error(new AppException(ResponseCode.E0001.getCode(),
+                    "Agent 已暂停，等待用户确认。请先通过 /api/v1/confirm 提交确认结果。"));
+        }
+
+        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, metadata, null);
+
+        return agent.execute(ctx);
+    }
+
+    /**
+     * H4: 处理用户确认 —— 恢复挂起的 Agent 执行。
+     *
+     * @param agentId   Agent ID
+     * @param userId    用户 ID
+     * @param sessionId 会话 ID
+     * @param confirmResults 用户确认结果列表
+     * @return 恢复后的执行事件流
+     */
+    public Flowable<RuntimeEvent> handleConfirm(
+            String agentId, String userId, String sessionId,
+            List<ConfirmResult> confirmResults) {
+
+        AgentGraph graph = agentRegistry.get(agentId);
+        if (graph == null) {
+            return Flowable.error(new AppException(ResponseCode.E0001.getCode()));
+        }
+
+        AgentNodeDef entry = graph.getAgentDefs().get(graph.getEntryPoint());
+        if (entry == null) {
+            return Flowable.error(new AppException(ResponseCode.E0001.getCode(),
+                    "入口Agent未配置: " + graph.getEntryPoint()));
+        }
+
+        // 恢复之前的 Agent 状态
+        String instruction = injectMemory(entry.getInstruction(), "", entry.getName());
+
+        AgentConfig agentConfig = AgentConfig.builder()
+                .name(entry.getName())
+                .instruction(instruction)
+                .description(entry.getDescription())
+                .outputKey(entry.getOutputKey())
+                .toolNames(entry.getToolNames())
+                .modelRef(entry.getModelRef())
+                .agentType(entry.getAgentType() != null ? entry.getAgentType() : "react")
+                .cancelToken(new CancelToken())
+                .build();
+
+        Agent agent = agentFactory.create(agentConfig);
+
+        // H5-步骤6: 加载已保存的会话状态
+        if (sessionRepository != null && sessionId != null) {
+            try {
+                restoreSession(agent, sessionId);
+            } catch (StateRestoreException e) {
+                return Flowable.error(new AppException(ResponseCode.E0001.getCode(),
+                        "会话状态恢复失败: " + e.getMessage()));
+            }
+        }
+
+        // 注入确认回执到 metadata
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("confirmResults", confirmResults);
+
+        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null,
+                "[用户已提交工具调用确认]", metadata, null);
 
         return agent.execute(ctx);
     }
@@ -313,6 +373,50 @@ public class ChatService implements IChatService {
     public java.util.List<CheckpointData> listCheckpoints(String sessionId) {
         if (checkpointCollector == null) return List.of();
         return checkpointCollector.listCheckpoints(sessionId);
+    }
+
+    /**
+     * H5-步骤6: 从 SessionRepository 恢复 Agent 状态。
+     *
+     * <p>强校验恢复路径：
+     * <ul>
+     *   <li>JSON 解析失败 → 警告后回退新会话（兼容旧格式）</li>
+     *   <li>{@link StateRestoreException}（字段缺失） → 响亮抛出不带病恢复</li>
+     *   <li>恢复后用槽位重建运行时组件（对齐 AgentScope ReActAgent L437-477）</li>
+     * </ul>
+     *
+     * @param agent     目标 Agent 实例
+     * @param sessionId 会话 ID
+     * @throws StateRestoreException 如果必需字段缺失
+     */
+    private void restoreSession(Agent agent, String sessionId) {
+        try {
+            var opt = sessionRepository.findBySessionId(sessionId);
+            if (opt.isEmpty()) return;
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> savedState = objectMapper.readValue(
+                    opt.get().getStateJson(), Map.class);
+
+            // H5-步骤6: loadState 内部会校验必需字段，缺失时抛 StateRestoreException
+            agent.loadState(savedState);
+
+            log.info("恢复会话: sessionId={}, turnCount={}, status={}",
+                    sessionId,
+                    savedState.getOrDefault("currentTurn", 0),
+                    savedState.getOrDefault("status", "unknown"));
+
+            // H5-步骤6: 用恢复的槽位重建运行时组件
+            // （PermissionEngine 重建在 H4 方案落地时完成，
+            //   此处预留重建钩子——toolContext 槽位数据已随 loadState 恢复）
+        } catch (StateRestoreException e) {
+            // 字段缺失类错误 → 响亮传播，拒绝带病恢复
+            log.error("会话状态恢复失败（字段缺失）: sessionId={}, error={}", sessionId, e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            // JSON 解析失败等非字段缺失错误 → 兼容旧格式，回退新会话
+            log.warn("会话状态 JSON 解析失败，将作为新会话处理: sessionId={}", sessionId, e);
+        }
     }
 
     /**

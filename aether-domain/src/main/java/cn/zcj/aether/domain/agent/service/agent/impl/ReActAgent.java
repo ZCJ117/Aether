@@ -6,10 +6,13 @@ import cn.zcj.aether.domain.agent.service.agent.core.*;
 import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
 import cn.zcj.aether.domain.agent.service.agent.middleware.AgentMiddleware;
 import cn.zcj.aether.domain.agent.service.agent.middleware.MiddlewareChain;
+import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
+import cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall;
 import cn.zcj.aether.domain.agent.service.context.AutoCompactResult;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
 import cn.zcj.aether.domain.agent.service.context.TokenBudget;
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
+import cn.zcj.aether.domain.agent.service.model.failover.ResilientChatModelExecutor;
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
@@ -27,6 +30,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 /**
  * 标准 ReAct（Reasoning + Acting）Agent 实现。
@@ -83,6 +87,14 @@ public class ReActAgent extends BaseAgent {
         return Flowable.create(emitter -> {
             startTime = Instant.now();
             try {
+                // P1 容错：将 AgentState 注入 ResilientChatModelExecutor（供 fallback 冷却使用）
+                wireResilientExecutor();
+
+                // H4-步骤5: 检测挂起恢复
+                if (state.getStatus() == AgentState.AgentStatus.PAUSED) {
+                    checkAndResumeIfPaused(ctx);
+                }
+
                 // 生命周期：before
                 onBeforeExecute(ctx);
                 state.setStatus(AgentState.AgentStatus.RUNNING);
@@ -134,6 +146,13 @@ public class ReActAgent extends BaseAgent {
 
         while (state.getCurrentTurn() < MAX_TURNS && !config.getCancelToken().isCancelled() && !aborted.get()) {
             state.incrementTurn();
+
+            // H5-步骤5: 每轮清空快照去重集合（对齐 hermes new_turn() L737-739）
+            toolExecutor.clearSnapshotTracking();
+
+            // H5: 每轮重置中断信号（对齐 AgentScope ReActAgent 每轮检查模式）
+            state.interruptControl().reset();
+
             Instant turnStart = Instant.now();
 
             // P0-6: 发布 TurnStarted 事件
@@ -145,26 +164,15 @@ public class ReActAgent extends BaseAgent {
             // ====== Phase 1: Context Management ======
             List<TurnMessage> messages = state.messagesMutable();
 
-            // P0-6: 消息修剪——超过500条保留最近200条
+            // P2-2: 消息修剪——超过500条保留最近200条（下沉至 ContextManager，含配对对齐 + 占位消息）
             if (messages.size() > 500) {
-                int keepRecent = 200;
-                List<TurnMessage> trimmed = new ArrayList<>();
-                if (!messages.isEmpty()) {
-                    trimmed.add(messages.get(0)); // 保留第一条（通常是 system initial）
-                }
-                int fromIndex = Math.max(1, messages.size() - keepRecent);
-                if (fromIndex < messages.size()) {
-                    trimmed.addAll(messages.subList(fromIndex, messages.size()));
-                }
-                messages.clear();
-                messages.addAll(trimmed);
-                log.info("会话消息已修剪: agentId={}, 保留 {} 条", getId(), trimmed.size());
+                contextManager.trimMessages(messages, 200);
             }
 
             messages = contextManager.applyToolResultBudget(messages);
             messages = contextManager.microCompact(messages);
 
-            var compactResult = contextManager.autoCompactIfNeeded(messages, config.getModelRef());
+            var compactResult = contextManager.autoCompactIfNeeded(messages, config.getModelRef(), ctx.sessionId());
             if (compactResult.isCompacted()) {
                 List<TurnMessage> compacted = (List<TurnMessage>) compactResult.getCompressedMessages();
                 messages.clear();
@@ -294,6 +302,36 @@ public class ReActAgent extends BaseAgent {
 
             boolean allFailed = true;
             for (ToolResult result : results) {
+                // P0-1: 同一 toolCallId 连续 VALIDATION 失败计数（防死循环，对齐 crewAI _max_parsing_attempts=3）
+                if (result.isError() && result.getErrorType() == ToolResult.ErrorType.VALIDATION) {
+                    String counterKey = "valFailCount:" + result.getToolCallId();
+                    int valFailCount = state.getAttribute(counterKey) instanceof Integer i
+                            ? i.intValue() + 1 : 1;
+                    state.setAttribute(counterKey, valFailCount);
+                    if (valFailCount >= 3) {
+                        log.warn("Agent [{}] toolCallId [{}] 连续 {} 次 VALIDATION 失败，标记为终态错误",
+                                getId(), result.getToolCallId(), valFailCount);
+                        String terminalMsg = result.getContent()
+                                + "\n\n[系统提示] 该工具已连续 " + valFailCount
+                                + " 次参数校验失败，请放弃此工具调用路径，改用其他方式完成任务。";
+                        emitter.onNext(RuntimeEvent.builder()
+                                .type(RuntimeEvent.EventType.toolResult)
+                                .toolCallId(result.getToolCallId())
+                                .toolName(result.getToolName())
+                                .toolOutput(terminalMsg)
+                                .toolError(true)
+                                .build());
+                        messages.add(TurnMessage.toolResult(
+                                result.getToolCallId(), result.getToolName(), terminalMsg));
+                        allFailed = false; // 不计入 allFailed（已明确告知 LLM 放弃）
+                        continue;
+                    }
+                } else if (!result.isError()) {
+                    // P0-1: 成功的工具调用清除该 toolCallId 的 VALIDATION 计数器
+                    String counterKey = "valFailCount:" + result.getToolCallId();
+                    state.setAttribute(counterKey, 0);
+                }
+
                 // Phase 9: 策展管道处理工具结果
                 String curatedContent = result.getContent();
                 if (curationPipeline != null && tokenBudget != null) {
@@ -333,6 +371,12 @@ public class ReActAgent extends BaseAgent {
                 eventPublisher.publishTurnCompleted(getId(), ctx.sessionId(), ctx.correlationId(),
                         state.getCurrentTurn(), hasToolCalls,
                         results.size(), turnDurationMs);
+            }
+
+            // ====== H4-步骤4: 检测挂起的工具调用 ======
+            if (state.hasPendingAsking()) {
+                handlePermissionSuspend(ctx, emitter);
+                return; // 终止本轮执行流，等待用户确认后恢复
             }
 
             // P0-#8: 每 N 轮自动保存检查点（借鉴 CrewAI 多粒度检查点 + cc-haha WAL 日志模式）
@@ -408,6 +452,174 @@ public class ReActAgent extends BaseAgent {
         } catch (Exception e) {
             return String.valueOf(input);
         }
+    }
+
+    /**
+     * P1 容错：将当前 AgentState 注入 ResilientChatModelExecutor。
+     *
+     * <p>如果 chatModel 是 {@link ResilientChatModelExecutor} 实例，
+     * 则设置其 AgentState 引用，使 fallback 冷却时间等状态在主循环轮回间持久化。</p>
+     */
+    private void wireResilientExecutor() {
+        if (chatModel instanceof ResilientChatModelExecutor executor) {
+            executor.setAgentState(state);
+        }
+    }
+
+    // ============== H4: 权限挂起/恢复协议 ==============
+
+    /**
+     * H4-步骤4: 处理权限挂起 —— 发出 RequireUserConfirmEvent，
+     * 将 Agent 置为 PAUSED 状态，持久化，终止本轮执行流。
+     *
+     * <p>对齐 AgentScope ReActAgent L2302-2322 的 ASK 事件发出 + RequestStopEvent 语义。
+     */
+    private void handlePermissionSuspend(RuntimeContext ctx, FlowableEmitter<RuntimeEvent> emitter) {
+        List<SuspendedToolCall> asking = state.getAsking().stream()
+                .filter(s -> s.state() == SuspendedToolCall.SuspendedState.ASKING)
+                .toList();
+
+        if (asking.isEmpty()) return;
+
+        String replyId = UUID.randomUUID().toString().substring(0, 8);
+        String pendingJson;
+        try {
+            pendingJson = objectMapper.writeValueAsString(asking);
+        } catch (Exception e) {
+            pendingJson = "[]";
+        }
+
+        log.info("Agent [{}] 暂停等待用户确认: replyId={}, pendingCount={}, tools={}",
+                getId(), replyId, asking.size(),
+                asking.stream().map(SuspendedToolCall::toolName).collect(Collectors.joining(",")));
+
+        // 发出 permission_asking SSE 事件
+        emitter.onNext(RuntimeEvent.permissionAsking(replyId, pendingJson));
+        emitter.onNext(RuntimeEvent.agentPaused("等待用户确认 " + asking.size() + " 个工具调用"));
+
+        // 发布领域事件
+        if (eventPublisher != null) {
+            eventPublisher.publishPermissionAsking(getId(), ctx.sessionId(), ctx.correlationId(),
+                    replyId, asking.size(),
+                    asking.stream().map(SuspendedToolCall::toolName).collect(Collectors.joining(",")));
+        }
+
+        // 置为 PAUSED 状态
+        state.setStatus(AgentState.AgentStatus.PAUSED);
+
+        // 持久化挂起状态
+        persistState(ctx);
+
+        emitter.onComplete();
+    }
+
+    /**
+     * H4-步骤5: 恢复分派点 —— 检测挂起状态并应用用户确认结果。
+     *
+     * <p>对齐 AgentScope ReActAgent L1435-1470 的恢复协议。
+     * 调用时机：在 execute() 入口、每次新消息到来时检测。
+     *
+     * @param ctx 运行时上下文（需包含 confirmResults 元数据）
+     * @throws IllegalStateException 如果 Agent 处于 PAUSED 状态但无确认回执
+     */
+    private void checkAndResumeIfPaused(RuntimeContext ctx) {
+        if (!state.hasPendingAsking()) return;
+
+        // 从 metadata 提取确认回执
+        @SuppressWarnings("unchecked")
+        List<ConfirmResult> confirmResults = ctx.metadata() != null
+                ? (List<ConfirmResult>) ctx.metadata().get("confirmResults")
+                : null;
+
+        if (confirmResults == null || confirmResults.isEmpty()) {
+            throw new IllegalStateException(
+                    "Agent [%s] is paused for human-in-the-loop confirmation. "
+                            .formatted(getId())
+                            + "Please provide confirmResults in the request metadata.");
+        }
+
+        applyConfirmResults(confirmResults, ctx);
+    }
+
+    /**
+     * H4-步骤5: 应用用户确认结果。
+     *
+     * <p>批准项 → withState(ALLOWED) 并执行；
+     * 拒绝项 → 写入 DENIED 的 ToolResult 消息让 Agent 知晓。
+     */
+    private void applyConfirmResults(List<ConfirmResult> confirmResults, RuntimeContext ctx) {
+        List<SuspendedToolCall> asking = state.askingMutable();
+        java.util.concurrent.atomic.AtomicInteger approved = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger denied = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        for (ConfirmResult cr : confirmResults) {
+            // 找到匹配的挂起工具调用
+            asking.stream()
+                    .filter(s -> s.toolCallId().equals(cr.toolCallId())
+                            && s.state() == SuspendedToolCall.SuspendedState.ASKING)
+                    .findFirst()
+                    .ifPresentOrElse(suspended -> {
+                        int idx = asking.indexOf(suspended);
+                        if (cr.approved()) {
+                            // 批准：标记为 ALLOWED 并立即执行
+                            asking.set(idx, suspended.withState(SuspendedToolCall.SuspendedState.ALLOWED));
+
+                            // 执行工具调用
+                            ToolExecutor.ToolCallRequest req = new ToolExecutor.ToolCallRequest(
+                                    suspended.toolCallId(), suspended.toolName(), suspended.input());
+                            List<ToolResult> results = toolExecutor.executeBatch(
+                                    List.of(req), ctx.userId(), ctx.sessionId());
+
+                            for (ToolResult result : results) {
+                                String content = result.getContent();
+                                state.messagesMutable().add(TurnMessage.toolResult(
+                                        result.getToolCallId(), result.getToolName(), content));
+                            }
+                            approved.incrementAndGet();
+                            log.info("用户批准工具调用: toolCallId={}, toolName={}",
+                                    suspended.toolCallId(), suspended.toolName());
+                        } else {
+                            // 拒绝：标记为 DENIED，写入拒绝消息
+                            asking.set(idx, suspended.withState(SuspendedToolCall.SuspendedState.DENIED));
+                            String denyMsg = "[用户已拒绝] 工具 [" + suspended.toolName()
+                                    + "] 的调用已被用户拒绝。";
+                            state.messagesMutable().add(TurnMessage.toolResult(
+                                    suspended.toolCallId(), suspended.toolName(), denyMsg));
+                            denied.incrementAndGet();
+                            log.info("用户拒绝工具调用: toolCallId={}, toolName={}",
+                                    suspended.toolCallId(), suspended.toolName());
+                        }
+                    }, () -> log.warn("未找到匹配的挂起工具调用: toolCallId={}", cr.toolCallId()));
+        }
+
+        int approvedCount = approved.get();
+        int deniedCount = denied.get();
+
+        // 发布领域事件
+        if (eventPublisher != null) {
+            eventPublisher.publishPermissionResolved(getId(), ctx.sessionId(), ctx.correlationId(),
+                    "resume-" + UUID.randomUUID().toString().substring(0, 8), approvedCount, deniedCount);
+        }
+
+        // 清空挂起列表
+        state.clearAsking();
+
+        // 恢复运行状态
+        state.setStatus(AgentState.AgentStatus.RUNNING);
+        log.info("Agent [{}] 权限确认完成，恢复运行: approved={}, denied={}", getId(), approvedCount, deniedCount);
+    }
+
+    /**
+     * 持久化当前 Agent 状态到 SessionRepository。
+     */
+    private void persistState(RuntimeContext ctx) {
+        // 持久化依赖外部 SessionRepository，通过 ChatService 的会话持久化机制完成。
+        // 此处通过 saveState() 序列化，由调用方（ChatService）负责写入存储。
+        // ReActAgent 自身不持有 SessionRepository 引用（保持 DDD 分层约束）。
+        Map<String, Object> stateJson = saveState();
+        log.debug("Agent [{}] 状态已序列化待持久化: sessionId={}, askingCount={}",
+                getId(), ctx.sessionId(),
+                state.getAsking().size());
     }
 
     /**

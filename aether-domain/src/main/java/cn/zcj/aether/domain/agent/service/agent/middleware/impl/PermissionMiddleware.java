@@ -1,12 +1,14 @@
 package cn.zcj.aether.domain.agent.service.agent.middleware.impl;
 
 import cn.zcj.aether.domain.agent.service.agent.core.Agent;
+import cn.zcj.aether.domain.agent.service.agent.core.AgentState;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.agent.middleware.AgentMiddleware;
 import cn.zcj.aether.domain.agent.service.agent.permission.PermissionContext;
 import cn.zcj.aether.domain.agent.service.agent.permission.PermissionDecision;
 import cn.zcj.aether.domain.agent.service.agent.permission.PermissionEngine;
 import cn.zcj.aether.domain.agent.service.agent.permission.PermissionMode;
+import cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall;
 import cn.zcj.aether.domain.agent.service.tool.Tool;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
 import cn.zcj.aether.domain.agent.service.tool.ToolRegistry;
@@ -19,7 +21,17 @@ import java.util.List;
 
 /**
  * 权限中间件 —— 在 onActing 拦截点检查每个工具调用的权限。
- * 实现 P1-2 的 AgentMiddleware 接口。
+ * H4 重构：ASK_USER 决策不再"暂允许"，改为"挂起-确认-恢复"的一等公民状态。
+ *
+ * <p>流程：
+ * <ol>
+ *   <li>DENY → 拒绝执行（记录日志）</li>
+ *   <li>ALLOW → 加入本次允许执行列表</li>
+ *   <li>ASK_USER → 登记为 SuspendedToolCall(ASKING) 写入 AgentState.permissionContext，
+ *       本批次中其余 ALLOW 请求仍正常放行</li>
+ * </ol>
+ *
+ * <p>挂起后由 ReActAgent 检测 asking 非空 → 发 RequireUserConfirmEvent → PAUSED → 终止执行流。
  */
 @Slf4j
 @Component
@@ -39,8 +51,8 @@ public class PermissionMiddleware implements AgentMiddleware {
             List<ToolExecutor.ToolCallRequest> requests,
             Agent agent, RuntimeContext ctx) {
 
-        // 从 metadata 获取当前权限模式（默认 DEFAULT）
         PermissionMode mode = getPermissionMode(ctx);
+        AgentState state = agent.getState();
 
         List<ToolExecutor.ToolCallRequest> allowed = new ArrayList<>();
 
@@ -66,10 +78,18 @@ public class PermissionMiddleware implements AgentMiddleware {
                 case DENY -> log.warn("权限拒绝: tool={}, userId={}, mode={}",
                     request.toolName(), ctx.userId(), mode);
                 case ASK_USER -> {
-                    // 需要用户确认——当前实现记录日志并暂允许
-                    // 完整实现需要暂停执行流，等待用户响应
-                    log.info("工具 [{}] 需要用户确认，当前会话暂允许", request.toolName());
-                    allowed.add(request);
+                    // 【H4-步骤4】ASK_USER 不再"暂允许"——
+                    // 登记为 SuspendedToolCall，写入 AgentState.permissionContext
+                    SuspendedToolCall suspended = new SuspendedToolCall(
+                            request.toolCallId(),
+                            request.toolName(),
+                            request.input(),
+                            "工具 [" + request.toolName() + "] 需要用户确认",
+                            SuspendedToolCall.SuspendedState.ASKING);
+                    state.askingMutable().add(suspended);
+
+                    log.info("工具 [{}] 挂起等待用户确认: toolCallId={}, userId={}",
+                            request.toolName(), request.toolCallId(), ctx.userId());
                 }
             }
         }

@@ -29,6 +29,9 @@ public class RuntimeEvent {
     private int budgetUsed;          // tokenBudget: 已用弹性预算
     private int budgetTotal;         // tokenBudget: 弹性预算总额
     private double budgetPercent;    // tokenBudget: 使用比例 (0-1)
+    // H4: 权限挂起事件字段
+    private String pendingToolCallsJson;  // permission_asking: 挂起的工具调用列表 JSON
+    private String confirmReplyId;        // permission_asking: 确认回执 ID
 
     public enum EventType {
         textDelta,
@@ -41,7 +44,9 @@ public class RuntimeEvent {
         error,
         internalLlmCall,   // C2: 非主循环 LLM 调用
         checkpoint,         // P0-#8: Agent 检查点事件
-        tokenBudget        // Token 预算监控事件
+        tokenBudget,        // Token 预算监控事件
+        permissionAsking,   // H4: 权限挂起等待用户确认
+        agentPaused         // H4: Agent 已暂停
     }
 
     public static RuntimeEvent text(String delta) {
@@ -81,6 +86,23 @@ public class RuntimeEvent {
                 .budgetUsed(used)
                 .budgetTotal(total)
                 .budgetPercent(total > 0 ? (double) used / total : 0)
+                .build();
+    }
+
+    /** H4: 权限挂起事件 —— 等待用户确认工具调用 */
+    public static RuntimeEvent permissionAsking(String replyId, String pendingToolCallsJson) {
+        return RuntimeEvent.builder()
+                .type(EventType.permissionAsking)
+                .confirmReplyId(replyId)
+                .pendingToolCallsJson(pendingToolCallsJson)
+                .build();
+    }
+
+    /** H4: Agent 已暂停事件 */
+    public static RuntimeEvent agentPaused(String reason) {
+        return RuntimeEvent.builder()
+                .type(EventType.agentPaused)
+                .errorMessage(reason)
                 .build();
     }
 }

@@ -2,6 +2,7 @@ package cn.zcj.aether.domain.agent.service.agent.permission;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -33,17 +34,16 @@ public class SensitiveArgMaskRule implements PermissionRule {
             return null;
         }
 
-        boolean masked = false;
-        for (String key : toolInput.keySet()) {
-            String normalized = key.toLowerCase().replace("-", "").replace("_", "");
-            if (SENSITIVE.contains(normalized) && toolInput.get(key) instanceof String val && !val.isEmpty()) {
-                toolInput.put(key, "***");
-                masked = true;
-            }
+        // 【H4-步骤1】不再原地修改 toolInput。
+        // 仅记录被脱敏的 key 列表到上下文属性中，供展示/日志层使用。
+        // 实际脱敏动作上移到 MaskingUtil.forDisplay() ——
+        // 在 AgentEventPublisher 发出事件和 log.debug 输出时对事件副本做脱敏。
+        List<String> maskedKeys = MaskingUtil.collectMaskedKeys(toolInput);
+        if (!maskedKeys.isEmpty()) {
+            ctx.getAttributes().put("maskedKeys", maskedKeys);
+            log.debug("工具参数含敏感键（将于展示层脱敏）: toolName={}, keys={}",
+                    ctx.getToolName(), maskedKeys);
         }
-        if (masked) {
-            log.debug("工具参数已脱敏: toolName={}", ctx.getToolName());
-        }
-        return null;
+        return null; // 永不放行/拒绝，由其他规则决定
     }
 }

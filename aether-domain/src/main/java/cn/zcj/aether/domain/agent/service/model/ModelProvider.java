@@ -57,4 +57,20 @@ public interface ModelProvider {
 
     /** 该 Provider 默认的 API 路径前缀（用于 YAML 中省略 completionsPath 时的默认值） */
     default String defaultCompletionsPath() { return "v1/chat/completions"; }
+
+    /**
+     * P1: Provider 特有的错误分类逻辑。
+     *
+     * 各 Provider 实现可重写此方法，将 Provider 特有的状态码/错误体格式
+     * 翻译为 {@link cn.zcj.aether.domain.agent.service.model.failover.ClassifiedError}。
+     * 返回 null 表示"无特定分类"，由默认分类器处理。
+     *
+     * @param error   原始异常
+     * @param modelId 当前模型 ID
+     * @return 分类结果，或 null 回退到默认分类器
+     */
+    default cn.zcj.aether.domain.agent.service.model.failover.ClassifiedError classifyError(
+            Throwable error, String modelId) {
+        return null;  // 默认：交给 DefaultModelErrorClassifier
+    }
 }

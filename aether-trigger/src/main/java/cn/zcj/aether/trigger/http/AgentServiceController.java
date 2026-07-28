@@ -5,21 +5,20 @@ import cn.zcj.aether.api.dto.*;
 import cn.zcj.aether.api.response.Response;
 import cn.zcj.aether.domain.agent.model.valobj.AiAgentConfigTableVO;
 import cn.zcj.aether.domain.agent.service.IChatService;
+import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
+import cn.zcj.aether.domain.agent.service.chat.ChatService;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.types.enums.ResponseCode;
 import cn.zcj.aether.types.exception.AppException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 import javax.annotation.Resource;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.stream.Collectors;
+import java.util.*;
 
 /**
  * REST控制器 — AI Agent服务HTTP入口
@@ -30,17 +29,29 @@ import java.util.stream.Collectors;
  *   3. 调用domain层服务
  *   4. 结果转换 (领域对象 → DTO)
  *   5. 统一异常包装
+ *
+ * H4 更新：
+ * - CORS 改为按 profile 配置白名单（不再 * 全开）
+ * - 新增 POST /api/v1/confirm 权限确认回执端点
+ * - SSE 序列化新增 permissionAsking / agentPaused 事件类型
  */
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/")
-@CrossOrigin(origins = "*")
 public class AgentServiceController implements IAgentService {
 
     @Resource
     private IChatService chatService;
 
+    /** H4: 直接注入 ChatService 实现以访问 handleConfirm 方法 */
+    @Resource
+    private ChatService chatServiceImpl;
+
     private static final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** H4: CORS 允许的来源白名单（逗号分隔，默认 * 保持向后兼容） */
+    @Value("${aether.cors.allowed-origins:*}")
+    private String allowedOrigins;
 
     @RequestMapping(value = "query_ai_agent_config_list", method = RequestMethod.GET)
     @Override
@@ -56,7 +67,7 @@ public class AgentServiceController implements IAgentService {
                 responseDTO.setAgentName(agentConfig.getAgentName());
                 responseDTO.setAgentDesc(agentConfig.getAgentDesc());
                 return responseDTO;
-            }).collect(Collectors.toList());
+            }).collect(java.util.stream.Collectors.toList());
 
             return Response.<List<AiAgentConfigResponseDTO>>builder()
                     .code(ResponseCode.SUCCESS.getCode())
@@ -195,6 +206,84 @@ public class AgentServiceController implements IAgentService {
         return emitter;
     }
 
+    // ========== H4: 权限确认端点 ==========
+
+    /**
+     * H4-步骤5: 用户提交工具调用确认回执。
+     *
+     * <p>当 Agent 处于 PAUSED 状态等待用户确认时，前端通过此端点提交
+     * 批准/拒绝结果，Agent 恢复执行。
+     *
+     * <p>请求体示例：
+     * <pre>{@code
+     * {
+     *   "agentId": "my-agent",
+     *   "userId": "user-123",
+     *   "sessionId": "abc123",
+     *   "confirmResults": [
+     *     {"toolCallId": "call_001", "approved": true},
+     *     {"toolCallId": "call_002", "approved": false}
+     *   ]
+     * }
+     * }</pre>
+     */
+    @RequestMapping(value = "confirm", method = RequestMethod.POST)
+    public ResponseBodyEmitter confirm(@RequestBody Map<String, Object> requestBody) {
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        MDC.put("correlationId", correlationId);
+
+        ResponseBodyEmitter emitter = new ResponseBodyEmitter(3 * 60 * 1000L);
+        try {
+            String agentId = (String) requestBody.get("agentId");
+            String userId = (String) requestBody.get("userId");
+            String sessionId = (String) requestBody.get("sessionId");
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> rawResults = (List<Map<String, Object>>) requestBody.get("confirmResults");
+
+            if (agentId == null || sessionId == null || rawResults == null || rawResults.isEmpty()) {
+                emitter.send("data: {\"type\":\"error\",\"errorMessage\":\"缺少必要参数: agentId, sessionId, confirmResults\"}\n\n");
+                emitter.complete();
+                return emitter;
+            }
+
+            // 将原始 Map 转换为 ConfirmResult 列表
+            List<ConfirmResult> confirmResults = rawResults.stream()
+                    .map(m -> {
+                        String toolCallId = (String) m.get("toolCallId");
+                        boolean approved = Boolean.TRUE.equals(m.get("approved"));
+                        return approved
+                                ? ConfirmResult.approve(toolCallId)
+                                : ConfirmResult.deny(toolCallId);
+                    })
+                    .toList();
+
+            log.info("收到确认回执: agentId={}, userId={}, sessionId={}, count={}",
+                    agentId, userId, sessionId, confirmResults.size());
+
+            chatServiceImpl.handleConfirm(agentId, userId, sessionId, confirmResults)
+                    .subscribe(
+                            event -> {
+                                try {
+                                    emitter.send(serializeEvent(event));
+                                } catch (Exception e) {
+                                    log.error("确认恢复流式发送失败", e);
+                                    emitter.completeWithError(e);
+                                }
+                            },
+                            emitter::completeWithError,
+                            emitter::complete
+                    );
+
+        } catch (Exception e) {
+            log.error("确认回执处理失败", e);
+            emitter.completeWithError(e);
+        }
+        return emitter;
+    }
+
+    // ========== SSE 序列化 ==========
+
     private String serializeEvent(RuntimeEvent event) {
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
@@ -218,6 +307,22 @@ public class AgentServiceController implements IAgentService {
                     payload.put("errorMessage", event.getErrorMessage());
                 case turnComplete ->
                     payload.put("turnCount", event.getTurnCount());
+                case permissionAsking -> {
+                    // H4: 权限挂起事件 → 前端展示确认 UI
+                    payload.put("replyId", event.getConfirmReplyId());
+                    payload.put("pendingToolCalls", event.getPendingToolCallsJson());
+                }
+                case agentPaused ->
+                    payload.put("reason", event.getErrorMessage());
+                case tokenBudget -> {
+                    payload.put("budgetUsed", event.getBudgetUsed());
+                    payload.put("budgetTotal", event.getBudgetTotal());
+                    payload.put("budgetPercent", event.getBudgetPercent());
+                }
+                case checkpoint -> {
+                    payload.put("sessionId", event.getCheckpointSessionId());
+                    payload.put("turnNumber", event.getCheckpointTurnNumber());
+                }
                 default -> {}
             }
             return "data: " + objectMapper.writeValueAsString(payload) + "\n\n";

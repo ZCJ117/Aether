@@ -23,6 +23,8 @@ import java.util.UUID;
     @JsonSubTypes.Type(value = AgentEvent.CompactTriggered.class, name = "compact.triggered"),
     @JsonSubTypes.Type(value = AgentEvent.ErrorOccurred.class, name = "error.occurred"),
     @JsonSubTypes.Type(value = AgentEvent.CheckpointCreated.class, name = "checkpoint.created"),
+    @JsonSubTypes.Type(value = AgentEvent.PermissionAsking.class, name = "permission.asking"),
+    @JsonSubTypes.Type(value = AgentEvent.PermissionResolved.class, name = "permission.resolved"),
 })
 public interface AgentEvent {
 
@@ -128,5 +130,29 @@ public interface AgentEvent {
         String correlationId,
         int turnNumber,
         int messageCount
+    ) implements AgentEvent {}
+
+    /** H4: 权限挂起事件 —— 工具调用等待用户确认 */
+    record PermissionAsking(
+        String eventId,
+        java.time.Instant timestamp,
+        String agentId,
+        String sessionId,
+        String correlationId,
+        String replyId,
+        int pendingCount,
+        String toolNames
+    ) implements AgentEvent {}
+
+    /** H4: 权限解决事件 —— 用户确认或拒绝完成 */
+    record PermissionResolved(
+        String eventId,
+        java.time.Instant timestamp,
+        String agentId,
+        String sessionId,
+        String correlationId,
+        String replyId,
+        int approvedCount,
+        int deniedCount
     ) implements AgentEvent {}
 }

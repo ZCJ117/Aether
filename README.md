@@ -1,8 +1,8 @@
 # Aether: 企业级多 Agent 协作架构
 
-Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、**PlanActAgent 规划执行模式**、**检查点/恢复机制**、**LLM 响应缓存**、**上下文工程架构升级**（Token 预算 + AgentScope 6步压缩管道 + 信号策展 + 运行时即时检索 + 子Agent 物理隔离 + 外部笔记）、工具沙箱、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
+Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、**PlanActAgent 规划执行模式**、**检查点/恢复机制**、**LLM 响应缓存**、**上下文工程架构升级**（Token 预算 + AgentScope 6步压缩管道 + 信号策展 + 运行时即时检索 + 子Agent 物理隔离 + 外部笔记）、**三级优先级代码优化**（P0 工具校验闭环与 Schema 回喂 + P1 错误分类容错与 Fallback 模型链 + P2 上下文压缩守卫与熔断）、工具沙箱、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
 
-设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha 五大开源 Agent 框架，累计 100+ 源文件、9 个测试类（93 个测试用例）。
+设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha、hermes-agent 六大开源 Agent 框架，累计 100+ 源文件、9 个测试类（93 个测试用例）。
 
 ---
 
@@ -39,14 +39,40 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **最小可行工具集**：每个 Agent 最多 15 个工具。超限时按优先级裁剪（写工具 > 核心读工具 > 辅助读工具 > MCP/Skills）。
 - **工具描述编译期校验**：`ToolDescriptionValidator` 禁止模糊词（"可能/大概/或许/等/etc"），启动时检测并抛出 `AgentCompileException`。
 
-### 2.2 模型提供商可插拔
+### 2.2 三级优先级代码优化（P0/P1/P2 全部完成）
+
+- **P0-1 工具校验闭环与 Schema 提示回喂**（借鉴 crewAI `build_schema_hint` + cc-haha 并发安全设计）：
+  - `ToolExecutor.executeOne()` 执行前插入两级校验关卡——JSON Schema 校验（`ToolInputValidator` 读取 `inputSchema()` 校验 required/properties/type/enum）+ 工具自定义校验（`tool.validate()` 返回结构化 `ValidationResult`）+ 权限检查（`checkPermissions()`）
+  - 校验失败时 `SchemaHintBuilder` 生成完整 Schema 提示作为 `ToolResult.error(VALIDATION)` 回喂 LLM，复用现有消息通道无需新增协议
+  - `ToolResult.ErrorType` 四类枚举（VALIDATION / PERMISSION / EXECUTION / TIMEOUT），供统计与中间件区分
+  - 有界线程池（核心 4 / 最大 16 / 队列 200 / CallerRunsPolicy + `aether-tool-%d` 命名工厂）替代 `newCachedThreadPool`，消除高并发线程膨胀风险
+  - `isConcurrencySafe()` 判定异常时保守降级为 unsafe 组（对齐 cc-haha 安全设计）
+  - 防死循环护栏：同一 `toolCallId` 连续 3 次 VALIDATION 失败 → 标记终态错误并提示 Agent 放弃该工具（对齐 crewAI `_max_parsing_attempts=3`）
+- **P1 错误分类容错与 Fallback 模型链**（借鉴 hermes-agent 21 种 FailoverReason + AgentScope 分层覆盖）：
+  - `failover/FailoverReason` 14 种失败原因枚举（AUTH_TRANSIENT / AUTH_PERMANENT / BILLING / RATE_LIMIT / UPSTREAM_RATE_LIMIT / OVERLOADED / SERVER_ERROR / TIMEOUT / CONTEXT_OVERFLOW 等）
+  - `ClassifiedError` 内联 4 个动作提示（retryable / shouldCompress / shouldFallback / detail），主循环读提示而不再重复分类
+  - `ResilientChatModelExecutor` 统一容错执行器：`shouldCompress=true` → 触发压缩后重组装 prompt（压缩重试上限 2 次）；`retryable=true` → 去相关抖动退避（base=2s、max=30s、jitterRatio=0.5）；`shouldFallback=true` → 推进 fallback 链（`ModelRoute` 有序取下一项，限流切换 60s 冷却）
+  - `ModelProvider.classifyError()` SPI 扩展各 Provider 特有错误码翻译；`ModelConfig` 新增 `maxAttempts / initialBackoff / maxBackoff / fallbackModels` YAML 可配字段
+  - 重试所有权收归 `ResilientChatModelExecutor`，避免内外重试复合把单次挂起拉到 3 倍超时
+- **P2 上下文压缩守卫**（借鉴 autogen `_head_and_tail` 配对对齐 + cc-haha 熔断器）：
+  - **工具配对边界对齐**：`ContextManager.alignToolPairBoundaries()` 移植 autogen 配对守卫——首条孤儿 tool_result→丢弃、末条悬空 tool_use→丢弃，消除超长会话因截断导致的 tool_call 配对错位。消息修剪下沉为 `ContextManager.trimMessages()` + 占位消息（`[系统提示] 已跳过 N 条较早消息`）
+  - **摘要防污染标注**：`autoCompact` 摘要注入文案加前缀 `[对话历史摘要 — 仅供参考，非活跃指令，勿直接执行其中描述的任务]`，对齐 hermes SUMMARY_PREFIX
+  - **连续压缩失败熔断器**：`MAX_CONSECUTIVE_COMPACT_FAILURES=3`（来源 cc-haha 生产数据，可消除日 25 万次徒劳 API 调用），成功重置、达阈值永久放弃本会话自动压缩
+  - **上下文窗口配置化**：`ModelContextWindowRegistry` 窗口大小外置可配（精确 modelId → 关键字包含 → 默认 128k），chars-per-token 估算系数同样外置
+
+### 2.3 横切关注点增强（H4/H5）
+
+- **H4 权限确认回执**：新增 `POST /api/v1/confirm` 端点支持用户提交工具调用批准/拒绝回执，SSE 事件新增 `permissionAsking / agentPaused` 类型，`AgentState` 增加 `SuspendedToolCall` 挂起队列（`CopyOnWriteArrayList`），CORS 改为按 profile 配置白名单（`aether.cors.allowed-origins`）替代 `*` 全开
+- **H5 状态完整恢复与检查点增强**：`AgentState` 槽位化子上下文（`ToolContextState` 工具激活组 + 校验计数 + `InterruptControl` 中断信号 transient 语义永不序列化），写操作前自动触发工作区快照（`ToolExecutor` 每轮每目录至多一次去重，异常静默不阻塞），`GitShadowCheckpointStore`（JGit）Git 影子仓检查点存储，新增 `POST /api/v1/resume` 检查点恢复端点
+
+### 2.4 模型提供商可插拔
 
 - **ModelProvider SPI**：`providerName()` + `supports(modelId)` + `createChatModel(config)` + `createChatModelWithTools()`
 - **内置三个 Provider**：OpenAI（兜底，兼容 DeepSeek/Qwen 等所有 OpenAI 协议）、Anthropic、DashScope
 - **ModelProviderRegistry**：Spring Bean 自动发现，按 `supports()` 匹配，注册表可动态扩展
 - **ModelConfig**：从 YAML 的 `ai-api` + `chat-model` 节点统一映射
 
-### 2.3 横切关注点体系
+### 2.5 横切关注点体系
 
 - **AgentHook 系统**（7 个拦截点）：`onBeforeExecute` / `onAfterExecute` / `onError` / `onBeforeModelCall` / `onAfterModelCall` / `onBeforeToolCall` / `onAfterToolCall`
 - **HookRegistry**：Spring Bean 自动发现 + 优先级排序 + 批量注入到所有 Agent
@@ -59,21 +85,21 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
   - `onActing` — 工具执行拦截（权限检查/参数改写）
 - **内置中间件**：`RateLimitMiddleware`（滑动窗口限流）、`GracefulShutdownMiddleware`（优雅关闭）、`PermissionMiddleware`（权限门控 + 工具沙箱）
 
-### 2.4 权限与安全
+### 2.6 权限与安全
 
 - **四级权限模式**：`DEFAULT`（正常检查）→ `PLAN`（只允许只读工具）→ `ACCEPT_EDITS`（信任模式）→ `BYPASS`（开发者模式）
 - **PermissionEngine 规则链**（借鉴 AgentScope Java）：5 条规则按优先级执行——`SensitiveArgMaskRule`(p=5, 参数脱敏) → `ReadOnlyAllowRule`(p=10) → `ToolAllowlistRule`(p=15, YAML 白/黑名单) → `PlanModeDenyWriteRule`(p=20) → 默认 DENY
 - **工具沙箱**（P1-#9）：`SensitiveArgMaskRule` 自动脱敏 apiKey/password/token → `"***"`；`ToolAllowlistRule` 支持 YAML `toolSecurity.allowlist/denylist` 配置；`Module` 级统一注入
 - **内置规则**：`ReadOnlyAllowRule`（只读工具放行）、`PlanModeDenyWriteRule`（计划模式下禁止写入）
 
-### 2.5 可观测性
+### 2.7 可观测性
 
 - **AgentTracer**：OpenTelemetry Span 管理—`agent.turn` → `agent.model.call` → `agent.tool.call` 三级 Span 层级，记录 token 用量和成本
 - **AgentMetrics**：Micrometer 指标采集—计数器（turns/errors/toolCalls）+ 直方图（延迟 p50/p95/p99）+ Token 用量累加
 - **结构化日志**：10 种 Jackson 多态 AgentEvent + LogstashEncoder JSON 日志 + MDC 自动注入 `agentId`/`sessionId`/`correlationId`
 - **MdcFilter**：Servlet Filter 为每个 HTTP 请求注入 `X-Correlation-Id` 贯穿全链路
 
-### 2.6 多层记忆系统
+### 2.8 多层记忆系统
 
 | 层次 | 实现 | 说明 |
 |------|------|------|
@@ -87,7 +113,7 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **MemoryScope 层级隔离**：`"crew/research/agent/analyst"`，支持祖先路径遍历
 - **{memory} 占位符注入**：通过 `ChatService.injectMemory()` 注入记忆到 Agent instruction。instruction 缺少 `{memory}` 占位符时 → WARN 日志提示（不静默丢弃）
 
-### 2.7 会话持久化
+### 2.9 会话持久化
 
 - **SessionRepository 接口**：`save()` / `findBySessionId()` / `deleteBySessionId()` / `listByUserId()`
 - **双实现**：`MySqlSessionRepository`（JdbcTemplate + UPSERT）+ `RedisSessionRepository`
@@ -95,7 +121,7 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **会话恢复**：请求带 `sessionId` → 数据库加载 `state_json` → 反序列化 → `agent.loadState()` 恢复
 - **会话隔离**：`createSession()` 每次调用生成新 UUID（不复用 userId 缓存），多客户端/标签页独立会话互不干扰
 
-### 2.8 工具生态
+### 2.10 工具生态
 
 - **MCP 协议工具**：`DefaultMcpClientFactory` 按传输类型路由（SSE / Stdio / Local），经 `McpToolAdapter` 适配到 `Tool` 接口
 - **Skills 技能库**：`ToolSkillsCreateService`，支持 resource 和 directory 两种来源，经 `SkillsToolAdapter` 适配
@@ -104,9 +130,11 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **ToolExecutor 并发编排**：安全组并发 + 不安全组串行，60s 超时保护
 - **指数退避重试**：`ModelInvoker` 自动重试 3 次（1s → 2s → 4s），智能识别 Connection Reset / Timeout / 503 / 429。HTTP 400 仅非标准 API（mimo）可重试，标准 Provider 的 400 不重试
 
-### 2.9 测试覆盖
+### 2.11 测试覆盖
 
 9 个测试文件（JUnit 5 + Mockito）：`ReActAgentTest` / `ModelInvokerTest` / `ToolExecutorTest` / `ContextManagerTest` / `GraphExecutorTest` / `ChatServiceTest` / `ModelProviderTest` / `SessionRepositoryTest` / `AgentIntegrationTest`
+
+测试增强（P2 上下文压缩守卫）：`ContextManagerTest` 新增 `alignToolPairBoundaries` 配对对齐、`trimMessages` 修剪配对完整性、`isOrphanToolResult` / `isDanglingToolUse` 边界判断、microCompact 成对移除安全等单元测试用例
 
 ---
 
@@ -122,6 +150,7 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 | 工具集成 | MCP SDK + spring-ai-agent-utils | 0.4.2 |
 | 响应式 | RxJava 3 | — |
 | 缓存 | Guava | 32.1.3-jre |
+| Git 存储 | JGit | 6.10.0（Git 影子仓检查点） |
 | JSON | Jackson (domain 层) / FastJSON 2.0.28 (config 层) | — |
 | 数据库 | MySQL + MyBatis + HikariCP | 8.0.28 / 3.0.4 |
 | 向量数据库 | Pgvector（可选） | — |
@@ -206,7 +235,13 @@ aether/
 │           │   ├── ModelProvider.java    # SPI 接口
 │           │   ├── ModelConfig.java
 │           │   ├── ModelProviderRegistry.java
-│           │   └── impl/                 # OpenAIProvider, AnthropicProvider, DashScopeProvider
+│           │   ├── impl/                 # OpenAIProvider, AnthropicProvider, DashScopeProvider
+│           │   └── failover/             # ★ P1 容错层（新增）
+│           │       ├── FailoverReason.java        # 14 种失败原因枚举
+│           │       ├── ClassifiedError.java       # 动作提示内联（retryable/shouldCompress/shouldFallback）
+│           │       ├── ModelErrorClassifier.java  # 分类器接口
+│           │       ├── ModelRoute.java            # 模型路由（含 fallback 链）
+│           │       └── ResilientChatModelExecutor.java  # 统一容错执行器
 │           │
 │           ├── session/                  # ★ 会话持久化
 │           │   ├── SessionEntity.java
@@ -244,9 +279,10 @@ aether/
 │           │   ├── RuntimeEvent.java     # 运行时事件类型（含 tokenBudget 事件）
 │           │   └── TurnMessage.java      # 轮次消息封装
 │           ├── context/                  # 上下文管理
-│           │   ├── ContextManager.java   # 三层压缩 + 管道集成
-│           │   ├── TokenEstimator.java   # 分角色 Token 估算
+│           │   ├── ContextManager.java   # 三层压缩 + 管道集成 + P2 配对守卫 + 熔断器
+│           │   ├── TokenEstimator.java   # 分角色 Token 估算（委托 Registry）
 │           │   ├── TokenBudget.java      # ★ 三层 Token 预算模型
+│           │   ├── ModelContextWindowRegistry.java  # ★ P2 上下文窗口配置化（新增）
 │           │   ├── AutoCompactResult.java
 │           │   └── compaction/           # ★ 六步压缩管道（AgentScope 模式）
 │           │       ├── CompactionPipeline.java   # 管道编排
@@ -270,8 +306,12 @@ aether/
 │           ├── notes/                    # ★ 外部笔记
 │           │   ├── ExternalNotes.java     # 持久化 TODO/NOTES
 │           │   └── NotesTools.java        # todo_write + note_write 工具
-│           └── tool/                     # 工具系统
+│           ├── tool/                     # 工具系统
 │               ├── Tool.java / ToolRegistry.java / ToolExecutor.java
+│               ├── validation/                # ★ P0-1 工具校验层（新增）
+│               │   ├── ValidationResult.java   # 结构化校验结果
+│               │   ├── SchemaHintBuilder.java  # Schema 提示构建（移植 crewAI）
+│               │   └── ToolInputValidator.java # JSON Schema 校验器
 │               ├── MinimalToolSet.java   # ★ 最小可行工具集（硬限制 15 个）
 │               ├── SessionSearchTool.java # ★ 会话历史检索
 │               └── ToolResult.java / ToolContext.java / Adapters
@@ -281,7 +321,8 @@ aether/
 │       ├── SessionStore.java             # 会话存储
 │       ├── MySqlSessionRepository.java   # MySQL 持久化
 │       ├── RedisSessionRepository.java   # Redis 持久化
-│       └── PgvectorVectorStore.java      # Pgvector 向量存储
+│       ├── PgvectorVectorStore.java      # Pgvector 向量存储
+│       └── GitShadowCheckpointStore.java # ★ H5 Git 影子仓检查点存储（新增，JGit）
 │
 ├── aether-trigger/         # HTTP 触发层
 │   └── src/main/java/cn/zcj/aether/trigger/http/
@@ -355,9 +396,9 @@ POST /api/v1/chat → ChatService.handleMessage()
   │                 │     ├─ autoCompactIfNeeded() → LLM 摘要（兜底）
   │                 │     └─ CompactionPipeline ★ → 六步压缩管道
   │                 │           └─ ExternalNotes → 笔记注入
-  │                 ├─ Phase 2: chain.applyModelCall() → ModelProvider
+  │                 ├─ Phase 2: ResilientChatModelExecutor ★ P1 → 错误分类 → 退避重试/Fallback→ModelProvider
   │                 ├─ Phase 3: 无 tool_use → emit done + 退出
-  │                 └─ Phase 4: chain.applyActing() → PermissionEngine
+  │                 └─ Phase 4: ToolExecutor.executeBatch() ★ P0-1（两级校验 + 有界线程池）+ PermissionEngine → H4 挂起/恢复
   │                       └─ CurationPipeline ★ → 信号策展
   │
   └─ 多 Agent（graph.edges 非空） → GraphExecutor.execute(graph)
@@ -613,7 +654,9 @@ npm run dev
 | GET | `/api/v1/query_ai_agent_config_list` | 查询所有可用 Agent 配置 |
 | GET/POST | `/api/v1/create_session` | 创建会话（agentId, userId） |
 | POST | `/api/v1/chat` | 同步对话 |
-| POST | `/api/v1/chat_stream` | 流式对话（SSE） |
+| POST | `/api/v1/chat_stream` | 流式对话（SSE），含 `permissionAsking`/`agentPaused` 类型 |
+| POST | `/api/v1/confirm` | H4 权限确认回执（提交工具调用批准/拒绝结果） |
+| POST | `/api/v1/resume` | H5 检查点恢复端点（从 `.claude/checkpoints/` 恢复会话） |
 | GET | `/actuator/prometheus` | Prometheus 指标端点 |
 
 统一响应格式 `cn.zcj.aether.api.response.Response<T>`：
@@ -657,6 +700,19 @@ npm run dev
 | **动态加载行数上限** | `DynamicLoader` | 每次最多加载 200 行 ← **新增** |
 | **文档检索输出上限** | `DocRetriever` | 每次最多 2,000 字符（约 500 tokens） ← **新增** |
 | **会话检索上限** | `SessionSearchTool` | 每次最多 10 条结果 ← **新增** |
+| **P0 工具校验** | `ToolExecutor` | JSON Schema + 自定义校验 + 权限检查，三级执行前关卡 ← **新增** |
+| **P0 VALIDATION 重试上限** | `ReActAgent` | 同一 toolCallId 连续 3 次 → 终态错误放弃 ← **新增** |
+| **P0 线程池** | `ToolExecutor` | 核心 4 / 最大 16 / 队列 200 / CallerRunsPolicy ← **新增** |
+| **P1 容错重试** | `ResilientChatModelExecutor` | maxAttempts=3 / initialBackoff=2s / maxBackoff=30s / jitter=0.5 ← **新增** |
+| **P1 压缩重试** | `ResilientChatModelExecutor` | CONTEXT_OVERFLOW 触发压缩，压缩重试上限 2 次 ← **新增** |
+| **P1 Fallback 冷却** | `ResilientChatModelExecutor` | 限流类 fallback 切换 60s 冷却 ← **新增** |
+| **P2 熔断阈值** | `ContextManager` | 连续 3 次压缩失败 → 本会话永久放弃自动压缩 ← **新增** |
+| **P2 摘要防污染** | `ContextManager` | `[对话历史摘要 — 仅供参考...]` 前缀注入 ← **新增** |
+| **P2 窗口配置** | `ModelContextWindowRegistry` | 精确 modelId → 关键字包含 → 默认 128k ← **新增** |
+| **H4 权限确认** | `AgentServiceController` | `POST /api/v1/confirm` SSE 事件 `permissionAsking/agentPaused` ← **新增** |
+| **H5 快照去重** | `ToolExecutor` | 写操作前每轮每目录至多一次快照 ← **新增** |
+| **H5 中断信号** | `InterruptControl` | transient 语义，永不序列化落盘 ← **新增** |
+| **会话检索上限** | `SessionSearchTool` | 每次最多 10 条结果 ← **新增** |
 
 ---
 
@@ -664,11 +720,12 @@ npm run dev
 
 | 参考框架 | 语言 | 借鉴的设计 |
 |---------|------|-----------|
-| **AutoGen** (Microsoft) | Python | Agent 协议 + DiGraph & GraphFlowManager + AssistantAgent Per-Agent 模型 + OTel Span + **MagenticOne 编排器**（→ PlanActAgent） |
-| **AgentScope Java** (阿里) | Java | AgentState 双模式访问 + Hook 系统 + MiddlewareBase 五层洋葱 + AgentEvent 多态 + **Per-Agent Toolkit 深拷贝**（→ Agent 级工具作用域） + **PermissionEngine 规则链**（→ 工具沙箱） + **Project Reactor**（→ ModelInvoker 异步化） |
-| **CrewAI** | Python | BaseAgent 可序列化实体 + BaseLLM 类层次 + **EncodingFlow/RecallFlow 记忆管线**（→ llmRerank 真实实现） + **CheckpointConfig + from_checkpoint**（→ 检查点/恢复机制） + EventBus（→ internalLlmCall 事件化） |
+| **AutoGen** (Microsoft) | Python | Agent 协议 + DiGraph & GraphFlowManager + AssistantAgent Per-Agent 模型 + OTel Span + **MagenticOne 编排器**（→ PlanActAgent）+ **_head_and_tail 配对守卫**（→ P2 压缩守卫） |
+| **AgentScope Java** (阿里) | Java | AgentState 双模式访问 + Hook 系统 + MiddlewareBase 五层洋葱 + AgentEvent 多态 + **Per-Agent Toolkit 深拷贝**（→ Agent 级工具作用域） + **PermissionEngine 规则链**（→ 工具沙箱） + **InterruptControl**（→ H5 中断信号） |
+| **CrewAI** | Python | BaseAgent 可序列化实体 + BaseLLM 类层次 + **EncodingFlow/RecallFlow 记忆管线**（→ llmRerank 真实实现） + **CheckpointConfig + from_checkpoint**（→ 检查点/恢复机制） + EventBus（→ internalLlmCall 事件化） + **build_schema_hint**（→ P0 Schema 回喂） |
 | **MetaGPT** | Python | RoleContext.llm per-role + Working/LongTerm Memory 分层 + ProjectRepo 持久化 + **ActionNode 编译期校验**（→ {outputKey} 启动时校验） + **PLAN_AND_ACT 模式**（→ PlanActAgent）+ 消息级去重（→ LLM 缓存） |
-| **cc-haha** | TypeScript | cost-tracker token 核算 + SessionMemory 后台 Fork Agent + **显式 allow/deny 工具列表**（→ toolNames YAML 配置） + **WAL 日志模式 jsonl**（→ 检查点 WAL） + PermissionMode 四级模式 |
+| **cc-haha** | TypeScript | cost-tracker token 核算 + SessionMemory 后台 Fork Agent + **显式 allow/deny 工具列表**（→ toolNames YAML 配置） + **WAL 日志模式 jsonl**（→ 检查点 WAL） + PermissionMode 四级模式 + **autoCompact 熔断器 MAX_CONSECUTIVE_FAILURES=3**（→ P2 熔断） |
+| **hermes-agent** | Python | **FailoverReason 21 种分类**（→ P1 14 种 FailoverReason）+ **jittered_backoff 去相关抖动**（→ P1 退避算法）+ **try_activate_fallback 模型链切换**（→ P1 Fallback 链）+ **分类 action 提示内联**（→ P1 ClassifiedError）+ 禁用 SDK 内建重试（→ P1 重试所有权收归） |
 
 ---
 
@@ -682,6 +739,9 @@ npm run dev
 - **ChatModel 延迟注入**: 使用 `@Lazy`，因 ChatModel 在装配阶段动态注册
 - **tool_result 格式**: 必须转为 `ToolResponseMessage`，禁止转为 `UserMessage`
 - **禁止硬编码密钥**: API key 只允许在 `application-dev.yml` 中
+- **校验结果**: `Tool.validate()` 必须返回结构化 `ValidationResult`（弃用 `validateInput()` boolean 签名）
+- **工具失败分类**: `ToolResult` 必须标注 `ErrorType`（VALIDATION / PERMISSION / EXECUTION / TIMEOUT）
+- **配对安全**: 消息修剪/压缩前必须通过 `alignToolPairBoundaries()` 确保 tool_use/tool_result 配对完整
 - **提交信息**: 中文简洁命令式
 
 ---

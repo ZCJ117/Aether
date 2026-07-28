@@ -133,7 +133,9 @@ public class CompactionPipeline {
 
         // 组装压缩后的消息列表
         List<TurnMessage> compacted = new ArrayList<>();
-        compacted.add(TurnMessage.user("[对话历史摘要]\n" + summary));
+        // P2-3: 摘要注入带防污染前缀（对齐 hermes SUMMARY_PREFIX，复用 ContextManager 常量）
+        compacted.add(TurnMessage.user(
+                cn.zcj.aether.domain.agent.service.context.ContextManager.SUMMARY_PREFIX + summary));
         compacted.addAll(suffix);
 
         int postCompactTokens = estimateTokens(compacted);

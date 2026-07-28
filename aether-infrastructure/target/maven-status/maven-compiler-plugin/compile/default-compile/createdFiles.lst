@@ -1,6 +1,9 @@
 cn\zcj\aether\repository\MySqlSessionRepository.class
-cn\zcj\aether\repository\SessionStore$SessionRecord.class
+cn\zcj\aether\infrastructure\checkpoint\GitShadowCheckpointStore$1.class
 cn\zcj\aether\repository\PgvectorVectorStore.class
-cn\zcj\aether\repository\MySqlSessionRepository$SessionRowMapper.class
 cn\zcj\aether\repository\RedisSessionRepository.class
+cn\zcj\aether\infrastructure\checkpoint\GitShadowCheckpointStore.class
+cn\zcj\aether\infrastructure\classifier\DefaultModelErrorClassifier.class
+cn\zcj\aether\repository\SessionStore$SessionRecord.class
+cn\zcj\aether\repository\MySqlSessionRepository$SessionRowMapper.class
 cn\zcj\aether\repository\SessionStore.class

@@ -11,6 +11,9 @@ import cn.zcj.aether.domain.agent.service.armory.matter.skills.ToolSkillsCreateS
 import cn.zcj.aether.domain.agent.service.model.ModelConfig;
 import cn.zcj.aether.domain.agent.service.model.ModelProvider;
 import cn.zcj.aether.domain.agent.service.model.ModelProviderRegistry;
+import cn.zcj.aether.domain.agent.service.model.failover.ModelErrorClassifier;
+import cn.zcj.aether.domain.agent.service.model.failover.ModelRoute;
+import cn.zcj.aether.domain.agent.service.model.failover.ResilientChatModelExecutor;
 import cn.zcj.aether.domain.agent.service.tool.McpToolAdapter;
 import cn.zcj.aether.domain.agent.service.tool.SkillsToolAdapter;
 import cn.zcj.aether.domain.agent.service.tool.Tool;
@@ -18,9 +21,6 @@ import cn.zcj.aether.domain.agent.service.tool.ToolRegistry;
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
@@ -59,6 +59,9 @@ public class ChatModelNode extends AbstractArmorySupport {
 
     @Resource
     private ModelProviderRegistry modelProviderRegistry;  // P0-2 新增
+
+    @Resource
+    private ModelErrorClassifier modelErrorClassifier;  // P1 容错：错误分类器
 
     @Resource
     private cn.zcj.aether.domain.agent.service.agent.permission.PermissionEngine permissionEngine;  // P1-#9
@@ -119,7 +122,11 @@ public class ChatModelNode extends AbstractArmorySupport {
         // P0-2 改造：通过 ModelProvider 创建 ChatModel（自动处理 toolCallbacks）
         ModelProvider provider = dynamicContext.getModelProvider();
         ModelConfig modelConfig = dynamicContext.getModelConfig();
-        ChatModel chatModel = provider.createChatModelWithTools(modelConfig, toolCallbackList);
+        ChatModel rawChatModel = provider.createChatModelWithTools(modelConfig, toolCallbackList);
+
+        // P1 容错：包装为 ResilientChatModelExecutor（实现 ChatModel 接口，透明装饰）
+        ChatModel chatModel = wrapWithFailover(rawChatModel, modelConfig, provider,
+                chatModelConfig, aiAgentConfigTableVO.getModule().getAiApi());
 
         dynamicContext.setChatModel(chatModel);
 
@@ -129,7 +136,7 @@ public class ChatModelNode extends AbstractArmorySupport {
         // 校验工具定义就绪
         validateToolDefinitions(toolCallbackList);
 
-        // 注册全局默认 ChatModel Bean
+        // 注册全局默认 ChatModel Bean（现在是容错包装后的实例）
         registerBean("chatModel", ChatModel.class, chatModel);
 
         // C1: 为每个 Agent 创建独立 ChatModel Bean（按 toolNames 过滤工具）
@@ -137,7 +144,8 @@ public class ChatModelNode extends AbstractArmorySupport {
         List<AiAgentConfigTableVO.Module.Agent> agents = aiAgentConfigTableVO.getModule().getAgents();
         if (agents != null) {
             for (var agent : agents) {
-                registerPerAgentChatModel(agent, dynamicContext, toolCallbackList);
+                registerPerAgentChatModel(agent, dynamicContext, toolCallbackList,
+                        chatModelConfig, aiAgentConfigTableVO.getModule().getAiApi());
             }
         }
 
@@ -156,7 +164,9 @@ public class ChatModelNode extends AbstractArmorySupport {
     private void registerPerAgentChatModel(
             AiAgentConfigTableVO.Module.Agent agent,
             DefaultArmoryFactory.DynamicContext dynamicContext,
-            List<ToolCallback> allToolCallbacks) {
+            List<ToolCallback> allToolCallbacks,
+            AiAgentConfigTableVO.Module.ChatModel chatModelConfig,
+            AiAgentConfigTableVO.Module.AiApi aiApiConfig) {
 
         // 计算该 Agent 允许的工具名集合
         Set<String> allowedToolNames = resolveToolNames(agent);
@@ -211,13 +221,17 @@ public class ChatModelNode extends AbstractArmorySupport {
                 .embeddingsPath(globalConfig.getEmbeddingsPath())
                 .build();
 
-        ModelProvider provider = modelProviderRegistry.resolve(modelId);
-        ChatModel agentChatModel = provider.createChatModelWithTools(agentModelConfig, filteredCallbacks);
+        ModelProvider agentProvider = modelProviderRegistry.resolve(modelId);
+        ChatModel rawAgentModel = agentProvider.createChatModelWithTools(agentModelConfig, filteredCallbacks);
+
+        // P1 容错：per-agent ChatModel 也包装容错执行器
+        ChatModel agentChatModel = wrapWithFailover(rawAgentModel, agentModelConfig, agentProvider,
+                chatModelConfig, aiApiConfig);
 
         String beanName = "chatModel-" + agent.getName();
         registerBean(beanName, ChatModel.class, agentChatModel);
 
-        log.info("Agent [{}] ChatModel 已注册: beanName={}, modelId={}, tools={}",
+        log.info("Agent [{}] ChatModel 已注册(含容错包装): beanName={}, modelId={}, tools={}",
                 agent.getName(), beanName, modelId, filteredCallbacks.size());
     }
 
@@ -389,6 +403,110 @@ public class ChatModelNode extends AbstractArmorySupport {
             rule.setDenylist(new java.util.HashSet<>(toolSecurity.getDenylist()));
             log.info("工具黑名单已配置: {}", toolSecurity.getDenylist());
         }
+    }
+
+    /**
+     * P1 容错：将原始 ChatModel 包装为 ResilientChatModelExecutor。
+     *
+     * <p>解析 YAML 中的 fallback 模型链（chat-model.fallbackModels 或 chat-model.fallback），
+     * 每个 fallback 模型通过 ModelProviderRegistry 解析对应的 Provider，
+     * 构建 ModelRoute 链注入执行器。</p>
+     *
+     * <p>执行器实现 {@link ChatModel} 接口，对上层（ModelInvoker/ReActAgent）完全透明。</p>
+     *
+     * @param rawModel     原始 ChatModel
+     * @param modelConfig  模型配置
+     * @param provider     已解析的 Provider
+     * @param chatModelCfg YAML 中的 chat-model 节点（含 fallback 配置）
+     * @param aiApiCfg     YAML 中的 ai-api 节点（提供全局 baseUrl/apiKey 回退）
+     * @return 包装后的容错 ChatModel
+     */
+    private ChatModel wrapWithFailover(
+            ChatModel rawModel,
+            ModelConfig modelConfig,
+            ModelProvider provider,
+            AiAgentConfigTableVO.Module.ChatModel chatModelCfg,
+            AiAgentConfigTableVO.Module.AiApi aiApiCfg) {
+
+        // 解析 fallback 模型链
+        List<ModelRoute> fallbackChain = resolveFallbackChain(chatModelCfg, aiApiCfg, modelConfig);
+
+        ResilientChatModelExecutor executor = new ResilientChatModelExecutor(
+                rawModel, modelConfig, provider,
+                modelProviderRegistry, modelErrorClassifier, fallbackChain);
+
+        if (!fallbackChain.isEmpty()) {
+            log.info("ChatModel 已包装为容错执行器: model={}, fallbackChain={}",
+                    modelConfig.getModelId(),
+                    fallbackChain.stream().map(ModelRoute::getModelId).toList());
+        } else {
+            log.info("ChatModel 已包装为容错执行器: model={}, 无 fallback 链（仅重试+抖动退避）",
+                    modelConfig.getModelId());
+        }
+
+        return executor;
+    }
+
+    /**
+     * 从 YAML 配置解析 fallback 模型链。
+     *
+     * <p>支持两种配置格式：
+     * <ol>
+     *   <li>chat-model.fallbackModels（简单模型 ID 列表，复用全局 baseUrl/apiKey）</li>
+     *   <li>chat-model.fallback（完整路由列表，每个可指定 provider/baseUrl/apiKey）</li>
+     * </ol>
+     *
+     * <p>每个路由通过 ModelProviderRegistry 验证 Provider 可用性，不可用的路由自动跳过。
+     */
+    private List<ModelRoute> resolveFallbackChain(
+            AiAgentConfigTableVO.Module.ChatModel chatModelCfg,
+            AiAgentConfigTableVO.Module.AiApi aiApiCfg,
+            ModelConfig globalConfig) {
+
+        List<ModelRoute> chain = new ArrayList<>();
+
+        // 方式 1：简单模型 ID 列表
+        List<String> fbModels = chatModelCfg.getFallbackModels();
+        if (fbModels != null && !fbModels.isEmpty()) {
+            for (String modelId : fbModels) {
+                try {
+                    ModelProvider fbProvider = modelProviderRegistry.resolve(modelId);
+                    chain.add(ModelRoute.builder()
+                            .modelId(modelId)
+                            .provider(fbProvider.providerName())
+                            .baseUrl(aiApiCfg != null ? aiApiCfg.getBaseUrl() : globalConfig.getBaseUrl())
+                            .apiKey(aiApiCfg != null ? aiApiCfg.getApiKey() : globalConfig.getApiKey())
+                            .completionsPath(aiApiCfg != null
+                                    ? aiApiCfg.getCompletionsPath() : fbProvider.defaultCompletionsPath())
+                            .build());
+                    log.info("Fallback 路由已解析: model={}, provider={}", modelId, fbProvider.providerName());
+                } catch (Exception e) {
+                    log.warn("Fallback 模型 Provider 不可用，跳过: model={}, reason={}", modelId, e.getMessage());
+                }
+            }
+        }
+
+        // 方式 2：完整路由列表（YAML 中的 fallback 列表，每个含 provider/model/baseUrl/apiKey）
+        List<AiAgentConfigTableVO.Module.ChatModel.FallbackRoute> fbRoutes = chatModelCfg.getFallback();
+        if (fbRoutes != null && !fbRoutes.isEmpty()) {
+            for (var fb : fbRoutes) {
+                if (fb.getModel() == null || fb.getModel().isBlank()) continue;
+                String providerName = fb.getProvider() != null ? fb.getProvider()
+                        : modelProviderRegistry.resolve(fb.getModel()).providerName();
+                chain.add(ModelRoute.builder()
+                        .modelId(fb.getModel())
+                        .provider(providerName)
+                        .baseUrl(fb.getBaseUrl() != null ? fb.getBaseUrl()
+                                : aiApiCfg != null ? aiApiCfg.getBaseUrl() : globalConfig.getBaseUrl())
+                        .apiKey(fb.getApiKey() != null ? fb.getApiKey()
+                                : aiApiCfg != null ? aiApiCfg.getApiKey() : globalConfig.getApiKey())
+                        .completionsPath(fb.getCompletionsPath())
+                        .build());
+                log.info("Fallback 路由已解析(完整): model={}, provider={}", fb.getModel(), providerName);
+            }
+        }
+
+        return chain;
     }
 
 }

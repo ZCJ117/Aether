@@ -133,6 +133,28 @@ public class AgentEventPublisher {
         log.info("checkpoint_created: {}", toJson(event));
     }
 
+    /**
+     * H4: 发布权限挂起事件 —— 工具调用等待用户确认。
+     */
+    public void publishPermissionAsking(String agentId, String sessionId, String correlationId,
+                                        String replyId, int pendingCount, String toolNames) {
+        AgentEvent.PermissionAsking event = new AgentEvent.PermissionAsking(
+                java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
+                agentId, sessionId, correlationId, replyId, pendingCount, toolNames);
+        log.info("permission_asking: {}", toJson(event));
+    }
+
+    /**
+     * H4: 发布权限解决事件 —— 用户确认或拒绝完成。
+     */
+    public void publishPermissionResolved(String agentId, String sessionId, String correlationId,
+                                          String replyId, int approvedCount, int deniedCount) {
+        AgentEvent.PermissionResolved event = new AgentEvent.PermissionResolved(
+                java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
+                agentId, sessionId, correlationId, replyId, approvedCount, deniedCount);
+        log.info("permission_resolved: {}", toJson(event));
+    }
+
     private String toJson(Object obj) {
         try { return MAPPER.writeValueAsString(obj); } catch (Exception e) { return obj.toString(); }
     }

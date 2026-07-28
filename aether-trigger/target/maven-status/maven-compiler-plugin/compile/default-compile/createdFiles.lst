@@ -1,3 +1,4 @@
-cn\zcj\aether\trigger\http\filter\MdcFilter.class
 cn\zcj\aether\trigger\http\AgentServiceController$1.class
 cn\zcj\aether\trigger\http\AgentServiceController.class
+cn\zcj\aether\trigger\http\filter\MdcFilter.class
+cn\zcj\aether\trigger\http\filter\ApiTokenAuthFilter.class
