@@ -490,20 +490,27 @@ ai:
 
 ### 6.2 多 Agent 工作流配置
 
+**SEQUENTIAL — 串行流水线：**
+
 ```yaml
-# SEQUENTIAL: 串行流水线
 agent-workflows:
   - type: sequential
     name: research-pipeline
     subAgents: [researcher, writer]
+```
 
-# PARALLEL: 并发执行
+**PARALLEL — 并发执行：**
+
+```yaml
 agent-workflows:
   - type: parallel
     name: multi-analysis
     subAgents: [tech_analyst, business_analyst, risk_analyst]
+```
 
-# LOOP: 循环迭代
+**LOOP — 循环迭代：**
+
+```yaml
 agent-workflows:
   - type: loop
     name: iterative-refinement
@@ -566,23 +573,31 @@ agent-workflows:
     entry-point: researcher
 
     nodes:                             # 声明所有节点
-      - id: researcher,  agent: researcher
-      - id: analyst,     agent: analyst
-      - id: writer,      agent: writer
-      - id: reviewer,    agent: reviewer
+      - id: researcher
+        agent: researcher
+      - id: analyst
+        agent: analyst
+      - id: writer
+        agent: writer
+      - id: reviewer
+        agent: reviewer
 
     edges:                             # 声明所有边
-      - from: researcher, to: analyst                        # 无条件边
+      - from: researcher
+        to: analyst                    # 无条件边
 
-      - from: researcher, to: writer
-        condition: "output.contains('简单查询')"              # SpEL 条件边
+      - from: researcher
+        to: writer
+        condition: "output.contains('简单查询')"  # SpEL 条件边
 
-      - from: analyst, to: writer
-        activation: all                                       # fan-in
+      - from: analyst
+        to: writer
+        activation: all               # fan-in
 
-      - from: reviewer, to: writer
-        condition: "output.contains('需修改')"                 # 循环边
-        exit-condition: "output.contains('通过')"             # 退出条件
+      - from: reviewer
+        to: writer
+        condition: "output.contains('需修改')"    # 循环边
+        exit-condition: "output.contains('通过')" # 退出条件
 ```
 
 ---
@@ -712,7 +727,6 @@ npm run dev
 | **H4 权限确认** | `AgentServiceController` | `POST /api/v1/confirm` SSE 事件 `permissionAsking/agentPaused` ← **新增** |
 | **H5 快照去重** | `ToolExecutor` | 写操作前每轮每目录至多一次快照 ← **新增** |
 | **H5 中断信号** | `InterruptControl` | transient 语义，永不序列化落盘 ← **新增** |
-| **会话检索上限** | `SessionSearchTool` | 每次最多 10 条结果 ← **新增** |
 
 ---
 
