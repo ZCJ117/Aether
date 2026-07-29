@@ -51,6 +51,7 @@ export const useChatStore = defineStore('chat', () => {
   const isSending = ref(false)
   const statusText = ref('')
   const statusType = ref('info')
+  const sessionId = ref(null) // 跨消息复用同一个会话
 
   const isEmpty = computed(() => messages.value.length === 0)
 
@@ -89,13 +90,17 @@ export const useChatStore = defineStore('chat', () => {
     let streamDone = false
 
     try {
-      const { sessionId } = await createSession(agentId, userId)
-      if (!sessionId) {
-        throw new Error('创建会话失败：无 sessionId')
+      // 首次对话创建新会话，后续消息复用同一个 sessionId
+      if (!sessionId.value) {
+        const resp = await createSession(agentId, userId)
+        sessionId.value = resp.sessionId
+        if (!sessionId.value) {
+          throw new Error('创建会话失败：无 sessionId')
+        }
       }
 
       const { promise } = sendMessageStream(
-        agentId, userId, sessionId, message,
+        agentId, userId, sessionId.value, message,
         (event) => {
           switch (event.type) {
             case 'textDelta':
@@ -151,6 +156,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function clearMessages() {
     messages.value = []
+    sessionId.value = null // 清空会话，下次发消息会创建新会话
     setStatus('')
   }
 

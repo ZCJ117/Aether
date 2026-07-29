@@ -35,6 +35,11 @@ spring:
       connection-test-query: SELECT 1
     type: com.zaxxer.hikari.HikariDataSource
 
+# ====== P0-4: 会话持久化（PostgreSQL） ======
+aether:
+  session:
+    persistence: true
+
 # MyBatis 配置【如需使用记得打开】
 #mybatis:
 #  mapper-locations: classpath:/mybatis/mapper/*.xml
