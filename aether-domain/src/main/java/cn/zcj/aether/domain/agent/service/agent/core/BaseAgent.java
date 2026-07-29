@@ -103,21 +103,52 @@ public abstract class BaseAgent implements Agent {
         // 恢复真实运行状态（不再硬置 IDLE——PAUSED 态对 H4 审批挂起至关重要）
         state.setStatus(AgentState.AgentStatus.valueOf((String) stateMap.get("status")));
 
-        // 恢复消息历史
+        // 恢复消息历史（兼容 JSON 反序列化后的 LinkedHashMap）
         state.messagesMutable().clear();
-        List<TurnMessage> msgs = (List<TurnMessage>) stateMap.get("messages");
-        if (msgs != null) {
-            state.messagesMutable().addAll(msgs);
+        @SuppressWarnings("unchecked")
+        List<Object> rawMessages = (List<Object>) stateMap.get("messages");
+        if (rawMessages != null) {
+            for (Object raw : rawMessages) {
+                if (raw instanceof TurnMessage tm) {
+                    state.messagesMutable().add(tm);
+                } else if (raw instanceof Map<?,?> m) {
+                    // JSON 反序列化后 TurnMessage record 变为 LinkedHashMap，手动重建
+                    @SuppressWarnings("unchecked")
+                    TurnMessage tm = new TurnMessage(
+                        (String) m.get("role"),
+                        (String) m.get("content"),
+                        (String) m.get("toolCallId"),
+                        (String) m.get("toolName"),
+                        (List<Map<String, Object>>) m.get("toolCalls")
+                    );
+                    state.messagesMutable().add(tm);
+                }
+            }
         }
 
-        // H4: 恢复权限挂起上下文
+        // H4: 恢复权限挂起上下文（兼容 JSON 反序列化后的 LinkedHashMap）
         if (stateMap.containsKey("permissionContext")) {
             state.askingMutable().clear();
-            List<cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall> asking =
-                    (List<cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall>)
-                            stateMap.get("permissionContext");
-            if (asking != null) {
-                state.askingMutable().addAll(asking);
+            @SuppressWarnings("unchecked")
+            List<Object> rawAsking = (List<Object>) stateMap.get("permissionContext");
+            if (rawAsking != null) {
+                for (Object raw : rawAsking) {
+                    if (raw instanceof cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall stc) {
+                        state.askingMutable().add(stc);
+                    } else if (raw instanceof Map<?,?> m) {
+                        @SuppressWarnings("unchecked")
+                        cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall stc =
+                            new cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall(
+                                (String) m.get("toolCallId"),
+                                (String) m.get("toolName"),
+                                (Map<String, Object>) m.get("input"),
+                                (String) m.get("reason"),
+                                cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall.SuspendedState
+                                    .valueOf((String) m.get("state"))
+                            );
+                        state.askingMutable().add(stc);
+                    }
+                }
             }
         }
 
