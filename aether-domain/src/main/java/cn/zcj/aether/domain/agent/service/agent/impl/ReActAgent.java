@@ -200,6 +200,11 @@ public class ReActAgent extends BaseAgent {
                 }
             }
 
+            // 将裁剪/紧凑后的消息同步回 state，确保后续 assistant/tool 消息写入持久化列表
+            state.messagesMutable().clear();
+            state.messagesMutable().addAll(messages);
+            messages = state.messagesMutable();
+
             // ====== Phase 2: Model Call ======
             List<Message> springMessages = convertToSpringMessages(messages);
 
