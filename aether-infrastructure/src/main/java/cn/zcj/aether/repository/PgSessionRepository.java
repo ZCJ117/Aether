@@ -3,14 +3,13 @@ package cn.zcj.aether.repository;
 import cn.zcj.aether.domain.agent.service.session.SessionEntity;
 import cn.zcj.aether.domain.agent.service.session.SessionRepository;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
-import javax.annotation.Resource;
+import javax.sql.DataSource;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -21,17 +20,20 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * PostgreSQL 实现的会话持久化仓储 — P0-4。
- * 激活条件: PostgreSQL 驱动可用 + JdbcTemplate Bean 存在 + aether.session.persistence=true
+ * 激活条件: PostgreSQL 驱动可用 + aether.session.persistence=true
  */
 @Slf4j
 @Repository
 @ConditionalOnClass(name = "org.postgresql.Driver")
-@ConditionalOnBean(JdbcTemplate.class)
 @ConditionalOnProperty(name = "aether.session.persistence", havingValue = "true", matchIfMissing = false)
 public class PgSessionRepository implements SessionRepository {
 
-    @Resource
-    private JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate jdbcTemplate;
+
+    public PgSessionRepository(DataSource dataSource) {
+        this.jdbcTemplate = new JdbcTemplate(dataSource);
+        log.info("PgSessionRepository 已初始化");
+    }
 
     private static final String UPSERT_SQL = """
         INSERT INTO aether_session (session_id, user_id, agent_id, status, state_json, created_at, updated_at)
