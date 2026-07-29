@@ -1,0 +1,106 @@
+package cn.zcj.aether.repository;
+
+import cn.zcj.aether.domain.agent.service.session.SessionEntity;
+import cn.zcj.aether.domain.agent.service.session.SessionRepository;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Repository;
+
+import javax.annotation.Resource;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * PostgreSQL 实现的会话持久化仓储 — P0-4。
+ * 激活条件: PostgreSQL 驱动可用 + JdbcTemplate Bean 存在 + aether.session.persistence=true
+ */
+@Slf4j
+@Repository
+@ConditionalOnClass(name = "org.postgresql.Driver")
+@ConditionalOnBean(JdbcTemplate.class)
+@ConditionalOnProperty(name = "aether.session.persistence", havingValue = "true", matchIfMissing = false)
+public class PgSessionRepository implements SessionRepository {
+
+    @Resource
+    private JdbcTemplate jdbcTemplate;
+
+    private static final String UPSERT_SQL = """
+        INSERT INTO aether_session (session_id, user_id, agent_id, status, state_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (session_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            state_json = EXCLUDED.state_json,
+            updated_at = EXCLUDED.updated_at
+        """;
+
+    private static final String SELECT_SQL = """
+        SELECT id, session_id, user_id, agent_id, status, state_json, created_at, updated_at
+        FROM aether_session WHERE session_id = ?
+        """;
+
+    private static final String DELETE_SQL = "DELETE FROM aether_session WHERE session_id = ?";
+
+    private static final String LIST_BY_USER_SQL = """
+        SELECT id, session_id, user_id, agent_id, status, state_json, created_at, updated_at
+        FROM aether_session WHERE user_id = ? AND status = 'ACTIVE' ORDER BY updated_at DESC
+        """;
+
+    @Override
+    public CompletableFuture<Void> save(SessionEntity entity) {
+        return CompletableFuture.runAsync(() -> {
+            Instant now = Instant.now();
+            jdbcTemplate.update(UPSERT_SQL,
+                entity.getSessionId(),
+                entity.getUserId(),
+                entity.getAgentId(),
+                entity.getStatus() != null ? entity.getStatus() : "ACTIVE",
+                entity.getStateJson(),
+                entity.getCreatedAt() != null
+                    ? Timestamp.from(entity.getCreatedAt()) : Timestamp.from(now),
+                Timestamp.from(now)
+            );
+            log.debug("会话已持久化: sessionId={}, status={}", entity.getSessionId(), entity.getStatus());
+        });
+    }
+
+    @Override
+    public Optional<SessionEntity> findBySessionId(String sessionId) {
+        List<SessionEntity> results = jdbcTemplate.query(SELECT_SQL, new SessionRowMapper(), sessionId);
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
+    }
+
+    @Override
+    public CompletableFuture<Void> deleteBySessionId(String sessionId) {
+        return CompletableFuture.runAsync(() ->
+            jdbcTemplate.update(DELETE_SQL, sessionId));
+    }
+
+    @Override
+    public List<SessionEntity> listByUserId(String userId) {
+        return jdbcTemplate.query(LIST_BY_USER_SQL, new SessionRowMapper(), userId);
+    }
+
+    private static class SessionRowMapper implements RowMapper<SessionEntity> {
+        @Override
+        public SessionEntity mapRow(ResultSet rs, int rowNum) throws SQLException {
+            return SessionEntity.builder()
+                .sessionId(rs.getString("session_id"))
+                .userId(rs.getString("user_id"))
+                .agentId(rs.getString("agent_id"))
+                .status(rs.getString("status"))
+                .stateJson(rs.getString("state_json"))
+                .createdAt(rs.getTimestamp("created_at").toInstant())
+                .updatedAt(rs.getTimestamp("updated_at").toInstant())
+                .build();
+        }
+    }
+}
