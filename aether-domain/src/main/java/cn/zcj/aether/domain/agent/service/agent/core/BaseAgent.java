@@ -2,11 +2,14 @@ package cn.zcj.aether.domain.agent.service.agent.core;
 
 import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.*;
 
 /**
  * Agent 抽象基类，提供钩子管理和状态管理的通用实现。
  */
+@Slf4j
 public abstract class BaseAgent implements Agent {
 
     protected final AgentConfig config;
@@ -108,9 +111,11 @@ public abstract class BaseAgent implements Agent {
         @SuppressWarnings("unchecked")
         List<Object> rawMessages = (List<Object>) stateMap.get("messages");
         if (rawMessages != null) {
+            List<String> restoredRoles = new ArrayList<>();
             for (Object raw : rawMessages) {
                 if (raw instanceof TurnMessage tm) {
                     state.messagesMutable().add(tm);
+                    restoredRoles.add(tm.role());
                 } else if (raw instanceof Map<?,?> m) {
                     // JSON 反序列化后 TurnMessage record 变为 LinkedHashMap，手动重建
                     @SuppressWarnings("unchecked")
@@ -122,8 +127,12 @@ public abstract class BaseAgent implements Agent {
                         (List<Map<String, Object>>) m.get("toolCalls")
                     );
                     state.messagesMutable().add(tm);
+                    restoredRoles.add(tm.role());
                 }
             }
+            log.info("loadState 恢复消息: count={}, roles={}", restoredRoles.size(), restoredRoles);
+        } else {
+            log.info("loadState 未找到 messages 字段");
         }
 
         // H4: 恢复权限挂起上下文（兼容 JSON 反序列化后的 LinkedHashMap）
