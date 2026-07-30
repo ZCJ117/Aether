@@ -6,6 +6,7 @@ import cn.zcj.aether.api.response.Response;
 import cn.zcj.aether.domain.agent.model.valobj.AiAgentConfigTableVO;
 import cn.zcj.aether.domain.agent.service.IChatService;
 import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
+import cn.zcj.aether.domain.agent.service.session.SessionEntity;
 import cn.zcj.aether.domain.agent.service.chat.ChatService;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.types.enums.ResponseCode;
@@ -164,6 +165,68 @@ public class AgentServiceController implements IAgentService {
                     .info(ResponseCode.UN_ERROR.getInfo())
                     .build();
         }
+    }
+
+    @RequestMapping(value = "list_sessions", method = RequestMethod.GET)
+    @Override
+    public Response<List<SessionItemDTO>> listSessions(
+            @RequestParam("agentId") String agentId,
+            @RequestParam("userId") String userId) {
+        try {
+            log.info("查询会话列表 agentId={} userId={}", agentId, userId);
+            List<SessionEntity> entities = chatServiceImpl.listSessions(agentId, userId);
+            List<SessionItemDTO> dtos = entities.stream()
+                    .map(e -> SessionItemDTO.builder()
+                            .sessionId(e.getSessionId())
+                            .agentId(e.getAgentId())
+                            .userId(e.getUserId())
+                            .title(extractTitle(e))
+                            .status(e.getStatus())
+                            .createdAt(e.getCreatedAt())
+                            .updatedAt(e.getUpdatedAt())
+                            .build())
+                    .toList();
+            return Response.<List<SessionItemDTO>>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info(ResponseCode.SUCCESS.getInfo())
+                    .data(dtos)
+                    .build();
+        } catch (Exception e) {
+            log.error("查询会话列表失败 agentId={} userId={}", agentId, userId, e);
+            return Response.<List<SessionItemDTO>>builder()
+                    .code(ResponseCode.UN_ERROR.getCode())
+                    .info(ResponseCode.UN_ERROR.getInfo())
+                    .build();
+        }
+    }
+
+    /**
+     * 从会话的 AgentState JSON 中提取首条用户消息作为标题。
+     */
+    private String extractTitle(SessionEntity entity) {
+        if (entity.getStateJson() == null || entity.getStateJson().isEmpty()) {
+            return "新对话";
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> state = objectMapper.readValue(entity.getStateJson(), java.util.Map.class);
+            @SuppressWarnings("unchecked")
+            java.util.List<java.util.Map<String, Object>> messages =
+                    (java.util.List<java.util.Map<String, Object>>) state.get("messages");
+            if (messages != null) {
+                for (java.util.Map<String, Object> msg : messages) {
+                    if ("user".equals(msg.get("role"))) {
+                        Object content = msg.get("content");
+                        if (content instanceof String text && !text.isBlank()) {
+                            return text.length() > 30 ? text.substring(0, 30) + "…" : text;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("提取会话标题失败: sessionId={}", entity.getSessionId());
+        }
+        return "新对话";
     }
 
     @RequestMapping(value = "chat_stream", method = RequestMethod.POST)
