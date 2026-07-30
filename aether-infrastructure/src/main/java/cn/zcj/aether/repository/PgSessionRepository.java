@@ -56,6 +56,11 @@ public class PgSessionRepository implements SessionRepository {
         FROM aether_session WHERE user_id = ? AND status = 'ACTIVE' ORDER BY updated_at DESC
         """;
 
+    private static final String LIST_BY_USER_AGENT_SQL = """
+        SELECT id, session_id, user_id, agent_id, status, state_json, created_at, updated_at
+        FROM aether_session WHERE user_id = ? AND agent_id = ? AND status = 'ACTIVE' ORDER BY updated_at DESC
+        """;
+
     @Override
     public CompletableFuture<Void> save(SessionEntity entity) {
         return CompletableFuture.runAsync(() -> {
@@ -89,6 +94,11 @@ public class PgSessionRepository implements SessionRepository {
     @Override
     public List<SessionEntity> listByUserId(String userId) {
         return jdbcTemplate.query(LIST_BY_USER_SQL, new SessionRowMapper(), userId);
+    }
+
+    @Override
+    public List<SessionEntity> listByUserIdAndAgentId(String userId, String agentId) {
+        return jdbcTemplate.query(LIST_BY_USER_AGENT_SQL, new SessionRowMapper(), userId, agentId);
     }
 
     private static class SessionRowMapper implements RowMapper<SessionEntity> {
