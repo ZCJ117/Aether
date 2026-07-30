@@ -20,4 +20,7 @@ public interface SessionRepository {
 
     /** 按 userId 列出活跃会话 */
     java.util.List<SessionEntity> listByUserId(String userId);
+
+    /** 按 userId + agentId 列出活跃会话 */
+    java.util.List<SessionEntity> listByUserIdAndAgentId(String userId, String agentId);
 }
