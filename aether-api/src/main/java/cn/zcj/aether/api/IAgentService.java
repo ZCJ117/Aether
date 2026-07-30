@@ -19,6 +19,10 @@ public interface IAgentService {
 
     Response<ChatResponseDTO> chat(ChatRequestDTO requestDTO);
 
+    Response<List<SessionItemDTO>> listSessions(
+            @org.springframework.web.bind.annotation.RequestParam("agentId") String agentId,
+            @org.springframework.web.bind.annotation.RequestParam("userId") String userId);
+
     ResponseBodyEmitter chatStream(ChatRequestDTO requestDTO);
 
 }
