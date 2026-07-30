@@ -40,6 +40,10 @@
             <artifactId>aether-types</artifactId>
         </dependency>
         <dependency>
+            <groupId>cn.zcj.aether</groupId>
+            <artifactId>aether-api</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.reactivex.rxjava3</groupId>
             <artifactId>rxjava</artifactId>
             <version>3.1.9</version>
