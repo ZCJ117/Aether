@@ -82,4 +82,9 @@ public class RedisSessionRepository implements SessionRepository {
     public List<SessionEntity> listByUserId(String userId) {
         return List.of(); // 简化实现，按需扩展
     }
+
+    @Override
+    public List<SessionEntity> listByUserIdAndAgentId(String userId, String agentId) {
+        return List.of(); // Redis 模式暂不支持按 agentId 过滤
+    }
 }
