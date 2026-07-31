@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useMemoryStore } from '@/stores/memory'
+import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const memoryStore = useMemoryStore()
 
@@ -14,6 +15,8 @@ onMounted(() => {
     <div class="page-header">
       <h1>记忆管理</h1>
     </div>
+
+    <FutureVersionBanner />
 
     <div v-if="memoryStore.isLoading" class="loading">加载中...</div>
 
