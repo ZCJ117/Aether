@@ -425,9 +425,14 @@ public class ChatService implements IChatService {
             var opt = sessionRepository.findBySessionId(sessionId);
             if (opt.isEmpty()) return;
 
+            String stateJson = opt.get().getStateJson();
+            if (stateJson == null || stateJson.isEmpty()) {
+                log.info("会话无历史状态，将作为新会话处理: sessionId={}", sessionId);
+                return;
+            }
+
             @SuppressWarnings("unchecked")
-            Map<String, Object> savedState = objectMapper.readValue(
-                    opt.get().getStateJson(), Map.class);
+            Map<String, Object> savedState = objectMapper.readValue(stateJson, Map.class);
 
             // H5-步骤6: loadState 内部会校验必需字段，缺失时抛 StateRestoreException
             agent.loadState(savedState);
