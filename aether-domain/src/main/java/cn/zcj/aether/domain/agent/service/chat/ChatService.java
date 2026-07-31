@@ -156,24 +156,20 @@ public class ChatService implements IChatService {
      * 返回原始数据，由 Controller 层组装 DTO。
      */
     public java.util.Map<String, Object> getDashboardRawStats() {
-        int totalAgents = queryAiAgentConfigList().size();
+        var agentList = queryAiAgentConfigList();
+        int totalAgents = agentList.size();
         int activeSessions = sessionRepository != null ? sessionRepository.countActiveSessions() : 0;
-        var byAgent = sessionRepository != null
+        var sessionsByAgent = sessionRepository != null
                 ? sessionRepository.countSessionsByAgent() : java.util.Map.<String, Integer>of();
 
-        // 补充 agentName
-        var agentList = queryAiAgentConfigList();
+        // 以配置中的智能体为准：有会话则显示计数，无会话则显示 0
         java.util.List<java.util.Map<String, Object>> agentStats = new java.util.ArrayList<>();
-        for (var entry : byAgent.entrySet()) {
-            String name = agentList.stream()
-                    .filter(a -> a.getAgentId().equals(entry.getKey()))
-                    .findFirst()
-                    .map(AiAgentConfigTableVO.Agent::getAgentName)
-                    .orElse(entry.getKey());
+        for (var agent : agentList) {
+            int count = sessionsByAgent.getOrDefault(agent.getAgentId(), 0);
             agentStats.add(java.util.Map.of(
-                    "agentId", entry.getKey(),
-                    "agentName", name,
-                    "sessionCount", entry.getValue()));
+                    "agentId", agent.getAgentId(),
+                    "agentName", agent.getAgentName(),
+                    "sessionCount", count));
         }
 
         return java.util.Map.of(
