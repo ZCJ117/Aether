@@ -2,6 +2,7 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
+import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const router = useRouter()
 const agentStore = useAgentStore()
@@ -25,8 +26,10 @@ function handleDelete(id: string) {
   <div class="agent-management">
     <div class="page-header">
       <h1>智能体管理</h1>
-      <button class="btn-create">+ 创建智能体</button>
+      <button class="btn-create" disabled title="未来版本中开放">+ 创建智能体</button>
     </div>
+
+    <FutureVersionBanner />
 
     <div v-if="agentStore.managementLoading" class="loading">加载中...</div>
 
@@ -56,8 +59,8 @@ function handleDelete(id: string) {
           </span>
         </span>
         <span class="col-actions">
-          <button class="btn-edit" @click="handleEdit(agent.agentId)">编辑</button>
-          <button class="btn-delete" @click="handleDelete(agent.agentId)">删除</button>
+          <button class="btn-edit" disabled title="未来版本中开放">编辑</button>
+          <button class="btn-delete" disabled title="未来版本中开放">删除</button>
         </span>
       </div>
     </div>
@@ -185,5 +188,14 @@ function handleDelete(id: string) {
 
 .btn-edit:hover, .btn-delete:hover {
   opacity: 0.8;
+}
+
+.btn-create:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-edit:disabled, .btn-delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 </style>
