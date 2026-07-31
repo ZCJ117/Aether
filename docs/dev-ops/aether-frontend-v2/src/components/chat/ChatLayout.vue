@@ -5,7 +5,7 @@
 </script>
 
 <template>
-  <div class="flex h-screen bg-[#0a0a0a] text-[#DEDBC8]">
+  <div class="flex h-full bg-[#0a0a0a] text-[#DEDBC8]">
     <!-- Left sidebar slot -->
     <aside class="w-64 flex-shrink-0 border-r border-white/5 bg-[#0f0f0f]">
       <slot name="sidebar" />
