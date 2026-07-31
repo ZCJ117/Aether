@@ -86,7 +86,7 @@ function handlePermissionResponse(approved: boolean) {
     </template>
 
     <!-- Chat Area -->
-    <div class="chat-main flex flex-col h-full">
+    <div class="flex-1 min-h-0 flex flex-col">
       <!-- Empty State -->
       <div v-if="!agentStore.selectedAgent" class="flex-1 flex flex-col items-center justify-center gap-2 text-[#DEDBC8]/50">
         <div class="text-5xl mb-2">🤖</div>
@@ -170,7 +170,5 @@ function handlePermissionResponse(approved: boolean) {
 </template>
 
 <style scoped>
-.chat-main {
-  background: #0a0a0a;
-}
+/* 背景由 ChatLayout 统一控制，无需额外样式 */
 </style>

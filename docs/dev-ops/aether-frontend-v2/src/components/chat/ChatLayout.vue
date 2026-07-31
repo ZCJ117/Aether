@@ -19,7 +19,7 @@
       </header>
 
       <!-- Content slot -->
-      <main class="flex-1 min-h-0">
+      <main class="flex-1 min-h-0 flex flex-col">
         <slot />
       </main>
     </div>
