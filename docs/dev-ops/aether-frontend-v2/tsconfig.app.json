@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": false,
+    "outDir": "./dist-tsc",
+    "declaration": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "src/env.d.ts"]
+}

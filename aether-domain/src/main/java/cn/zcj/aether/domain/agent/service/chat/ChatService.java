@@ -17,7 +17,6 @@ import cn.zcj.aether.domain.agent.service.agent.core.CancelToken;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
 import cn.zcj.aether.domain.agent.service.armory.AgentRegistry;
-import cn.zcj.aether.api.dto.SessionItemDTO;
 import cn.zcj.aether.domain.agent.service.session.SessionEntity;
 import cn.zcj.aether.domain.agent.service.session.SessionRepository;
 import cn.zcj.aether.types.exception.StateRestoreException;
@@ -132,7 +131,11 @@ public class ChatService implements IChatService {
                     .createdAt(Instant.now())
                     .updatedAt(Instant.now())
                     .build();
-            sessionRepository.save(entity);
+            sessionRepository.save(entity)
+                    .exceptionally(ex -> {
+                        log.warn("会话持久化失败: sessionId={}", sessionId, ex);
+                        return null;
+                    });
         }
 
         return sessionId;
@@ -141,47 +144,11 @@ public class ChatService implements IChatService {
     /**
      * 查询用户在某 Agent 下的所有活跃会话。
      */
-    public List<SessionItemDTO> listSessions(String agentId, String userId) {
+    public List<SessionEntity> listSessions(String agentId, String userId) {
         if (sessionRepository == null) {
             return List.of();
         }
-        List<SessionEntity> entities = sessionRepository.listByUserIdAndAgentId(userId, agentId);
-        return entities.stream()
-                .map(e -> SessionItemDTO.builder()
-                        .sessionId(e.getSessionId())
-                        .agentId(e.getAgentId())
-                        .userId(e.getUserId())
-                        .title(extractSessionTitle(e))
-                        .status(e.getStatus())
-                        .createdAt(e.getCreatedAt())
-                        .updatedAt(e.getUpdatedAt())
-                        .build())
-                .toList();
-    }
-
-    private String extractSessionTitle(SessionEntity entity) {
-        if (entity.getStateJson() == null || entity.getStateJson().isEmpty()) {
-            return "新对话";
-        }
-        try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> state = objectMapper.readValue(entity.getStateJson(), Map.class);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> messages = (List<Map<String, Object>>) state.get("messages");
-            if (messages != null) {
-                for (Map<String, Object> msg : messages) {
-                    if ("user".equals(msg.get("role"))) {
-                        Object content = msg.get("content");
-                        if (content instanceof String text && !text.isBlank()) {
-                            return text.length() > 30 ? text.substring(0, 30) + "..." : text;
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.debug("提取会话标题失败: sessionId={}", entity.getSessionId());
-        }
-        return "新对话";
+        return sessionRepository.listByUserIdAndAgentId(userId, agentId);
     }
 
     @Override
