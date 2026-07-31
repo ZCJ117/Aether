@@ -5,7 +5,10 @@ import type { StreamEvent, StreamHandle } from '@/types/sse'
 
 const BASE = '/api/v1'
 
-/** 阻塞式对话 */
+/**
+ * 阻塞式对话（当前未使用，前端统一使用 SSE 流式对话）。
+ * 保留作为未来非流式场景的备用接口。
+ */
 export function sendMessage(
   agentId: string,
   userId: string,
