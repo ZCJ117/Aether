@@ -386,7 +386,14 @@ public class AgentServiceController implements IAgentService {
                     payload.put("sessionId", event.getCheckpointSessionId());
                     payload.put("turnNumber", event.getCheckpointTurnNumber());
                 }
-                default -> {}
+                case internalLlmCall -> {
+                    payload.put("source", event.getInternalLlmSource());
+                    payload.put("model", event.getInternalLlmModel());
+                    payload.put("durationMs", event.getInternalLlmDurationMs());
+                    payload.put("success", event.isInternalLlmSuccess());
+                }
+                case done -> {} // stream close is signaled by emitter.complete(), no payload needed
+                default -> {}   // maxTurnsReached and any future types — no extra payload
             }
             return "data: " + objectMapper.writeValueAsString(payload) + "\n\n";
         } catch (Exception e) {
