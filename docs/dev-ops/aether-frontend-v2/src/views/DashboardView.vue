@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useDashboardStore } from '@/stores/dashboard'
-import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const dashboard = useDashboardStore()
 
@@ -33,8 +32,17 @@ const periods: Array<'7d' | '30d' | '90d'> = ['7d', '30d', '90d']
       </div>
     </div>
 
-    <FutureVersionBanner />
+    <!-- Loading -->
+    <div v-if="dashboard.isLoading" class="loading-state">加载中...</div>
 
+    <!-- Error -->
+    <div v-else-if="dashboard.loadError" class="error-state">
+      <p>数据加载失败</p>
+      <p class="error-detail">{{ dashboard.loadError }}</p>
+    </div>
+
+    <!-- Content -->
+    <template v-else>
     <!-- Stat Cards -->
     <div class="stat-grid">
       <div class="stat-card">
@@ -113,10 +121,22 @@ const periods: Array<'7d' | '30d' | '90d'> = ['7d', '30d', '90d']
         </div>
       </div>
     </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
+.loading-state, .error-state {
+  text-align: center;
+  padding: 3rem;
+  color: var(--text-secondary, #888);
+}
+.error-detail {
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
+  opacity: 0.6;
+}
+</style>
 .dashboard {
   padding: 1.5rem;
 }

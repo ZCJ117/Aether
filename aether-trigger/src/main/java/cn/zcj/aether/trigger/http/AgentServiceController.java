@@ -219,6 +219,47 @@ public class AgentServiceController implements IAgentService {
         }
     }
 
+    @RequestMapping(value = "dashboard_stats", method = RequestMethod.GET)
+    @Override
+    @SuppressWarnings("unchecked")
+    public Response<DashboardStatsDTO> dashboardStats() {
+        try {
+            log.info("查询仪表盘统计");
+            java.util.Map<String, Object> raw = chatServiceImpl.getDashboardRawStats();
+            int totalAgents = (int) raw.get("totalAgents");
+            int activeSessions = (int) raw.get("activeSessions");
+            var rawAgentStats = (java.util.List<java.util.Map<String, Object>>) raw.get("agentStats");
+
+            var agentStats = rawAgentStats.stream()
+                    .map(m -> DashboardStatsDTO.AgentSessionStatDTO.builder()
+                            .agentId((String) m.get("agentId"))
+                            .agentName((String) m.get("agentName"))
+                            .sessionCount((int) m.get("sessionCount"))
+                            .build())
+                    .toList();
+
+            DashboardStatsDTO stats = DashboardStatsDTO.builder()
+                    .totalAgents(totalAgents)
+                    .activeSessions(activeSessions)
+                    .totalTokens(0)
+                    .totalCost(0)
+                    .agentStats(agentStats)
+                    .build();
+
+            return Response.<DashboardStatsDTO>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info(ResponseCode.SUCCESS.getInfo())
+                    .data(stats)
+                    .build();
+        } catch (Exception e) {
+            log.error("查询仪表盘统计失败", e);
+            return Response.<DashboardStatsDTO>builder()
+                    .code(ResponseCode.UN_ERROR.getCode())
+                    .info(ResponseCode.UN_ERROR.getInfo())
+                    .build();
+        }
+    }
+
     /**
      * 从会话的 AgentState JSON 中提取首条用户消息作为标题。
      */

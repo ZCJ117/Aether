@@ -74,6 +74,19 @@ export interface AgentStat {
   tokenCount: number
 }
 
+/** 后端返回的仪表盘统计（与后端 DashboardStatsDTO 对齐） */
+export interface DashboardStatsDTO {
+  totalAgents: number
+  activeSessions: number
+  totalTokens: number
+  totalCost: number
+  agentStats: Array<{
+    agentId: string
+    agentName: string
+    sessionCount: number
+  }>
+}
+
 /** 系统健康状态 */
 export interface SystemHealth {
   /** CPU 使用率（0-100） */

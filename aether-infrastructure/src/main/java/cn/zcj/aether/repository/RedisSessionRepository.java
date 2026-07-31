@@ -87,4 +87,14 @@ public class RedisSessionRepository implements SessionRepository {
     public List<SessionEntity> listByUserIdAndAgentId(String userId, String agentId) {
         return List.of(); // Redis 模式暂不支持按 agentId 过滤
     }
+
+    @Override
+    public int countActiveSessions() {
+        return 0; // Redis 模式暂不支持
+    }
+
+    @Override
+    public java.util.Map<String, Integer> countSessionsByAgent() {
+        return java.util.Map.of(); // Redis 模式暂不支持
+    }
 }

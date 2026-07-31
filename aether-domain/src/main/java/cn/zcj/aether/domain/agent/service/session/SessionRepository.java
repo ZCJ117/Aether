@@ -23,4 +23,10 @@ public interface SessionRepository {
 
     /** 按 userId + agentId 列出活跃会话 */
     java.util.List<SessionEntity> listByUserIdAndAgentId(String userId, String agentId);
+
+    /** 统计所有活跃会话数 */
+    int countActiveSessions();
+
+    /** 按 agentId 分组统计活跃会话数 */
+    java.util.Map<String, Integer> countSessionsByAgent();
 }

@@ -1,16 +1,19 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { fetchDashboardStats } from '@/api/dashboard'
 import type { TokenUsagePoint, SessionActivityPoint, ToolCallStat, AgentStat, SystemHealth } from '@/types/dashboard'
 
 export const useDashboardStore = defineStore('dashboard', () => {
-  const totalAgents = ref(2)
-  const activeSessions = ref(5)
-  const totalTokens = ref(125000)
-  const totalCost = ref(2.45)
+  const totalAgents = ref(0)
+  const activeSessions = ref(0)
+  const totalTokens = ref(0)
+  const totalCost = ref(0)
   const isLoading = ref(false)
+  const loadError = ref<string | null>(null)
   const period = ref<'7d' | '30d' | '90d'>('7d')
   let refreshTimer: ReturnType<typeof setInterval> | null = null
 
+  // 图表数据暂用 mock（Token 追踪表尚未实现）
   const tokenUsage = ref<TokenUsagePoint[]>(generateTokenData())
   const sessionActivity = ref<SessionActivityPoint[]>(generateSessionData())
   const toolCallStats = ref<ToolCallStat[]>([
@@ -19,16 +22,30 @@ export const useDashboardStore = defineStore('dashboard', () => {
     { toolName: 'file_read', count: 67, successRate: 0.99 },
     { toolName: 'code_analyze', count: 42, successRate: 0.91 },
   ])
-  const agentStats = ref<AgentStat[]>([
-    { agentId: '000001', agentName: '旅游规划智能体', status: 'active', sessionCount: 12, tokenCount: 85000 },
-    { agentId: '000002', agentName: '代码审查助手', status: 'active', sessionCount: 8, tokenCount: 40000 },
-  ])
+  const agentStats = ref<AgentStat[]>([])
   const systemHealth = ref<SystemHealth>({ cpuPercent: 23, memoryPercent: 45, diskPercent: 32, tps: 12 })
 
   async function loadStats(): Promise<void> {
     isLoading.value = true
-    await new Promise((r) => setTimeout(r, 300))
-    isLoading.value = false
+    loadError.value = null
+    try {
+      const stats = await fetchDashboardStats()
+      totalAgents.value = stats.totalAgents
+      activeSessions.value = stats.activeSessions
+      totalTokens.value = stats.totalTokens
+      totalCost.value = stats.totalCost
+      agentStats.value = stats.agentStats.map((a) => ({
+        agentId: a.agentId,
+        agentName: a.agentName,
+        status: a.sessionCount > 0 ? 'active' : 'idle',
+        sessionCount: a.sessionCount,
+        tokenCount: 0, // Token 追踪表未实现
+      }))
+    } catch (err) {
+      loadError.value = (err as Error).message || '加载失败'
+    } finally {
+      isLoading.value = false
+    }
   }
 
   function startAutoRefresh(ms: number): void {
@@ -47,7 +64,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   return {
     totalAgents, activeSessions, totalTokens, totalCost,
-    isLoading, period, tokenUsage, sessionActivity, toolCallStats, agentStats, systemHealth,
+    isLoading, loadError, period, tokenUsage, sessionActivity, toolCallStats, agentStats, systemHealth,
     loadStats, startAutoRefresh, stopAutoRefresh, setPeriod,
   }
 })

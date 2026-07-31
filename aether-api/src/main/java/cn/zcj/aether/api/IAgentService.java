@@ -25,4 +25,6 @@ public interface IAgentService {
 
     Response<Void> deleteSession(String sessionId);
 
+    Response<DashboardStatsDTO> dashboardStats();
+
 }

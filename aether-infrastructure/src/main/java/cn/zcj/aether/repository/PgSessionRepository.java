@@ -62,6 +62,12 @@ public class PgSessionRepository implements SessionRepository {
         FROM aether_session WHERE user_id = ? AND agent_id = ? AND status = 'ACTIVE' ORDER BY updated_at DESC
         """;
 
+    private static final String COUNT_ACTIVE_SQL =
+        "SELECT COUNT(*) AS cnt FROM aether_session WHERE status = 'ACTIVE'";
+
+    private static final String COUNT_BY_AGENT_SQL =
+        "SELECT agent_id, COUNT(*) AS cnt FROM aether_session WHERE status = 'ACTIVE' GROUP BY agent_id";
+
     @Override
     public CompletableFuture<Void> save(SessionEntity entity) {
         return CompletableFuture.runAsync(() -> {
@@ -102,6 +108,22 @@ public class PgSessionRepository implements SessionRepository {
     @Override
     public List<SessionEntity> listByUserIdAndAgentId(String userId, String agentId) {
         return jdbcTemplate.query(LIST_BY_USER_AGENT_SQL, new SessionRowMapper(), userId, agentId);
+    }
+
+    @Override
+    public int countActiveSessions() {
+        var row = jdbcTemplate.queryForMap(COUNT_ACTIVE_SQL);
+        return ((Number) row.get("cnt")).intValue();
+    }
+
+    @Override
+    public java.util.Map<String, Integer> countSessionsByAgent() {
+        var rows = jdbcTemplate.queryForList(COUNT_BY_AGENT_SQL);
+        java.util.Map<String, Integer> result = new java.util.LinkedHashMap<>();
+        for (var row : rows) {
+            result.put((String) row.get("agent_id"), ((Number) row.get("cnt")).intValue());
+        }
+        return result;
     }
 
     private static class SessionRowMapper implements RowMapper<SessionEntity> {

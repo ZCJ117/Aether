@@ -152,6 +152,37 @@ public class ChatService implements IChatService {
     }
 
     /**
+     * 仪表盘统计：活跃智能体数 + 活跃会话数 + 各智能体会话分布。
+     * 返回原始数据，由 Controller 层组装 DTO。
+     */
+    public java.util.Map<String, Object> getDashboardRawStats() {
+        int totalAgents = queryAiAgentConfigList().size();
+        int activeSessions = sessionRepository != null ? sessionRepository.countActiveSessions() : 0;
+        var byAgent = sessionRepository != null
+                ? sessionRepository.countSessionsByAgent() : java.util.Map.<String, Integer>of();
+
+        // 补充 agentName
+        var agentList = queryAiAgentConfigList();
+        java.util.List<java.util.Map<String, Object>> agentStats = new java.util.ArrayList<>();
+        for (var entry : byAgent.entrySet()) {
+            String name = agentList.stream()
+                    .filter(a -> a.getAgentId().equals(entry.getKey()))
+                    .findFirst()
+                    .map(AiAgentConfigTableVO.Agent::getAgentName)
+                    .orElse(entry.getKey());
+            agentStats.add(java.util.Map.of(
+                    "agentId", entry.getKey(),
+                    "agentName", name,
+                    "sessionCount", entry.getValue()));
+        }
+
+        return java.util.Map.of(
+                "totalAgents", totalAgents,
+                "activeSessions", activeSessions,
+                "agentStats", agentStats);
+    }
+
+    /**
      * 软删除会话（状态改为 ARCHIVED），将 deleteBySessionId 改为软删除策略。
      */
     @Override
