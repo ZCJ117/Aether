@@ -151,6 +151,19 @@ public class ChatService implements IChatService {
         return sessionRepository.listByUserIdAndAgentId(userId, agentId);
     }
 
+    /**
+     * 软删除会话（状态改为 ARCHIVED），将 deleteBySessionId 改为软删除策略。
+     */
+    @Override
+    public void deleteSession(String sessionId) {
+        if (sessionRepository == null) {
+            log.warn("SessionRepository 未配置，无法删除会话: sessionId={}", sessionId);
+            return;
+        }
+        sessionRepository.deleteBySessionId(sessionId);
+        log.info("会话已删除: sessionId={}", sessionId);
+    }
+
     @Override
     public List<String> handleMessage(String agentId, String userId, String message) {
         AgentGraph graph = agentRegistry.get(agentId);

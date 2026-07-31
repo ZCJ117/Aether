@@ -49,7 +49,8 @@ public class PgSessionRepository implements SessionRepository {
         FROM aether_session WHERE session_id = ?
         """;
 
-    private static final String DELETE_SQL = "DELETE FROM aether_session WHERE session_id = ?";
+    private static final String SOFT_DELETE_SQL =
+        "UPDATE aether_session SET status = 'ARCHIVED', updated_at = ? WHERE session_id = ?";
 
     private static final String LIST_BY_USER_SQL = """
         SELECT id, session_id, user_id, agent_id, status, state_json, created_at, updated_at
@@ -87,8 +88,10 @@ public class PgSessionRepository implements SessionRepository {
 
     @Override
     public CompletableFuture<Void> deleteBySessionId(String sessionId) {
-        return CompletableFuture.runAsync(() ->
-            jdbcTemplate.update(DELETE_SQL, sessionId));
+        return CompletableFuture.runAsync(() -> {
+            jdbcTemplate.update(SOFT_DELETE_SQL, Timestamp.from(Instant.now()), sessionId);
+            log.debug("会话已归档: sessionId={}", sessionId);
+        });
     }
 
     @Override

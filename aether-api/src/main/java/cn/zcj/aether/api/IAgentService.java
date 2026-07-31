@@ -23,4 +23,6 @@ public interface IAgentService {
 
     ResponseBodyEmitter chatStream(ChatRequestDTO requestDTO);
 
+    Response<Void> deleteSession(String sessionId);
+
 }

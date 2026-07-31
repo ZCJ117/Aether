@@ -200,6 +200,25 @@ public class AgentServiceController implements IAgentService {
         }
     }
 
+    @RequestMapping(value = "delete_session", method = RequestMethod.DELETE)
+    @Override
+    public Response<Void> deleteSession(@RequestParam("sessionId") String sessionId) {
+        try {
+            log.info("删除会话 sessionId={}", sessionId);
+            chatServiceImpl.deleteSession(sessionId);
+            return Response.<Void>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info(ResponseCode.SUCCESS.getInfo())
+                    .build();
+        } catch (Exception e) {
+            log.error("删除会话失败 sessionId={}", sessionId, e);
+            return Response.<Void>builder()
+                    .code(ResponseCode.UN_ERROR.getCode())
+                    .info(ResponseCode.UN_ERROR.getInfo())
+                    .build();
+        }
+    }
+
     /**
      * 从会话的 AgentState JSON 中提取首条用户消息作为标题。
      */

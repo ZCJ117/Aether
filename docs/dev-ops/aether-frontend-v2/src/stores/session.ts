@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { SessionInfo } from '@/types/session'
-import { fetchSessions, createSession } from '@/api/session'
+import { fetchSessions, createSession, deleteSession as deleteSessionApi } from '@/api/session'
 
 export const useSessionStore = defineStore('session', () => {
   const sessionsByAgent = ref<Record<string, SessionInfo[]>>({})
@@ -9,8 +9,6 @@ export const useSessionStore = defineStore('session', () => {
   const isLoading = ref(false)
   const searchQuery = ref('')
   const sortOrder = ref<'latest' | 'oldest' | 'name'>('latest')
-  /** 本地已删除的会话 ID（后端无 DELETE API，本地追踪避免 loadSessions 后被恢复） */
-  const deletedSessionIds = ref<Set<string>>(new Set())
 
   const currentSession = computed(() => {
     if (!currentSessionId.value) return null
@@ -23,7 +21,7 @@ export const useSessionStore = defineStore('session', () => {
 
   function filteredSessions(agentId: string): SessionInfo[] {
     const sessions = sessionsByAgent.value[agentId] || []
-    let result = [...sessions].filter((s) => !deletedSessionIds.value.has(s.sessionId))
+    let result = [...sessions]
     if (searchQuery.value) {
       const q = searchQuery.value.toLowerCase()
       result = result.filter((s) => s.title.toLowerCase().includes(q))
@@ -79,13 +77,18 @@ export const useSessionStore = defineStore('session', () => {
     currentSessionId.value = sessionId
   }
 
-  function deleteSession(sessionId: string, agentId: string): void {
-    deletedSessionIds.value.add(sessionId) // 本地标记已删除，后端无 DELETE API
+  async function deleteSession(sessionId: string, agentId: string): Promise<void> {
+    // 先本地移除（即时 UI 反馈），后端异步软删除
     const sessions = sessionsByAgent.value[agentId]
     if (!sessions) return
     sessionsByAgent.value[agentId] = sessions.filter((s) => s.sessionId !== sessionId)
     if (currentSessionId.value === sessionId) {
       currentSessionId.value = null
+    }
+    try {
+      await deleteSessionApi(sessionId)
+    } catch {
+      // 后端删除失败暂不回滚 UI，后续可通过 loadSessions 同步
     }
   }
 
@@ -101,7 +104,6 @@ export const useSessionStore = defineStore('session', () => {
 
   function clearAll(): void {
     sessionsByAgent.value = {}
-    deletedSessionIds.value.clear()
     currentSessionId.value = null
     searchQuery.value = ''
   }

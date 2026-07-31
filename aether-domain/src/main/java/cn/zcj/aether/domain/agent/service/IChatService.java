@@ -24,4 +24,7 @@ public interface IChatService {
 
     List<String> handleMessage(ChatCommandEntity chatCommandEntity);
 
+    /** 删除会话（软删除：状态改为 ARCHIVED） */
+    void deleteSession(String sessionId);
+
 }

@@ -13,3 +13,7 @@ export function createSession(agentId: string, userId: string): Promise<CreateSe
 export function fetchSessions(agentId: string, userId: string): Promise<SessionItemDTO[]> {
   return api.get<SessionItemDTO[]>(`${BASE}/list_sessions`, { agentId, userId })
 }
+
+export function deleteSession(sessionId: string): Promise<void> {
+  return api.delete<void>(`${BASE}/delete_session?sessionId=${encodeURIComponent(sessionId)}`)
+}
