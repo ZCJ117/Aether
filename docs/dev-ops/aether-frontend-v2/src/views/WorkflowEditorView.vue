@@ -2,6 +2,7 @@
 import { onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useWorkflowStore } from '@/stores/workflow'
+import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const route = useRoute()
 const workflowStore = useWorkflowStore()
@@ -22,6 +23,8 @@ onMounted(() => {
       <h1>DAG 工作流编辑器</h1>
       <span class="workflow-name">{{ workflowStore.workflowName }}</span>
     </div>
+
+    <FutureVersionBanner />
 
     <div class="editor-canvas">
       <div class="canvas-placeholder">
