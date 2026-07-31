@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useDashboardStore } from '@/stores/dashboard'
+import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const dashboard = useDashboardStore()
 
@@ -31,6 +32,8 @@ const periods: Array<'7d' | '30d' | '90d'> = ['7d', '30d', '90d']
         </button>
       </div>
     </div>
+
+    <FutureVersionBanner />
 
     <!-- Stat Cards -->
     <div class="stat-grid">
