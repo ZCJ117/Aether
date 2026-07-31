@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useModelStore } from '@/stores/model'
+import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const modelStore = useModelStore()
 
@@ -13,8 +14,10 @@ onMounted(() => {
   <div class="model-management">
     <div class="page-header">
       <h1>模型管理</h1>
-      <button class="btn-create">+ 添加模型</button>
+      <button class="btn-create" disabled title="未来版本中开放">+ 添加模型</button>
     </div>
+
+    <FutureVersionBanner />
 
     <div v-if="modelStore.isLoading" class="loading">加载中...</div>
 
@@ -39,7 +42,7 @@ onMounted(() => {
           <span class="model-id">{{ model.id }}</span>
         </div>
         <div class="model-footer">
-          <button class="btn-test">测试连接</button>
+          <button class="btn-test" disabled title="未来版本中开放">测试连接</button>
         </div>
       </div>
     </div>
@@ -166,5 +169,13 @@ onMounted(() => {
 
 .btn-test:hover {
   opacity: 0.8;
+}
+.btn-create:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-test:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>
