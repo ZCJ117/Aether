@@ -136,7 +136,7 @@ const periods: Array<'7d' | '30d' | '90d'> = ['7d', '30d', '90d']
   margin-top: 0.5rem;
   opacity: 0.6;
 }
-</style>
+
 .dashboard {
   padding: 1.5rem;
 }
