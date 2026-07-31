@@ -97,5 +97,28 @@ class SessionRepositoryTest {
                     .filter(e -> userId.equals(e.getUserId()))
                     .toList();
         }
+
+        @Override
+        public java.util.List<SessionEntity> listByUserIdAndAgentId(String userId, String agentId) {
+            return store.values().stream()
+                    .filter(e -> userId.equals(e.getUserId()) && agentId.equals(e.getAgentId()))
+                    .toList();
+        }
+
+        @Override
+        public int countActiveSessions() {
+            return (int) store.values().stream()
+                    .filter(e -> "ACTIVE".equals(e.getStatus()))
+                    .count();
+        }
+
+        @Override
+        public java.util.Map<String, Integer> countSessionsByAgent() {
+            return store.values().stream()
+                    .filter(e -> "ACTIVE".equals(e.getStatus()))
+                    .collect(java.util.stream.Collectors.groupingBy(
+                            SessionEntity::getAgentId,
+                            java.util.stream.Collectors.summingInt(x -> 1)));
+        }
     }
 }
