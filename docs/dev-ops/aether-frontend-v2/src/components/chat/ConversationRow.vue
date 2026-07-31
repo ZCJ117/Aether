@@ -26,6 +26,12 @@ const showDelete = ref(false)
     @mouseleave="showDelete = false"
   >
     <span class="flex-1 truncate">{{ session.title }}</span>
+    <!-- Error status indicator -->
+    <span
+      v-if="session.status === 'ERROR'"
+      class="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-red-500"
+      title="会话异常"
+    ></span>
     <span class="flex-shrink-0 text-xs text-[#DEDBC8]/30">{{ relativeTime(session.createdAt) }}</span>
 
     <!-- Delete button on hover -->
