@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { Menu } from 'lucide-vue-next'
-import { useMotion } from '@vueuse/motion'
 import AetherLogo from './AetherLogo.vue'
 import LandingButton from './LandingButton.vue'
 
@@ -14,15 +13,13 @@ const NAV_LINKS = [
 const emit = defineEmits<{
   cta: []
 }>()
-
-const navMotion = useMotion(
-  { initial: { opacity: 0, y: -10 }, enter: { opacity: 1, y: 0, transition: { duration: 600, ease: 'easeOut' } } }
-)
 </script>
 
 <template>
   <nav
-    v-motion="navMotion"
+    v-motion
+    :initial="{ opacity: 0, y: -10 }"
+    :enter="{ opacity: 1, y: 0, transition: { duration: 600, ease: 'easeOut' } }"
     class="relative z-20 max-w-6xl mx-auto px-6 py-6 flex items-center justify-between"
   >
     <a href="#" aria-label="Aether home" class="text-white">
