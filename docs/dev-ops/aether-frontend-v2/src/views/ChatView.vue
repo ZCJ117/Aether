@@ -31,13 +31,15 @@ watch(
 )
 
 async function handleNewChat(agentId: string) {
+  agentStore.selectAgent(agentId)  // 先切换智能体，否则发送消息仍走旧 Agent
   await sessionStore.newSession(agentId, authStore.userId)
   agentStore.expandAgent(agentId)
   await sessionStore.loadSessions(agentId, authStore.userId)
   chatStore.switchToSession(sessionStore.currentSessionId)
 }
 
-function handleSelectSession(sessionId: string, _agentId: string) {
+function handleSelectSession(sessionId: string, agentId: string) {
+  agentStore.selectAgent(agentId)  // 点击会话时也需同步切换智能体
   sessionStore.switchSession(sessionId)
   chatStore.switchToSession(sessionId)
 }
