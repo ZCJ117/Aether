@@ -1,0 +1,41 @@
+{
+  "name": "aether-frontend-v2",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Aether — Production-grade Multi-Agent AI Runtime Frontend",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit",
+    "lint": "eslint . --ext .vue,.ts --fix"
+  },
+  "dependencies": {
+    "@vue-flow/background": "^1.3.2",
+    "@vue-flow/controls": "^1.1.3",
+    "@vue-flow/core": "^1.42.1",
+    "@vue-flow/minimap": "^1.5.2",
+    "@vueuse/motion": "^3.0.3",
+    "axios": "^1.7.9",
+    "echarts": "^5.5.1",
+    "highlight.js": "^11.11.1",
+    "lucide-vue-next": "^0.468.0",
+    "markdown-it": "^14.1.0",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13",
+    "vue-echarts": "^7.0.3",
+    "vue-i18n": "^10.0.5",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.6.3",
+    "vite": "^5.4.11",
+    "vue-tsc": "^2.1.10"
+  }
+}
