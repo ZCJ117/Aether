@@ -41,11 +41,11 @@ export const useSessionStore = defineStore('session', () => {
       sessionsByAgent.value[agentId] = data.map((item) => ({
         sessionId: item.sessionId,
         agentId: item.agentId,
-        agentName: item.sessionId,
+        agentName: '', // agent name comes from agentStore, not session data
         title: item.title || '新对话',
         status: item.status,
         createdAt: new Date(item.createdAt).getTime(),
-        updatedAt: Date.now(),
+        updatedAt: new Date(item.updatedAt).getTime(),
       }))
     } catch {
       // Silent fail
