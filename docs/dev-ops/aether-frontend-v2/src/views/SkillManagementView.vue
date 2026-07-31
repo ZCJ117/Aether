@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useSkillStore } from '@/stores/skill'
+import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const skillStore = useSkillStore()
 
@@ -14,6 +15,8 @@ onMounted(() => {
     <div class="page-header">
       <h1>技能管理</h1>
     </div>
+
+    <FutureVersionBanner />
 
     <div v-if="skillStore.isLoading" class="loading">加载中...</div>
 

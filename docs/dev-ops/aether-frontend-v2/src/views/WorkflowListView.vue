@@ -2,6 +2,7 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWorkflowStore } from '@/stores/workflow'
+import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const router = useRouter()
 const workflowStore = useWorkflowStore()
@@ -31,6 +32,8 @@ function handleDelete(id: string) {
       <h1>工作流</h1>
       <button class="btn-create" @click="handleCreate">+ 创建工作流</button>
     </div>
+
+    <FutureVersionBanner />
 
     <div v-if="workflowStore.workflows.length === 0" class="empty">
       <p>暂无工作流，点击"创建工作流"开始</p>
