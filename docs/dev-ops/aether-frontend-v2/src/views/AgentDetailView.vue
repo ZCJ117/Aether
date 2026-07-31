@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
+import FutureVersionBanner from '@/components/common/FutureVersionBanner.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,6 +33,8 @@ function goBack() {
       <button class="btn-back" @click="goBack">&larr; 返回</button>
       <h1>{{ agent?.agentName || agentId }}</h1>
     </div>
+
+    <FutureVersionBanner />
 
     <div v-if="!agent" class="loading">加载中...</div>
 
