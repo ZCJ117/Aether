@@ -34,10 +34,12 @@ async function handleNewChat(agentId: string) {
   await sessionStore.newSession(agentId, authStore.userId)
   agentStore.expandAgent(agentId)
   await sessionStore.loadSessions(agentId, authStore.userId)
+  chatStore.switchToSession(sessionStore.currentSessionId)
 }
 
 function handleSelectSession(sessionId: string, _agentId: string) {
   sessionStore.switchSession(sessionId)
+  chatStore.switchToSession(sessionId)
 }
 
 async function handleSend() {

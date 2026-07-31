@@ -9,6 +9,8 @@ export const useSessionStore = defineStore('session', () => {
   const isLoading = ref(false)
   const searchQuery = ref('')
   const sortOrder = ref<'latest' | 'oldest' | 'name'>('latest')
+  /** 本地已删除的会话 ID（后端无 DELETE API，本地追踪避免 loadSessions 后被恢复） */
+  const deletedSessionIds = ref<Set<string>>(new Set())
 
   const currentSession = computed(() => {
     if (!currentSessionId.value) return null
@@ -21,7 +23,7 @@ export const useSessionStore = defineStore('session', () => {
 
   function filteredSessions(agentId: string): SessionInfo[] {
     const sessions = sessionsByAgent.value[agentId] || []
-    let result = [...sessions]
+    let result = [...sessions].filter((s) => !deletedSessionIds.value.has(s.sessionId))
     if (searchQuery.value) {
       const q = searchQuery.value.toLowerCase()
       result = result.filter((s) => s.title.toLowerCase().includes(q))
@@ -78,6 +80,7 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function deleteSession(sessionId: string, agentId: string): void {
+    deletedSessionIds.value.add(sessionId) // 本地标记已删除，后端无 DELETE API
     const sessions = sessionsByAgent.value[agentId]
     if (!sessions) return
     sessionsByAgent.value[agentId] = sessions.filter((s) => s.sessionId !== sessionId)
@@ -98,6 +101,7 @@ export const useSessionStore = defineStore('session', () => {
 
   function clearAll(): void {
     sessionsByAgent.value = {}
+    deletedSessionIds.value.clear()
     currentSessionId.value = null
     searchQuery.value = ''
   }

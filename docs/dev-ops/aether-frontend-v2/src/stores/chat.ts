@@ -13,9 +13,31 @@ import type {
 } from '@/types/chat'
 
 export const useChatStore = defineStore('chat', () => {
-  // ---- 消息 ----
+  // ---- 消息（按会话分组缓存，切换会话时保留） ----
+  const sessionMessages = ref<Record<string, ChatMessage[]>>({})
   const messages = ref<ChatMessage[]>([])
   const streamingMessages = ref<Map<string, string>>(new Map())
+
+  function getSessionKey(): string {
+    return sessionId.value || '__default__'
+  }
+
+  function switchToSession(sid: string | null): void {
+    // 保存当前会话消息
+    if (sessionId.value) {
+      sessionMessages.value[sessionId.value] = [...messages.value]
+    }
+    sessionId.value = sid
+    // 加载目标会话消息（如果有缓存）
+    const key = sid || '__default__'
+    messages.value = sessionMessages.value[key] ? [...sessionMessages.value[key]] : []
+    activeToolCalls.value.clear()
+    permissionEvent.value = null
+    compactBoundaries.value = []
+    llmCallLogs.value = []
+    turnCount.value = 0
+    tokenBudget.value = { budgetUsed: 0, budgetTotal: 0, budgetPercent: 0 }
+  }
 
   // ---- 流状态 ----
   const isSending = ref(false)
@@ -75,6 +97,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function clearMessages(): void {
     messages.value = []
+    sessionMessages.value[getSessionKey()] = []
     activeToolCalls.value.clear()
     compactBoundaries.value = []
     llmCallLogs.value = []
@@ -93,6 +116,7 @@ export const useChatStore = defineStore('chat', () => {
     clearMessages()
     isSending.value = true
     setStatus('思考中...', 'info')
+    addMessage('user', message)            // 用户消息加入消息列表
     const placeholderId = addMessage('agent', '')
 
     const stream = sendMessageStream(
@@ -286,6 +310,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages,
+    sessionMessages,
     isSending,
     statusText,
     statusType,
@@ -311,6 +336,7 @@ export const useChatStore = defineStore('chat', () => {
     setStatus,
     sendMessage,
     cancelStream,
+    switchToSession,
     confirmPermission,
     denyAllPermissions,
   }
