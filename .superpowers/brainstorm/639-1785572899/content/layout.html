@@ -1,0 +1,123 @@
+<h2>导航 & 布局结构</h2>
+<p class="subtitle">侧边栏毛玻璃 + 内容区卡片式。6 个页面共用同一套壳。</p>
+
+<div class="mockup">
+  <div class="mockup-header">App 整体布局（侧边栏 260px + 内容区）</div>
+  <div class="mockup-body">
+    <div style="display: flex; height: 500px; background: #000; border-radius: 16px; overflow: hidden; font-family: 'Microsoft YaHei', sans-serif; font-size: 13px;">
+
+      <!-- Sidebar -->
+      <div style="width: 220px; background: rgba(28,28,30,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-right: 0.5px solid rgba(255,255,255,0.08); padding: 16px 10px; display: flex; flex-direction: column; flex-shrink: 0;">
+        <div style="padding: 6px 10px; margin-bottom: 20px;">
+          <div style="font-size: 15px; font-weight: 700; color: #f5f5f7;">Aether</div>
+          <div style="font-size: 10px; color: #636366;">Agent Platform</div>
+        </div>
+
+        <div style="background: rgba(90,200,250,0.1); border-radius: 10px; padding: 8px 10px; margin-bottom: 3px; color: #f5f5f7; font-weight: 500; font-size: 13px; border-left: 3px solid #5AC8FA;">
+          仪表盘
+        </div>
+        <div style="border-radius: 10px; padding: 8px 10px; margin-bottom: 3px; color: #98989d; font-size: 13px;">
+          对话
+        </div>
+        <div style="border-radius: 10px; padding: 8px 10px; margin-bottom: 3px; color: #98989d; font-size: 13px;">
+          智能体
+        </div>
+        <div style="border-radius: 10px; padding: 8px 10px; margin-bottom: 3px; color: #98989d; font-size: 13px;">
+          模型
+        </div>
+        <div style="border-radius: 10px; padding: 8px 10px; margin-bottom: 3px; color: #98989d; font-size: 13px;">
+          技能
+        </div>
+        <div style="margin-top: auto; border-radius: 10px; padding: 8px 10px; color: #98989d; font-size: 13px;">
+          设置
+        </div>
+      </div>
+
+      <!-- Main Content -->
+      <div style="flex: 1; background: #000; display: flex; flex-direction: column;">
+        <!-- Header -->
+        <div style="height: 44px; background: rgba(28,28,30,0.8); backdrop-filter: blur(20px); border-bottom: 0.5px solid rgba(255,255,255,0.06); display: flex; align-items: center; padding: 0 20px;">
+          <span style="font-size: 12px; color: #98989d;">Aether / </span>
+          <span style="font-size: 12px; color: #f5f5f7;">仪表盘</span>
+        </div>
+
+        <!-- Content -->
+        <div style="flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;">
+          <div style="font-size: 28px; font-weight: 700; color: #f5f5f7;">仪表盘</div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px;">
+            <div style="background: rgba(44,44,46,0.6); border-radius: 14px; padding: 14px;">
+              <div style="font-size: 11px; color: #98989d;">智能体总数</div>
+              <div style="font-size: 26px; font-weight: 700; color: #5AC8FA; margin-top: 4px;">12</div>
+            </div>
+            <div style="background: rgba(44,44,46,0.6); border-radius: 14px; padding: 14px;">
+              <div style="font-size: 11px; color: #98989d;">活跃会话</div>
+              <div style="font-size: 26px; font-weight: 700; color: #30D158; margin-top: 4px;">48</div>
+            </div>
+            <div style="background: rgba(44,44,46,0.6); border-radius: 14px; padding: 14px;">
+              <div style="font-size: 11px; color: #98989d;">Token 消耗</div>
+              <div style="font-size: 26px; font-weight: 700; color: #FFD60A; margin-top: 4px;">12.8k</div>
+            </div>
+            <div style="background: rgba(44,44,46,0.6); border-radius: 14px; padding: 14px;">
+              <div style="font-size: 11px; color: #98989d;">累计费用</div>
+              <div style="font-size: 26px; font-weight: 700; color: #FF9F0A; margin-top: 4px;">¥3.2</div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px;">
+            <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px; min-height: 120px;">
+              <div style="font-size: 14px; font-weight: 600; color: #f5f5f7; margin-bottom: 8px;">Token 用量趋势</div>
+              <div style="font-size: 12px; color: #636366; text-align: center; padding: 30px;">[ 图表区域 ]</div>
+            </div>
+            <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+              <div style="font-size: 14px; font-weight: 600; color: #f5f5f7; margin-bottom: 8px;">系统健康</div>
+              <div style="font-size: 12px; color: #636366; text-align: center; padding: 30px;">[ 指标区域 ]</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 16px; font-size: 13px;">
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">侧边栏</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>毛玻璃 bl(20px) sat(180%)</li>
+      <li>选中态：浅蓝底色 + 左边条</li>
+      <li>非选中：灰色半透明</li>
+      <li>底部：设置（固定）</li>
+      <li>260px 展开 / 64px 折叠</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">顶栏</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>毛玻璃 bl(20px)</li>
+      <li>仅面包屑导航</li>
+      <li>44px 高度（紧凑）</li>
+      <li>底部 0.5px 分隔线</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">内容区</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>纯黑背景 #000</li>
+      <li>20px 外边距</li>
+      <li>卡片式布局</li>
+      <li>14px 圆角卡片</li>
+    </ul>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认布局结构</h3><p>毛玻璃侧边栏 + 顶栏 + 纯黑内容区。6 页面统一。</p></div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>需要调整</h3></div>
+  </div>
+</div>

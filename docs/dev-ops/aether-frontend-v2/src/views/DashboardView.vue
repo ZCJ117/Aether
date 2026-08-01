@@ -13,333 +13,275 @@ onUnmounted(() => {
   dashboard.stopAutoRefresh()
 })
 
-const periods: Array<'7d' | '30d' | '90d'> = ['7d', '30d', '90d']
+const periods = [
+  { key: '7d' as const, label: '近 7 天' },
+  { key: '30d' as const, label: '近 30 天' },
+  { key: '90d' as const, label: '近 90 天' },
+]
 </script>
 
 <template>
   <div class="dashboard">
-    <div class="dashboard-header">
-      <h1>仪表盘</h1>
-      <div class="period-selector">
-        <button
-          v-for="p in periods"
-          :key="p"
-          :class="['period-btn', { active: dashboard.period === p }]"
-          @click="dashboard.setPeriod(p)"
-        >
-          {{ p }}
-        </button>
-      </div>
+    <h1 class="page-title">仪表盘</h1>
+
+    <div class="period-bar">
+      <button
+        v-for="p in periods"
+        :key="p.key"
+        :class="['period-btn', { active: dashboard.period === p.key }]"
+        @click="dashboard.setPeriod(p.key)"
+      >
+        {{ p.label }}
+      </button>
     </div>
 
-    <!-- Loading -->
-    <div v-if="dashboard.isLoading" class="loading-state">加载中...</div>
-
-    <!-- Error -->
-    <div v-else-if="dashboard.loadError" class="error-state">
-      <p>数据加载失败</p>
-      <p class="error-detail">{{ dashboard.loadError }}</p>
+    <div v-if="dashboard.isLoading" class="state-msg">加载中...</div>
+    <div v-else-if="dashboard.loadError" class="state-msg" style="color: #FF453A;">
+      {{ dashboard.loadError }}
     </div>
 
-    <!-- Content -->
     <template v-else>
-    <!-- Stat Cards -->
-    <div class="stat-grid">
-      <div class="stat-card">
-        <div class="stat-label">活跃智能体</div>
-        <div class="stat-value">{{ dashboard.totalAgents }}</div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">智能体总数</div>
+          <div class="stat-value" style="color: #5AC8FA;">{{ dashboard.totalAgents }}</div>
+          <div v-if="dashboard.agentStats.length" class="stat-trend" style="color: #30D158;">
+            {{ dashboard.agentStats.length }} 活跃
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">活跃会话</div>
+          <div class="stat-value" style="color: #30D158;">{{ dashboard.activeSessions }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Token 消耗</div>
+          <div class="stat-value" style="color: #FFD60A;">{{ dashboard.totalTokens.toLocaleString() }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">累计费用</div>
+          <div class="stat-value" style="color: #FF9F0A;">
+            ¥{{ dashboard.totalCost.toFixed(1) }}
+          </div>
+        </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">活跃会话</div>
-        <div class="stat-value">{{ dashboard.activeSessions }}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">消耗 Token</div>
-        <div class="stat-value">{{ dashboard.totalTokens.toLocaleString() }}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">预估费用</div>
-        <div class="stat-value">${{ dashboard.totalCost.toFixed(2) }}</div>
-      </div>
-    </div>
 
-    <!-- Charts & Agent Status -->
-    <div class="dashboard-content">
-      <div class="chart-section">
-        <div class="chart-area">
-          <h3>Token 用量趋势</h3>
-          <div class="chart-placeholder">
-            <span>图表区域 — Token 用量 ({{ dashboard.period }})</span>
-          </div>
+      <div class="chart-row">
+        <div class="chart-card">
+          <div class="card-title">Token 用量趋势</div>
+          <div class="chart-placeholder">图表加载中...</div>
         </div>
-        <div class="chart-area">
-          <h3>会话活跃度</h3>
-          <div class="chart-placeholder">
-            <span>图表区域 — 会话活跃度 ({{ dashboard.sessionActivity.length }} 条记录)</span>
+        <div class="chart-card">
+          <div class="card-title">系统健康</div>
+          <div class="health-bars">
+            <div class="health-row">
+              <span class="health-label">CPU</span>
+              <div class="health-track"><div class="health-fill" style="width: 32%; background: #30D158;"></div></div>
+              <span class="health-val">32%</span>
+            </div>
+            <div class="health-row">
+              <span class="health-label">内存</span>
+              <div class="health-track"><div class="health-fill" style="width: 67%; background: #FFD60A;"></div></div>
+              <span class="health-val">67%</span>
+            </div>
+            <div class="health-row">
+              <span class="health-label">磁盘</span>
+              <div class="health-track"><div class="health-fill" style="width: 45%; background: #30D158;"></div></div>
+              <span class="health-val">45%</span>
+            </div>
           </div>
         </div>
       </div>
-      <div class="agent-section">
-        <h3>智能体状态</h3>
-        <div class="agent-list">
-          <div
-            v-for="agent in dashboard.agentStats"
-            :key="agent.agentId"
-            class="agent-item"
-          >
-            <div class="agent-info">
-              <span :class="['agent-status-dot', agent.status]"></span>
-              <span class="agent-name">{{ agent.agentName }}</span>
-            </div>
-            <div class="agent-stats">
-              <span>{{ agent.sessionCount }} 会话</span>
-              <span>{{ agent.tokenCount.toLocaleString() }} Token</span>
-            </div>
-          </div>
-        </div>
 
-        <div class="system-health">
-          <h4>系统健康</h4>
-          <div class="health-metrics">
-            <div class="health-item">
-              <span>CPU</span>
-              <span>{{ dashboard.systemHealth.cpuPercent }}%</span>
+      <div class="bottom-row">
+        <div class="chart-card">
+          <div class="card-title">智能体状态</div>
+          <div class="agent-status-list">
+            <div
+              v-for="stat in dashboard.agentStats"
+              :key="stat.agentId"
+              class="agent-status-row"
+            >
+              <span class="agent-name">{{ stat.agentName || stat.agentId }}</span>
+              <span class="agent-sessions" style="color: #5AC8FA;">{{ stat.sessionCount }} 会话</span>
             </div>
-            <div class="health-item">
-              <span>内存</span>
-              <span>{{ dashboard.systemHealth.memoryPercent }}%</span>
-            </div>
-            <div class="health-item">
-              <span>磁盘</span>
-              <span>{{ dashboard.systemHealth.diskPercent }}%</span>
-            </div>
-            <div class="health-item">
-              <span>TPS</span>
-              <span>{{ dashboard.systemHealth.tps }}</span>
+            <div v-if="!dashboard.agentStats.length" class="chart-placeholder">
+              暂无数据
             </div>
           </div>
         </div>
+        <div class="chart-card">
+          <div class="card-title">最近会话</div>
+          <div class="chart-placeholder">暂无最近会话</div>
+        </div>
       </div>
-    </div>
     </template>
   </div>
 </template>
 
 <style scoped>
-.loading-state, .error-state {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-secondary, #888);
-}
-.error-detail {
-  font-size: 0.75rem;
-  margin-top: 0.5rem;
-  opacity: 0.6;
-}
-
 .dashboard {
-  padding: 1.5rem;
+  padding: 20px;
 }
 
-.dashboard-header {
+.page-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #F5F5F7;
+  margin: 0 0 20px;
+}
+
+.period-bar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-.dashboard-header h1 {
-  font-size: 1.5rem;
-  margin: 0;
-  color: var(--text-primary, #eee);
-}
-
-.period-selector {
-  display: flex;
-  gap: 0.25rem;
-  background: var(--bg-secondary, #1a1a2e);
-  border-radius: 8px;
-  padding: 2px;
+  gap: 2px;
+  background: rgba(44, 44, 46, 0.5);
+  border-radius: 10px;
+  padding: 3px;
+  width: fit-content;
+  margin-bottom: 20px;
 }
 
 .period-btn {
-  padding: 0.375rem 0.875rem;
+  padding: 5px 14px;
+  border-radius: 8px;
   border: none;
-  border-radius: 6px;
+  font-size: 12px;
+  color: #98989D;
   background: transparent;
-  color: var(--text-secondary, #888);
-  font-size: 0.8125rem;
   cursor: pointer;
-  transition: all 0.2s;
+  font-family: inherit;
 }
 
 .period-btn.active {
-  background: var(--accent-color, #6366f1);
-  color: #fff;
-}
-
-.period-btn:hover:not(.active) {
-  color: var(--text-primary, #eee);
+  background: rgba(90, 200, 250, 0.12);
+  color: #F5F5F7;
 }
 
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .stat-card {
-  background: var(--bg-secondary, #1a1a2e);
-  border: 1px solid var(--border-color, #2a2a4a);
-  border-radius: 10px;
-  padding: 1.25rem;
+  background: rgba(44, 44, 46, 0.5);
+  border-radius: 14px;
+  padding: 16px;
 }
 
 .stat-label {
-  font-size: 0.8125rem;
-  color: var(--text-secondary, #888);
-  margin-bottom: 0.5rem;
+  font-size: 11px;
+  color: #98989D;
+  margin-bottom: 6px;
 }
 
 .stat-value {
-  font-size: 1.75rem;
+  font-size: 28px;
   font-weight: 700;
-  color: var(--text-primary, #eee);
 }
 
-.dashboard-content {
+.stat-trend {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.chart-row {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
-  gap: 1rem;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
-.chart-section {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+.bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
-.chart-area {
-  background: var(--bg-secondary, #1a1a2e);
-  border: 1px solid var(--border-color, #2a2a4a);
-  border-radius: 10px;
-  padding: 1.25rem;
+.chart-card {
+  background: rgba(44, 44, 46, 0.5);
+  border-radius: 14px;
+  padding: 16px;
 }
 
-.chart-area h3 {
-  margin: 0 0 1rem;
-  font-size: 0.9375rem;
-  color: var(--text-primary, #eee);
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #F5F5F7;
+  margin-bottom: 12px;
 }
 
 .chart-placeholder {
-  height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px dashed var(--border-color, #2a2a4a);
-  border-radius: 8px;
-  color: var(--text-secondary, #666);
-  font-size: 0.875rem;
+  font-size: 12px;
+  color: #636366;
+  text-align: center;
+  padding: 24px 0;
 }
 
-.agent-section {
-  background: var(--bg-secondary, #1a1a2e);
-  border: 1px solid var(--border-color, #2a2a4a);
-  border-radius: 10px;
-  padding: 1.25rem;
+.state-msg {
+  text-align: center;
+  padding: 48px 0;
+  font-size: 14px;
+  color: #98989D;
 }
 
-.agent-section h3 {
-  margin: 0 0 1rem;
-  font-size: 0.9375rem;
-  color: var(--text-primary, #eee);
-}
-
-.agent-list {
+.health-bars {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 1.25rem;
+  gap: 10px;
 }
 
-.agent-item {
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.health-label {
+  font-size: 11px;
+  color: #98989D;
+  width: 28px;
+}
+
+.health-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.health-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.health-val {
+  font-size: 11px;
+  color: #98989D;
+  width: 28px;
+  text-align: right;
+}
+
+.agent-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-status-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.75rem;
-  background: var(--bg-primary, #0f0f1a);
-  border-radius: 8px;
-}
-
-.agent-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.agent-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.agent-status-dot.active {
-  background: #22c55e;
-}
-
-.agent-status-dot.idle {
-  background: #f59e0b;
-}
-
-.agent-status-dot.error {
-  background: #ef4444;
 }
 
 .agent-name {
-  font-size: 0.875rem;
-  color: var(--text-primary, #eee);
+  font-size: 13px;
+  color: #F5F5F7;
 }
 
-.agent-stats {
-  display: flex;
-  gap: 1rem;
-  font-size: 0.75rem;
-  color: var(--text-secondary, #888);
-}
-
-.system-health {
-  border-top: 1px solid var(--border-color, #2a2a4a);
-  padding-top: 1rem;
-}
-
-.system-health h4 {
-  margin: 0 0 0.75rem;
-  font-size: 0.8125rem;
-  color: var(--text-secondary, #aaa);
-}
-
-.health-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.5rem;
-}
-
-.health-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.5rem;
-  background: var(--bg-primary, #0f0f1a);
-  border-radius: 6px;
-  font-size: 0.75rem;
-  color: var(--text-secondary, #888);
-}
-
-.health-item span:last-child {
-  font-weight: 600;
-  color: var(--text-primary, #eee);
+.agent-sessions {
+  font-size: 12px;
+  font-weight: 500;
 }
 </style>

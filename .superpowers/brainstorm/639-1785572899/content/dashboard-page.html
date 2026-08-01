@@ -1,0 +1,128 @@
+<h2>仪表盘页面设计</h2>
+<p class="subtitle">大标题 + 统计卡片 + 图表卡片。数据驱动，呼吸感留白。</p>
+
+<div class="mockup">
+  <div class="mockup-header">仪表盘 Dashboard</div>
+  <div class="mockup-body">
+    <div style="background: #000; border-radius: 16px; padding: 20px; font-family: 'Microsoft YaHei', sans-serif;">
+
+      <div style="font-size: 28px; font-weight: 700; color: #f5f5f7; margin-bottom: 20px;">仪表盘</div>
+
+      <!-- Period selector -->
+      <div style="display: flex; gap: 4px; margin-bottom: 20px; background: rgba(44,44,46,0.5); border-radius: 10px; padding: 3px; width: fit-content;">
+        <span style="padding: 5px 14px; border-radius: 8px; font-size: 12px; color: #f5f5f7; background: rgba(90,200,250,0.12);">近 7 天</span>
+        <span style="padding: 5px 14px; border-radius: 8px; font-size: 12px; color: #98989d;">近 30 天</span>
+        <span style="padding: 5px 14px; border-radius: 8px; font-size: 12px; color: #98989d;">近 90 天</span>
+      </div>
+
+      <!-- 4 stat cards -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+          <div style="font-size: 11px; color: #98989d; margin-bottom: 6px;">智能体总数</div>
+          <div style="font-size: 28px; font-weight: 700; color: #5AC8FA;">12</div>
+          <div style="font-size: 11px; color: #30D158; margin-top: 2px;">↑ 3 新增</div>
+        </div>
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+          <div style="font-size: 11px; color: #98989d; margin-bottom: 6px;">活跃会话</div>
+          <div style="font-size: 28px; font-weight: 700; color: #30D158;">48</div>
+          <div style="font-size: 11px; color: #30D158; margin-top: 2px;">↑ 12%</div>
+        </div>
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+          <div style="font-size: 11px; color: #98989d; margin-bottom: 6px;">Token 消耗</div>
+          <div style="font-size: 28px; font-weight: 700; color: #FFD60A;">12.8k</div>
+          <div style="font-size: 11px; color: #FFD60A; margin-top: 2px;">↑ 5%</div>
+        </div>
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+          <div style="font-size: 11px; color: #98989d; margin-bottom: 6px;">累计费用</div>
+          <div style="font-size: 28px; font-weight: 700; color: #FF9F0A;">¥3.2</div>
+          <div style="font-size: 11px; color: #636366; margin-top: 2px;">本月</div>
+        </div>
+      </div>
+
+      <!-- Charts row -->
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 16px;">
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+          <div style="font-size: 14px; font-weight: 600; color: #f5f5f7; margin-bottom: 12px;">Token 用量趋势</div>
+          <div style="height: 120px; display: flex; align-items: flex-end; gap: 6px; padding: 0 8px;">
+            <div style="flex:1; height:60%; background:#5AC8FA; border-radius:4px 4px 0 0; opacity:0.6;"></div>
+            <div style="flex:1; height:80%; background:#5AC8FA; border-radius:4px 4px 0 0; opacity:0.6;"></div>
+            <div style="flex:1; height:45%; background:#5AC8FA; border-radius:4px 4px 0 0; opacity:0.6;"></div>
+            <div style="flex:1; height:90%; background:#5AC8FA; border-radius:4px 4px 0 0;"></div>
+            <div style="flex:1; height:70%; background:#5AC8FA; border-radius:4px 4px 0 0; opacity:0.6;"></div>
+            <div style="flex:1; height:55%; background:#5AC8FA; border-radius:4px 4px 0 0; opacity:0.6;"></div>
+            <div style="flex:1; height:95%; background:#5AC8FA; border-radius:4px 4px 0 0;"></div>
+          </div>
+        </div>
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+          <div style="font-size: 14px; font-weight: 600; color: #f5f5f7; margin-bottom: 12px;">系统健康</div>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;"><span style="color:#98989d;">CPU</span><span style="color:#30D158;">32%</span></div>
+              <div style="height:4px; background:rgba(255,255,255,0.06); border-radius:2px;"><div style="width:32%; height:100%; background:#30D158; border-radius:2px;"></div></div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;"><span style="color:#98989d;">内存</span><span style="color:#FFD60A;">67%</span></div>
+              <div style="height:4px; background:rgba(255,255,255,0.06); border-radius:2px;"><div style="width:67%; height:100%; background:#FFD60A; border-radius:2px;"></div></div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;"><span style="color:#98989d;">磁盘</span><span style="color:#30D158;">45%</span></div>
+              <div style="height:4px; background:rgba(255,255,255,0.06); border-radius:2px;"><div style="width:45%; height:100%; background:#30D158; border-radius:2px;"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom row -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+          <div style="font-size: 14px; font-weight: 600; color: #f5f5f7; margin-bottom: 10px;">智能体状态</div>
+          <div style="font-size: 12px; color: #636366; text-align: center; padding: 26px;">[ 智能体状态分布 ]</div>
+        </div>
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+          <div style="font-size: 14px; font-weight: 600; color: #f5f5f7; margin-bottom: 10px;">最近会话</div>
+          <div style="font-size: 12px; color: #636366; text-align: center; padding: 26px;">[ 最近会话列表 ]</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 16px; font-size: 13px;">
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">统计卡片</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>4 列均分网格</li>
+      <li>14px 圆角半透明底</li>
+      <li>大数字 28px Bold</li>
+      <li>趋势小字绿色标注</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">图表区</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>2:1 左右分栏</li>
+      <li>浅蓝柱状 + 进度条</li>
+      <li>14px 圆角卡片</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">时间筛选</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>3 段切换 pill</li>
+      <li>选中态浅蓝底</li>
+      <li>紧凑贴左对齐</li>
+    </ul>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认仪表盘设计</h3></div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>需要调整</h3></div>
+  </div>
+</div>

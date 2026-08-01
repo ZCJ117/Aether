@@ -1,0 +1,137 @@
+<h2>排版体系 — SF Pro 字重 & 字号层级</h2>
+<p class="subtitle">Apple 使用精确的字重和字号组合来建立信息层级。以下是统一应用到 6 个页面的排版标度。</p>
+
+<div class="section">
+  <h3>🔤 字体栈</h3>
+  <div style="background: rgba(44,44,46,0.8); border-radius: 12px; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;">
+    <code style="font-size: 13px; color: #5AC8FA; word-break: break-all;">
+      -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif
+    </code>
+  </div>
+  <p style="font-size: 12px; color: #636366; margin-top: 8px;">macOS/iOS 自动映射到系统 SF Pro，Windows 回退到 Segoe UI。中文继承系统字体。</p>
+</div>
+
+<div class="section">
+  <h3>📏 字号层级（基于 16px 基准）</h3>
+
+  <div style="display: flex; flex-direction: column; gap: 10px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #f5f5f7;">
+
+    <div style="background: rgba(44,44,46,0.8); border-radius: 12px; padding: 16px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div>
+          <span style="font-size: 34px; font-weight: 700; letter-spacing: -0.5px; line-height: 1.2;">Large Title</span>
+        </div>
+        <div style="text-align: right;">
+          <code style="font-size: 11px; color: #98989d;">34px / Bold 700</code><br>
+          <span style="font-size: 11px; color: #636366;">页面标题（仪表盘/设置）</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="background: rgba(44,44,46,0.8); border-radius: 12px; padding: 16px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div>
+          <span style="font-size: 22px; font-weight: 600; letter-spacing: -0.3px; line-height: 1.3;">Title 2</span>
+        </div>
+        <div style="text-align: right;">
+          <code style="font-size: 11px; color: #98989d;">22px / Semibold 600</code><br>
+          <span style="font-size: 11px; color: #636366;">区块标题</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="background: rgba(44,44,46,0.8); border-radius: 12px; padding: 16px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div>
+          <span style="font-size: 17px; font-weight: 600; letter-spacing: -0.2px; line-height: 1.4;">Headline</span>
+        </div>
+        <div style="text-align: right;">
+          <code style="font-size: 11px; color: #98989d;">17px / Semibold 600</code><br>
+          <span style="font-size: 11px; color: #636366;">卡片标题 / 列表项标题</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="background: rgba(44,44,46,0.8); border-radius: 12px; padding: 16px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div>
+          <span style="font-size: 15px; font-weight: 400; letter-spacing: 0; line-height: 1.5;">Body</span>
+        </div>
+        <div style="text-align: right;">
+          <code style="font-size: 11px; color: #98989d;">15px / Regular 400</code><br>
+          <span style="font-size: 11px; color: #636366;">正文 / 表格内容 / 描述文字</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="background: rgba(44,44,46,0.8); border-radius: 12px; padding: 16px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div>
+          <span style="font-size: 13px; font-weight: 400; line-height: 1.4;">Footnote</span>
+        </div>
+        <div style="text-align: right;">
+          <code style="font-size: 11px; color: #98989d;">13px / Regular 400</code><br>
+          <span style="font-size: 11px; color: #636366;">辅助说明 / 时间戳</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="background: rgba(44,44,46,0.8); border-radius: 12px; padding: 16px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div>
+          <span style="font-size: 11px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1.3;">CAPTION</span>
+        </div>
+        <div style="text-align: right;">
+          <code style="font-size: 11px; color: #98989d;">11px / Medium 500<br>letter-spacing: 0.5px</code><br>
+          <span style="font-size: 11px; color: #636366;">标签 / 分类 / 状态提示</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>📐 间距 & 安全区（8pt 网格）</h3>
+  <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+      <td style="padding: 6px 8px; color: #98989d;">页面外边距</td>
+      <td style="padding: 6px 8px;"><code>20px</code></td>
+      <td style="padding: 6px 8px; font-size: 11px; color: #636366;">统一 6 页面使用</td>
+    </tr>
+    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+      <td style="padding: 6px 8px; color: #98989d;">卡片内边距</td>
+      <td style="padding: 6px 8px;"><code>16px</code></td>
+      <td style="padding: 6px 8px; font-size: 11px; color: #636366;">卡片/列表项内部</td>
+    </tr>
+    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+      <td style="padding: 6px 8px; color: #98989d;">区块间距</td>
+      <td style="padding: 6px 8px;"><code>24px</code></td>
+      <td style="padding: 6px 8px; font-size: 11px; color: #636366;">卡片组之间</td>
+    </tr>
+    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+      <td style="padding: 6px 8px; color: #98989d;">元素间距</td>
+      <td style="padding: 6px 8px;"><code>8px / 12px</code></td>
+      <td style="padding: 6px 8px; font-size: 11px; color: #636366;">同组内元素间</td>
+    </tr>
+    <tr>
+      <td style="padding: 6px 8px; color: #98989d;">侧边栏宽度</td>
+      <td style="padding: 6px 8px;"><code>260px / 64px</code></td>
+      <td style="padding: 6px 8px; font-size: 11px; color: #636366;">展开 / 折叠</td>
+    </tr>
+  </table>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>确认排版体系</h3>
+      <p>SF Pro 字体栈 + 6 级字号 + 8pt 网格间距。应用到全部 6 个页面。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>需要调整</h3><p>告知具体改动</p></div>
+  </div>
+</div>

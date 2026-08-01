@@ -1,10 +1,14 @@
 cn\zcj\aether\api\dto\CreateSessionRequestDTO.class
+cn\zcj\aether\api\dto\DashboardStatsDTO$AgentSessionStatDTO.class
 cn\zcj\aether\api\dto\ChatRequestDTO.class
 cn\zcj\aether\api\dto\SessionItemDTO.class
+cn\zcj\aether\api\dto\DashboardStatsDTO$AgentSessionStatDTO$AgentSessionStatDTOBuilder.class
+cn\zcj\aether\api\IAgentService.class
+cn\zcj\aether\api\response\Response$ResponseBuilder.class
+cn\zcj\aether\api\dto\DashboardStatsDTO.class
+cn\zcj\aether\api\dto\DashboardStatsDTO$DashboardStatsDTOBuilder.class
 cn\zcj\aether\api\dto\ChatResponseDTO.class
 cn\zcj\aether\api\response\Response.class
 cn\zcj\aether\api\dto\CreateSessionResponseDTO.class
-cn\zcj\aether\api\IAgentService.class
-cn\zcj\aether\api\response\Response$ResponseBuilder.class
 cn\zcj\aether\api\dto\AiAgentConfigResponseDTO.class
 cn\zcj\aether\api\dto\SessionItemDTO$SessionItemDTOBuilder.class

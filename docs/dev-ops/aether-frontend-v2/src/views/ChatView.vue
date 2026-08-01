@@ -30,37 +30,17 @@ watch(
   }
 )
 
-async function handleNewChat(agentId: string) {
-  agentStore.selectAgent(agentId)  // 先切换智能体，否则发送消息仍走旧 Agent
-  await sessionStore.newSession(agentId, authStore.userId)
-  agentStore.expandAgent(agentId)
-  await sessionStore.loadSessions(agentId, authStore.userId)
-  chatStore.switchToSession(sessionStore.currentSessionId)
-}
-
-function handleSelectSession(sessionId: string, agentId: string) {
-  agentStore.selectAgent(agentId)  // 点击会话时也需同步切换智能体
-  sessionStore.switchSession(sessionId)
-  chatStore.switchToSession(sessionId)
-}
-
 async function handleSend() {
   const text = inputText.value.trim()
   if (!text || !agentStore.selectedAgentId || chatStore.isSending) return
   inputText.value = ''
-  await chatStore.sendMessage(text, agentStore.selectedAgentId, authStore.userId)
+  await chatStore.sendMessage(text, agentStore.selectedAgentId, authStore.apiToken)
 }
 
-function handlePermissionResponse(approved: boolean) {
-  if (!chatStore.permissionEvent) return
-  if (approved) {
-    const results = chatStore.permissionEvent.pendingToolCalls.map((tc) => ({
-      toolCallId: tc.toolCallId,
-      approved: true,
-    }))
-    chatStore.confirmPermission(agentStore.selectedAgentId!, authStore.userId, '', results)
-  } else {
-    chatStore.denyAllPermissions(agentStore.selectedAgentId!, authStore.userId, '')
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    handleSend()
   }
 }
 </script>
@@ -68,107 +48,224 @@ function handlePermissionResponse(approved: boolean) {
 <template>
   <ChatLayout>
     <template #sidebar>
-      <SessionSidebar
-        @new-chat="handleNewChat"
-        @select-session="handleSelectSession"
-      />
+      <SessionSidebar />
     </template>
 
     <template #header>
-      <div class="flex items-center gap-3">
-        <span class="text-sm font-medium text-[#DEDBC8]">
-          {{ agentStore.selectedAgent?.agentName || 'Aether Chat' }}
+      <div class="chat-topbar">
+        <span class="chat-session-name">
+          {{ chatStore.sessionId || '新对话' }}
         </span>
-        <span v-if="agentStore.selectedAgent" class="text-xs text-[#DEDBC8]/40">
-          {{ agentStore.selectedAgent.agentDesc }}
+        <span v-if="chatStore.turnCount > 0" class="chat-turn-badge">
+          {{ chatStore.turnCount }} 轮
         </span>
       </div>
     </template>
 
-    <!-- Chat Area -->
-    <div class="flex-1 min-h-0 flex flex-col">
-      <!-- Empty State -->
-      <div v-if="!agentStore.selectedAgent" class="flex-1 flex flex-col items-center justify-center gap-2 text-[#DEDBC8]/50">
-        <div class="text-5xl mb-2">🤖</div>
-        <h2 class="text-xl text-[#DEDBC8]">选择一个智能体开始对话</h2>
-        <p class="text-sm">从左侧栏展开一个智能体，点击 + 创建新对话</p>
+    <template #default>
+      <div v-if="!agentStore.selectedAgentId" class="empty-state">
+        请先在左侧选择一个智能体
+      </div>
+      <div v-else-if="chatStore.messages.length === 0" class="empty-state">
+        输入消息开始与 <strong>{{ agentStore.selectedAgent?.agentName || agentStore.selectedAgentId }}</strong> 对话
       </div>
 
-      <!-- Chat Interface -->
-      <template v-else>
-        <div class="flex-1 overflow-y-auto px-4 py-3">
-          <div v-if="chatStore.isEmpty" class="flex flex-col items-center justify-center h-full gap-2 text-[#DEDBC8]/40">
-            <div class="text-4xl mb-1">💬</div>
-            <p class="text-sm">发送消息开始对话</p>
+      <div v-else class="messages">
+        <div
+          v-for="msg in chatStore.messages"
+          :key="msg.id"
+          :class="['msg-row', msg.side === 'user' ? 'msg-user' : 'msg-agent']"
+        >
+          <div v-if="msg.side === 'agent'" class="msg-avatar">
+            {{ (agentStore.selectedAgent?.agentName || 'A').charAt(0) }}
           </div>
-          <div
-            v-for="msg in chatStore.messages"
-            :key="msg.id"
-            :class="['mb-3 px-4 py-3 rounded-xl max-w-[80%]', msg.side === 'user' ? 'ml-auto bg-indigo-600 text-white' : 'bg-[#1a1a2e] text-[#DEDBC8] border border-white/5']"
-          >
-            <div class="text-sm whitespace-pre-wrap">{{ msg.text }}</div>
-            <div v-if="msg.streaming" class="text-xs text-[#DEDBC8]/40 mt-1 animate-pulse">...</div>
+          <div :class="['msg-bubble', msg.side === 'user' ? 'bubble-user' : 'bubble-agent']">
+            {{ msg.text }}
           </div>
         </div>
 
-        <!-- Streaming Status -->
-        <div v-if="chatStore.statusText" :class="['px-4 py-1.5 text-xs', { 'text-indigo-400': chatStore.statusType === 'info', 'text-red-400': chatStore.statusType === 'error', 'text-emerald-400': chatStore.statusType === 'success', 'text-amber-400': chatStore.statusType === 'warning' }]">
-          {{ chatStore.statusText }}
-        </div>
-
-        <!-- Token Budget -->
-        <div v-if="chatStore.tokenBudget.budgetTotal > 0" class="px-4 py-1 flex items-center gap-3">
-          <div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
-            <div class="h-full bg-indigo-500 rounded-full transition-all duration-300" :style="{ width: chatStore.tokenBudget.budgetPercent + '%' }"></div>
-          </div>
-          <span class="text-[11px] text-[#DEDBC8]/40 whitespace-nowrap">
-            {{ chatStore.tokenBudget.budgetUsed.toLocaleString() }} / {{ chatStore.tokenBudget.budgetTotal.toLocaleString() }}
-          </span>
-        </div>
-
-        <!-- Chat Input -->
-        <div class="flex-shrink-0 border-t border-white/5 bg-[#0f0f0f] px-4 py-3">
-          <div class="flex gap-2">
-            <input
-              v-model="inputText"
-              type="text"
-              placeholder="输入消息..."
-              :disabled="chatStore.isSending"
-              class="flex-1 rounded-lg bg-white/5 px-4 py-2.5 text-sm text-[#DEDBC8] placeholder-[#DEDBC8]/25 border border-white/5 focus:border-indigo-500/50 focus:outline-none transition-colors disabled:opacity-50"
-              @keydown.enter="handleSend"
-            />
-            <button
-              :disabled="!inputText.trim() || chatStore.isSending"
-              class="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              @click="handleSend"
-            >
-              {{ chatStore.isSending ? '发送中...' : '发送' }}
-            </button>
-          </div>
-        </div>
-      </template>
-    </div>
-
-    <!-- Permission Dialog -->
-    <div v-if="showPermissionDialog" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
-      <div class="bg-[#1a1a2e] border border-white/10 rounded-xl p-6 max-w-lg w-[90%]">
-        <h3 class="text-lg font-medium text-[#DEDBC8] mb-2">工具调用确认</h3>
-        <p class="text-sm text-[#DEDBC8]/60 mb-3">智能体请求调用以下工具：</p>
-        <ul class="space-y-2 mb-4">
-          <li v-for="tc in chatStore.permissionEvent?.pendingToolCalls" :key="tc.toolCallId" class="bg-[#0f0f0f] rounded-lg p-3 text-sm">
-            <strong class="text-indigo-400">{{ tc.toolName }}</strong>
-            <pre class="mt-1 text-xs text-[#DEDBC8]/50 whitespace-pre-wrap">{{ JSON.stringify(tc.input, null, 2) }}</pre>
-          </li>
-        </ul>
-        <div class="flex gap-3 justify-end">
-          <button class="px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm hover:bg-red-500/20 transition-colors" @click="handlePermissionResponse(false)">拒绝所有</button>
-          <button class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-500 transition-colors" @click="handlePermissionResponse(true)">全部允许</button>
+        <div v-if="chatStore.isSending" class="streaming-hint">
+          <span class="streaming-dot" />
+          正在生成...
         </div>
       </div>
-    </div>
+    </template>
+
+    <template #footer>
+      <div class="input-bar">
+        <input
+          v-model="inputText"
+          :placeholder="agentStore.selectedAgentId
+            ? `给 ${agentStore.selectedAgent?.agentName || 'Agent'} 发送消息...`
+            : '请先选择智能体'"
+          :disabled="!agentStore.selectedAgentId || chatStore.isSending"
+          class="msg-input"
+          @keydown="handleKeydown"
+        />
+        <button
+          class="send-btn"
+          :disabled="!inputText.trim() || chatStore.isSending"
+          @click="handleSend"
+        >
+          ↑
+        </button>
+      </div>
+    </template>
   </ChatLayout>
 </template>
 
 <style scoped>
-/* 背景由 ChatLayout 统一控制，无需额外样式 */
+.chat-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-session-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #F5F5F7;
+  flex: 1;
+}
+
+.chat-turn-badge {
+  font-size: 10px;
+  color: #98989D;
+  background: rgba(44, 44, 46, 0.5);
+  border-radius: 5px;
+  padding: 2px 8px;
+}
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 14px;
+  color: #636366;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.msg-row {
+  display: flex;
+  gap: 8px;
+}
+
+.msg-user {
+  justify-content: flex-end;
+}
+
+.msg-agent {
+  justify-content: flex-start;
+}
+
+.msg-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: rgba(90, 200, 250, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5AC8FA;
+}
+
+.msg-bubble {
+  padding: 9px 13px;
+  max-width: 68%;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.bubble-user {
+  background: #5AC8FA;
+  color: #000;
+  border-radius: 14px 14px 4px 14px;
+}
+
+.bubble-agent {
+  background: rgba(44, 44, 46, 0.6);
+  color: #F5F5F7;
+  border-radius: 14px 14px 14px 4px;
+}
+
+.streaming-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  font-size: 12px;
+  color: #98989D;
+}
+
+.streaming-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #5AC8FA;
+  animation: pulseDot 1.4s infinite ease-in-out;
+}
+
+@keyframes pulseDot {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+.input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.06);
+}
+
+.msg-input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  background: rgba(44, 44, 46, 0.5);
+  color: #F5F5F7;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+
+.msg-input:focus {
+  border-color: #5AC8FA;
+}
+
+.send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: #5AC8FA;
+  color: #000;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.send-btn:hover {
+  opacity: 0.88;
+}
+
+.send-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
 </style>

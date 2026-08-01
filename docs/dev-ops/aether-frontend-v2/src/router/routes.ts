@@ -56,24 +56,6 @@ export const routes: RouteRecordRaw[] = [
         meta: { title: '技能管理', icon: 'Wrench', group: 'skills' },
       },
       {
-        path: 'memory',
-        name: 'MemoryManagement',
-        component: () => import('@/views/MemoryManagementView.vue'),
-        meta: { title: '记忆管理', icon: 'Brain', group: 'memory' },
-      },
-      {
-        path: 'workflows',
-        name: 'WorkflowList',
-        component: () => import('@/views/WorkflowListView.vue'),
-        meta: { title: '工作流', icon: 'Workflow', group: 'workflows' },
-      },
-      {
-        path: 'workflows/editor/:id?',
-        name: 'WorkflowEditor',
-        component: () => import('@/views/WorkflowEditorView.vue'),
-        meta: { title: '工作流编辑器', group: 'workflows' },
-      },
-      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/SettingsView.vue'),

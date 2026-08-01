@@ -1,0 +1,92 @@
+<h2>设置页面设计</h2>
+<p class="subtitle">分组卡片 + 行内编辑。保持 iOS 设置风格的简洁列表感。</p>
+
+<div class="mockup">
+  <div class="mockup-header">设置 Settings</div>
+  <div class="mockup-body">
+    <div style="background: #000; border-radius: 14px; padding: 20px; font-family: 'Microsoft YaHei', sans-serif; max-width: 560px; margin: 0 auto;">
+
+      <div style="font-size: 28px; font-weight: 700; color: #f5f5f7; margin-bottom: 20px;">设置</div>
+
+      <!-- API Token group -->
+      <div style="font-size: 11px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">API</div>
+      <div style="background: rgba(44,44,46,0.5); border-radius: 14px; overflow: hidden; margin-bottom: 20px;">
+        <div style="padding: 13px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 0.5px solid rgba(255,255,255,0.04);">
+          <span style="font-size: 14px; color: #f5f5f7;">当前 Token</span>
+          <span style="font-size: 13px; color: #98989d;">adm1****5678</span>
+        </div>
+        <div style="padding: 13px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 0.5px solid rgba(255,255,255,0.04);">
+          <span style="font-size: 14px; color: #f5f5f7;">新 Token</span>
+          <input placeholder="输入新 Token" style="width: 180px; padding: 6px 10px; border-radius: 7px; border: 0.5px solid rgba(255,255,255,0.08); background: rgba(0,0,0,0.3); color:#f5f5f7; font-size:13px; text-align:right; outline:none; font-family:inherit;">
+        </div>
+        <div style="padding: 13px 16px; display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 14px; color: #f5f5f7;">连接地址</span>
+          <span style="font-size: 13px; color: #98989d;">localhost:8080</span>
+        </div>
+      </div>
+
+      <!-- Memory group -->
+      <div style="font-size: 11px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">长期记忆 <span style="color:#5AC8FA; font-weight:400; text-transform:none; letter-spacing:0;">· 当前：开发助手</span></div>
+      <div style="background: rgba(44,44,46,0.5); border-radius: 14px; overflow: hidden; margin-bottom: 20px;">
+        <div style="padding: 13px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 0.5px solid rgba(255,255,255,0.04);">
+          <div style="flex:1;">
+            <div style="font-size: 13px; color: #f5f5f7;">用户偏好简洁的代码注释风格…</div>
+            <div style="font-size: 10px; color: #636366; margin-top: 2px;">2025-07-30</div>
+          </div>
+          <span style="font-size: 11px; color: #5AC8FA;">编辑</span>
+        </div>
+        <div style="padding: 13px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 0.5px solid rgba(255,255,255,0.04);">
+          <div style="flex:1;">
+            <div style="font-size: 13px; color: #f5f5f7;">使用 TypeScript 严格模式</div>
+            <div style="font-size: 10px; color: #636366; margin-top: 2px;">2025-07-28</div>
+          </div>
+          <span style="font-size: 11px; color: #5AC8FA;">编辑</span>
+        </div>
+        <div style="padding: 12px 16px; text-align: center; font-size: 13px; color: #5AC8FA;">
+          + 添加长期记忆
+        </div>
+      </div>
+
+      <!-- Danger zone -->
+      <div style="font-size: 11px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">账户</div>
+      <div style="background: rgba(44,44,46,0.5); border-radius: 14px; overflow: hidden;">
+        <div style="padding: 13px 16px; text-align: center; font-size: 14px; color: #FF453A;">
+          退出登录
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; font-size: 13px;">
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">分组卡片</strong>
+    <ul style="margin: 4px 0 0; padding-left: 16px; color: #98989d;">
+      <li>iOS 风格 grouped list</li>
+      <li>每组有 CAPTION 标注</li>
+      <li>行内右侧值/操作</li>
+      <li>0.5px 分隔线隔开</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">长期记忆</strong>
+    <ul style="margin: 4px 0 0; padding-left: 16px; color: #98989d;">
+      <li>标注当前绑定的 Agent</li>
+      <li>摘要截断 + 时间戳</li>
+      <li>"编辑" + "添加" 浅蓝链接色</li>
+      <li>切换 Agent 自动刷新列表</li>
+    </ul>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认设置页设计</h3></div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>需要调整</h3></div>
+  </div>
+</div>

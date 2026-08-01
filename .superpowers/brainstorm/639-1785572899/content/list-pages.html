@@ -1,0 +1,161 @@
+<h2>列表管理页 — 智能体 / 模型 / 技能</h2>
+<p class="subtitle">三页共用同一布局模式：大标题 + 卡片式列表。内容不同，骨架一致。</p>
+
+<div class="section">
+  <h3>智能体管理</h3>
+  <div class="mockup">
+    <div class="mockup-body">
+      <div style="background: #000; border-radius: 14px; padding: 20px; font-family: 'Microsoft YaHei', sans-serif;">
+        <div style="font-size: 28px; font-weight: 700; color: #f5f5f7; margin-bottom: 18px;">智能体</div>
+        <div style="background: rgba(44,44,46,0.5); border-radius: 14px; overflow: hidden;">
+          <!-- Table header -->
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; padding: 10px 16px; border-bottom: 0.5px solid rgba(255,255,255,0.05); font-size: 11px; color: #636366; text-transform: uppercase; letter-spacing: 0.3px;">
+            <span>名称</span><span>类型</span><span>模型</span><span>状态</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; padding: 12px 16px; border-bottom: 0.5px solid rgba(255,255,255,0.04); align-items: center;">
+            <div>
+              <div style="font-size: 14px; font-weight: 600; color: #f5f5f7;">开发助手</div>
+              <div style="font-size: 11px; color: #636366;">代码生成与审查</div>
+            </div>
+            <span style="font-size: 12px; color: #98989d;">ReActAgent</span>
+            <span style="font-size: 12px; color: #98989d;">GPT-4o</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#30D158;"><span style="width:6px;height:6px;border-radius:50%;background:#30D158;"></span>活跃</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; padding: 12px 16px; border-bottom: 0.5px solid rgba(255,255,255,0.04); align-items: center;">
+            <div>
+              <div style="font-size: 14px; font-weight: 600; color: #f5f5f7;">文档助手</div>
+              <div style="font-size: 11px; color: #636366;">技术文档编写</div>
+            </div>
+            <span style="font-size: 12px; color: #98989d;">ReActAgent</span>
+            <span style="font-size: 12px; color: #98989d;">Claude</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#30D158;"><span style="width:6px;height:6px;border-radius:50%;background:#30D158;"></span>活跃</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; padding: 12px 16px; align-items: center;">
+            <div>
+              <div style="font-size: 14px; font-weight: 600; color: #f5f5f7;">数据分析</div>
+              <div style="font-size: 11px; color: #636366;">报表与可视化</div>
+            </div>
+            <span style="font-size: 12px; color: #98989d;">Workflow</span>
+            <span style="font-size: 12px; color: #98989d;">GPT-4o</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#FF9F0A;"><span style="width:6px;height:6px;border-radius:50%;background:#FF9F0A;"></span>已暂停</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>模型管理</h3>
+  <div class="mockup">
+    <div class="mockup-body">
+      <div style="background: #000; border-radius: 14px; padding: 20px; font-family: 'Microsoft YaHei', sans-serif;">
+        <div style="font-size: 28px; font-weight: 700; color: #f5f5f7; margin-bottom: 18px;">模型</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+            <div style="font-size: 10px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">OpenAI</div>
+            <div style="font-size: 16px; font-weight: 600; color: #f5f5f7;">GPT-4o</div>
+            <div style="font-size: 12px; color: #98989d; margin-top: 4px;">128k context</div>
+            <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+              <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#30D158;"><span style="width:6px;height:6px;border-radius:50%;background:#30D158;"></span>已连接</span>
+              <span style="font-size: 11px; color: #5AC8FA; cursor: pointer;">测试连接 →</span>
+            </div>
+          </div>
+          <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+            <div style="font-size: 10px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Anthropic</div>
+            <div style="font-size: 16px; font-weight: 600; color: #f5f5f7;">Claude 4</div>
+            <div style="font-size: 12px; color: #98989d; margin-top: 4px;">200k context</div>
+            <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+              <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#30D158;"><span style="width:6px;height:6px;border-radius:50%;background:#30D158;"></span>已连接</span>
+              <span style="font-size: 11px; color: #5AC8FA; cursor: pointer;">测试连接 →</span>
+            </div>
+          </div>
+          <div style="background: rgba(44,44,46,0.5); border-radius: 14px; padding: 16px;">
+            <div style="font-size: 10px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">DeepSeek</div>
+            <div style="font-size: 16px; font-weight: 600; color: #f5f5f7;">DeepSeek-V3</div>
+            <div style="font-size: 12px; color: #98989d; margin-top: 4px;">64k context</div>
+            <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+              <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#FF453A;"><span style="width:6px;height:6px;border-radius:50%;background:#FF453A;"></span>未连接</span>
+              <span style="font-size: 11px; color: #5AC8FA; cursor: pointer;">测试连接 →</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>技能管理</h3>
+  <div class="mockup">
+    <div class="mockup-body">
+      <div style="background: #000; border-radius: 14px; padding: 20px; font-family: 'Microsoft YaHei', sans-serif;">
+        <div style="font-size: 28px; font-weight: 700; color: #f5f5f7; margin-bottom: 18px;">技能</div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Category -->
+          <div style="font-size: 11px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0;">工具类</div>
+          <div style="background: rgba(44,44,46,0.5); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-size: 14px; font-weight: 600; color: #f5f5f7;">文件读写</div>
+              <div style="font-size: 11px; color: #98989d; margin-top: 2px;">读写本地文件系统</div>
+            </div>
+            <div style="width: 40px; height: 22px; border-radius: 11px; background: #30D158; position: relative;">
+              <div style="width:18px; height:18px; border-radius:50%; background:#fff; position:absolute; top:2px; right:2px;"></div>
+            </div>
+          </div>
+          <div style="background: rgba(44,44,46,0.5); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-size: 14px; font-weight: 600; color: #f5f5f7;">网页搜索</div>
+              <div style="font-size: 11px; color: #98989d; margin-top: 2px;">搜索互联网信息</div>
+            </div>
+            <div style="width: 40px; height: 22px; border-radius: 11px; background: #30D158; position: relative;">
+              <div style="width:18px; height:18px; border-radius:50%; background:#fff; position:absolute; top:2px; right:2px;"></div>
+            </div>
+          </div>
+          <div style="font-size: 11px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0; margin-top: 8px;">MCP</div>
+          <div style="background: rgba(44,44,46,0.5); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-size: 14px; font-weight: 600; color: #f5f5f7;">GitHub MCP</div>
+              <div style="font-size: 11px; color: #98989d; margin-top: 2px;">GitHub 仓库操作</div>
+            </div>
+            <div style="width: 40px; height: 22px; border-radius: 11px; background: rgba(255,255,255,0.1); position: relative;">
+              <div style="width:18px; height:18px; border-radius:50%; background:#636366; position:absolute; top:2px; left:2px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 16px; font-size: 13px;">
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">智能体</strong>
+    <ul style="margin: 4px 0 0; padding-left:16px; color:#98989d;">
+      <li>表格列表布局</li><li>名称 + 描述双行</li><li>类型/模型/状态列</li><li>绿点=活跃 橙点=暂停</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">模型</strong>
+    <ul style="margin: 4px 0 0; padding-left:16px; color:#98989d;">
+      <li>3 列卡片网格</li><li>Provider 标签</li><li>连接状态 + 测试按钮</li><li>绿=已连 红=未连</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">技能</strong>
+    <ul style="margin: 4px 0 0; padding-left:16px; color:#98989d;">
+      <li>按分类分组</li><li>行内卡片列表</li><li>Apple 风格 Toggle 开关</li><li>绿=已启 灰=未启</li>
+    </ul>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认三个列表页设计</h3></div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>需要调整</h3></div>
+  </div>
+</div>

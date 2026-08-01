@@ -1,0 +1,131 @@
+<h2>色彩体系 — Apple 暗色方案</h2>
+<p class="subtitle">以下展示 Apple HIG 暗色标准色板。左侧为 Apple 官方色值，右侧为当前项目的对照。请逐项确认或调整。</p>
+
+<div class="section">
+  <h3>🎨 背景层级（4 层递进）</h3>
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+    <div style="background: #000000; border-radius: 12px; padding: 16px; text-align: center; color: #fff; font-size: 12px;">
+      <div style="width: 100%; height: 40px; border-radius: 6px; background: #000000; border: 1px solid #333; margin-bottom: 8px;"></div>
+      Base<br><code style="font-size: 11px; opacity: 0.7;">#000000</code>
+    </div>
+    <div style="background: #1c1c1e; border-radius: 12px; padding: 16px; text-align: center; color: #fff; font-size: 12px;">
+      <div style="width: 100%; height: 40px; border-radius: 6px; background: #1c1c1e; margin-bottom: 8px;"></div>
+      Elevated<br><code style="font-size: 11px; opacity: 0.7;">#1C1C1E</code>
+    </div>
+    <div style="background: #2c2c2e; border-radius: 12px; padding: 16px; text-align: center; color: #fff; font-size: 12px;">
+      <div style="width: 100%; height: 40px; border-radius: 6px; background: #2c2c2e; margin-bottom: 8px;"></div>
+      Grouped<br><code style="font-size: 11px; opacity: 0.7;">#2C2C2E</code>
+    </div>
+    <div style="background: #3a3a3c; border-radius: 12px; padding: 16px; text-align: center; color: #fff; font-size: 12px;">
+      <div style="width: 100%; height: 40px; border-radius: 6px; background: #3a3a3c; margin-bottom: 8px;"></div>
+      Separator<br><code style="font-size: 11px; opacity: 0.7;">#3A3A3C</code>
+    </div>
+  </div>
+  <p style="font-size: 13px; color: #98989d; margin-top: 10px;">Apple 从不使用纯黑 — 最底层用 #000 仅限于 OLED 省电场景，常规用 #1C1C1E 起步。</p>
+</div>
+
+<div class="section">
+  <h3>📝 文字色阶</h3>
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+    <div style="background: #1c1c1e; border-radius: 12px; padding: 16px;">
+      <div style="font-size: 28px; font-weight: 700; color: #f5f5f7;">标题</div>
+      <code style="font-size: 11px; color: #98989d;">#F5F5F7<br>Primary</code>
+    </div>
+    <div style="background: #1c1c1e; border-radius: 12px; padding: 16px;">
+      <div style="font-size: 18px; color: #98989d;">副标题</div>
+      <code style="font-size: 11px; color: #98989d;">#98989D<br>Secondary</code>
+    </div>
+    <div style="background: #1c1c1e; border-radius: 12px; padding: 16px;">
+      <div style="font-size: 14px; color: #636366;">辅助文字</div>
+      <code style="font-size: 11px; color: #98989d;">#636366<br>Tertiary</code>
+    </div>
+    <div style="background: #1c1c1e; border-radius: 12px; padding: 16px;">
+      <div style="font-size: 14px; color: #48484a;">占位符</div>
+      <code style="font-size: 11px; color: #98989d;">#48484A<br>Quaternary</code>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>🔵 语义色彩</h3>
+  <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;">
+    <div style="text-align: center;">
+      <div style="width: 48px; height: 48px; border-radius: 50%; background: #0A84FF; margin: 0 auto 6px;"></div>
+      <span style="font-size: 12px;">Blue</span><br><code style="font-size: 10px; color: #98989d;">#0A84FF</code>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 48px; height: 48px; border-radius: 50%; background: #30D158; margin: 0 auto 6px;"></div>
+      <span style="font-size: 12px;">Green</span><br><code style="font-size: 10px; color: #98989d;">#30D158</code>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 48px; height: 48px; border-radius: 50%; background: #FFD60A; margin: 0 auto 6px;"></div>
+      <span style="font-size: 12px;">Yellow</span><br><code style="font-size: 10px; color: #98989d;">#FFD60A</code>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 48px; height: 48px; border-radius: 50%; background: #FF453A; margin: 0 auto 6px;"></div>
+      <span style="font-size: 12px;">Red</span><br><code style="font-size: 10px; color: #98989d;">#FF453A</code>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 48px; height: 48px; border-radius: 50%; background: #BF5AF2; margin: 0 auto 6px;"></div>
+      <span style="font-size: 12px;">Purple</span><br><code style="font-size: 10px; color: #98989d;">#BF5AF2</code>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>🪟 毛玻璃参数</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    <div style="background: rgba(28,28,30,0.75); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); border-radius: 12px; padding: 20px; border: 1px solid rgba(255,255,255,0.08); text-align: center;">
+      <div style="font-size: 14px; color: #f5f5f7; margin-bottom: 4px;">侧边栏 / 工具栏</div>
+      <code style="font-size: 11px; color: #98989d;">blur(20px) saturate(180%)<br>opacity: 0.75</code>
+    </div>
+    <div style="background: rgba(44,44,46,0.65); backdrop-filter: blur(30px) saturate(200%); -webkit-backdrop-filter: blur(30px) saturate(200%); border-radius: 12px; padding: 20px; border: 1px solid rgba(255,255,255,0.06); text-align: center;">
+      <div style="font-size: 14px; color: #f5f5f7; margin-bottom: 4px;">弹窗 / 模态框</div>
+      <code style="font-size: 11px; color: #98989d;">blur(30px) saturate(200%)<br>opacity: 0.65</code>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>📐 圆角标度</h3>
+  <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
+    <div style="text-align: center;">
+      <div style="width: 60px; height: 60px; background: #0A84FF; border-radius: 6px; margin-bottom: 4px;"></div>
+      <code style="font-size: 10px;">6px 按钮</code>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 80px; height: 60px; background: #0A84FF; border-radius: 10px; margin-bottom: 4px;"></div>
+      <code style="font-size: 10px;">10px 小组件</code>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 100px; height: 60px; background: #0A84FF; border-radius: 14px; margin-bottom: 4px;"></div>
+      <code style="font-size: 10px;">14px 卡片</code>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 120px; height: 60px; background: #0A84FF; border-radius: 20px; margin-bottom: 4px;"></div>
+      <code style="font-size: 10px;">20px 模态</code>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 140px; height: 60px; background: #0A84FF; border-radius: 999px; margin-bottom: 4px;"></div>
+      <code style="font-size: 10px;">全圆 标签</code>
+    </div>
+  </div>
+  <p style="font-size: 13px; color: #98989d; margin-top: 8px;">Apple 使用连续的圆角标度 — 越大的元素圆角越大，形成视觉节奏。</p>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>确认这套色彩体系</h3>
+      <p>以这个色板为基础统一所有页面。包括背景层级、文字色阶、语义色、毛玻璃参数和圆角标度。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content">
+      <h3>需要调整</h3>
+      <p>某个色值或参数需要修改，请在终端告知具体调整内容。</p>
+    </div>
+  </div>
+</div>

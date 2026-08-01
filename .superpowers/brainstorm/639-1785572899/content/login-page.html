@@ -1,0 +1,77 @@
+<h2>登录页面设计</h2>
+<p class="subtitle">毛玻璃卡片 + 居中布局。保持简洁，不干扰品牌感。</p>
+
+<div class="mockup">
+  <div class="mockup-header">登录页</div>
+  <div class="mockup-body">
+    <div style="display: flex; align-items: center; justify-content: center; height: 450px; background: #000; border-radius: 16px; font-family: 'Microsoft YaHei', sans-serif;">
+
+      <!-- Login card -->
+      <div style="background: rgba(28,28,30,0.85); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border-radius: 20px; padding: 36px 32px; width: 360px; border: 0.5px solid rgba(255,255,255,0.08); box-shadow: 0 8px 40px rgba(0,0,0,0.4);">
+
+        <!-- Brand -->
+        <div style="text-align: center; margin-bottom: 28px;">
+          <div style="width: 48px; height: 48px; border-radius: 14px; background: rgba(90,200,250,0.15); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px;">
+            <span style="font-size: 22px; font-weight: 700; color: #5AC8FA;">A</span>
+          </div>
+          <div style="font-size: 22px; font-weight: 700; color: #f5f5f7;">Aether</div>
+          <div style="font-size: 12px; color: #636366; margin-top: 4px;">Agent Platform</div>
+        </div>
+
+        <!-- Form -->
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <div>
+            <div style="font-size: 11px; color: #98989d; margin-bottom: 6px;">用户名</div>
+            <input placeholder="admin" style="width: 100%; padding: 10px 12px; border-radius: 10px; border: 0.5px solid rgba(255,255,255,0.1); background: rgba(44,44,46,0.6); color: #f5f5f7; font-size: 14px; box-sizing: border-box; outline: none; font-family: inherit;">
+          </div>
+          <div>
+            <div style="font-size: 11px; color: #98989d; margin-bottom: 6px;">密码</div>
+            <input type="password" placeholder="••••••" style="width: 100%; padding: 10px 12px; border-radius: 10px; border: 0.5px solid rgba(255,255,255,0.1); background: rgba(44,44,46,0.6); color: #f5f5f7; font-size: 14px; box-sizing: border-box; outline: none; font-family: inherit;">
+          </div>
+          <button style="margin-top: 6px; width: 100%; padding: 11px; border-radius: 10px; border: none; background: #5AC8FA; color: #000; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit;">
+            登 录
+          </button>
+        </div>
+
+        <!-- Error state -->
+        <div style="margin-top: 14px; padding: 8px 12px; border-radius: 8px; background: rgba(255,69,58,0.08); color: #FF453A; font-size: 12px; text-align: center;">
+          用户名或密码错误
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; font-size: 13px;">
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">布局</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>全屏纯黑背景 #000</li>
+      <li>卡片居中，max-width: 360px</li>
+      <li>20px 大圆角卡片</li>
+      <li>30px 强毛玻璃效果</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">交互</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>输入框：半透明暗色 bg + 0.5px 边框</li>
+      <li>聚焦态：浅蓝边框 glow</li>
+      <li>按钮：浅蓝实心填充</li>
+      <li>错误：红色浅底提示条</li>
+      <li>加载态：按钮内 spinner</li>
+    </ul>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认登录页设计</h3></div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>需要调整</h3></div>
+  </div>
+</div>

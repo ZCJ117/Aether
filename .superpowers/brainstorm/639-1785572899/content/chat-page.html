@@ -1,0 +1,105 @@
+<h2>对话页面设计</h2>
+<p class="subtitle">Agent 选择器 + 消息流 + 输入栏。对话是最高频操作，需清爽聚焦。</p>
+
+<div class="mockup">
+  <div class="mockup-header">对话 Chat</div>
+  <div class="mockup-body">
+    <div style="display: flex; height: 450px; background: #000; border-radius: 16px; overflow: hidden; font-family: 'Microsoft YaHei', sans-serif;">
+
+      <!-- Session sidebar -->
+      <div style="width: 200px; background: rgba(28,28,30,0.6); border-right: 0.5px solid rgba(255,255,255,0.06); display: flex; flex-direction: column;">
+        <div style="padding: 14px; border-bottom: 0.5px solid rgba(255,255,255,0.06);">
+          <div style="font-size: 11px; color: #636366; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">会话</div>
+          <div style="background: #5AC8FA; border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 600; color: #000; text-align: center;">+ 新建对话</div>
+        </div>
+        <div style="flex:1; overflow-y: auto; padding: 8px;">
+          <div style="background: rgba(90,200,250,0.08); border-radius: 8px; padding: 8px 10px; margin-bottom: 4px; font-size: 12px; color: #f5f5f7;">API 接口设计讨论</div>
+          <div style="border-radius: 8px; padding: 8px 10px; margin-bottom: 4px; font-size: 12px; color: #98989d;">前端组件重构方案</div>
+          <div style="border-radius: 8px; padding: 8px 10px; margin-bottom: 4px; font-size: 12px; color: #98989d;">数据库优化建议</div>
+          <div style="border-radius: 8px; padding: 8px 10px; font-size: 12px; color: #98989d;">测试用例编写</div>
+        </div>
+      </div>
+
+      <!-- Main chat area -->
+      <div style="flex:1; display: flex; flex-direction: column;">
+        <!-- Chat header -->
+        <div style="padding: 14px 16px; border-bottom: 0.5px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 10px;">
+          <div style="font-size: 14px; font-weight: 600; color: #f5f5f7; flex:1;">API 接口设计讨论</div>
+          <div style="font-size: 11px; color: #636366; background: rgba(44,44,46,0.6); border-radius: 6px; padding: 3px 8px;">Agent: 开发助手</div>
+        </div>
+
+        <!-- Messages -->
+        <div style="flex:1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+          <!-- User message -->
+          <div style="display: flex; justify-content: flex-end;">
+            <div style="background: #5AC8FA; border-radius: 14px 14px 4px 14px; padding: 10px 14px; max-width: 70%; font-size: 13px; color: #000; line-height: 1.5;">
+              帮我设计一个 REST API 接口，支持分页和排序
+            </div>
+          </div>
+          <!-- Bot message -->
+          <div style="display: flex; gap: 8px;">
+            <div style="width: 28px; height: 28px; border-radius: 8px; background: rgba(90,200,250,0.12); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 13px; color: #5AC8FA;">A</div>
+            <div style="background: rgba(44,44,46,0.6); border-radius: 14px 14px 14px 4px; padding: 10px 14px; max-width: 70%; font-size: 13px; color: #f5f5f7; line-height: 1.5;">
+              好的，我来帮你设计。建议使用 <code style="background:rgba(90,200,250,0.1);padding:1px 4px;border-radius:3px;color:#5AC8FA;">GET /api/v1/items?page=1&size=20&sort=name</code>
+            </div>
+          </div>
+          <!-- User message -->
+          <div style="display: flex; justify-content: flex-end;">
+            <div style="background: #5AC8FA; border-radius: 14px 14px 4px 14px; padding: 10px 14px; max-width: 70%; font-size: 13px; color: #000; line-height: 1.5;">
+              好的谢谢
+            </div>
+          </div>
+        </div>
+
+        <!-- Input bar -->
+        <div style="padding: 12px 16px; border-top: 0.5px solid rgba(255,255,255,0.06);">
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input placeholder="输入消息..." style="flex:1; padding: 10px 14px; border-radius: 10px; border: 0.5px solid rgba(255,255,255,0.08); background: rgba(44,44,46,0.5); color: #f5f5f7; font-size: 13px; outline: none; font-family: inherit;">
+            <button style="width: 38px; height: 38px; border-radius: 10px; border: none; background: #5AC8FA; color: #000; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;">↑</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 16px; font-size: 13px;">
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">会话列表</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>左侧 200px 窄栏</li>
+      <li>浅蓝实心"新建"按钮</li>
+      <li>选中态浅蓝底色</li>
+      <li>其他灰色半透明</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">消息气泡</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>用户：浅蓝实心 右对齐</li>
+      <li>Agent：暗灰半透明 左对齐</li>
+      <li>14px 大圆角（方向性）</li>
+      <li>代码块内嵌高亮</li>
+    </ul>
+  </div>
+  <div style="background: rgba(44,44,46,0.6); border-radius: 12px; padding: 14px;">
+    <strong style="color: #f5f5f7;">输入栏</strong>
+    <ul style="margin: 6px 0 0; padding-left: 16px; color: #98989d;">
+      <li>底部固定</li>
+      <li>暗色半透明输入框</li>
+      <li>浅蓝圆形发送按钮</li>
+      <li>0.5px 顶部分隔线</li>
+    </ul>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认对话页设计</h3></div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>需要调整</h3></div>
+  </div>
+</div>

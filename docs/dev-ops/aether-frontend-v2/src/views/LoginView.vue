@@ -15,13 +15,9 @@ const loading = ref(false)
 async function handleLogin() {
   error.value = ''
   loading.value = true
-
-  // Small delay for UX feedback
   await new Promise((r) => setTimeout(r, 300))
-
   const result = auth.login(username.value, password.value)
   loading.value = false
-
   if (result.ok) {
     const redirect = (route.query.redirect as string) || '/app/dashboard'
     router.push(redirect)
@@ -32,42 +28,42 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="login-container">
+  <div class="login-page">
     <div class="login-card">
-      <div class="login-header">
-        <h1 class="login-brand">Aether</h1>
-        <p class="login-subtitle">Production-grade Multi-Agent AI Runtime</p>
+      <div class="brand">
+        <div class="brand-icon">A</div>
+        <h1 class="brand-name">Aether</h1>
+        <p class="brand-desc">Agent Platform</p>
       </div>
 
       <form class="login-form" @submit.prevent="handleLogin">
-        <div class="form-group">
-          <label for="username">用户名</label>
+        <div class="field">
+          <label class="field-label">用户名</label>
           <input
-            id="username"
             v-model="username"
             type="text"
-            placeholder="请输入用户名"
+            placeholder="admin"
             autocomplete="username"
             :disabled="loading"
+            class="field-input"
           />
         </div>
-
-        <div class="form-group">
-          <label for="password">密码</label>
+        <div class="field">
+          <label class="field-label">密码</label>
           <input
-            id="password"
             v-model="password"
             type="password"
-            placeholder="请输入密码"
+            placeholder="••••••"
             autocomplete="current-password"
             :disabled="loading"
+            class="field-input"
           />
         </div>
 
-        <div v-if="error" class="login-error">{{ error }}</div>
+        <div v-if="error" class="error-msg">{{ error }}</div>
 
-        <button type="submit" class="login-btn" :disabled="loading || !username || !password">
-          {{ loading ? '登录中...' : '登录' }}
+        <button type="submit" class="submit-btn" :disabled="loading || !username || !password">
+          {{ loading ? '登录中...' : '登 录' }}
         </button>
       </form>
     </div>
@@ -75,105 +71,125 @@ async function handleLogin() {
 </template>
 
 <style scoped>
-.login-container {
+.login-page {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: var(--bg-primary, #0f0f1a);
+  background: #000;
   padding: 1rem;
 }
 
 .login-card {
   width: 100%;
-  max-width: 400px;
-  background: var(--bg-secondary, #1a1a2e);
-  border: 1px solid var(--border-color, #2a2a4a);
-  border-radius: 12px;
-  padding: 2.5rem 2rem;
+  max-width: 360px;
+  background: rgba(28, 28, 30, 0.85);
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  border-radius: 20px;
+  padding: 36px 32px;
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
 }
 
-.login-header {
+.brand {
   text-align: center;
-  margin-bottom: 2rem;
+  margin-bottom: 28px;
 }
 
-.login-brand {
-  font-size: 2rem;
+.brand-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: rgba(90, 200, 250, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px;
+  font-size: 22px;
   font-weight: 700;
-  color: var(--accent-color, #6366f1);
+  color: #5AC8FA;
+}
+
+.brand-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: #F5F5F7;
   margin: 0;
 }
 
-.login-subtitle {
-  font-size: 0.875rem;
-  color: var(--text-secondary, #888);
-  margin: 0.5rem 0 0;
+.brand-desc {
+  font-size: 12px;
+  color: #636366;
+  margin: 4px 0 0;
 }
 
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 14px;
 }
 
-.form-group {
+.field {
   display: flex;
   flex-direction: column;
-  gap: 0.375rem;
+  gap: 6px;
 }
 
-.form-group label {
-  font-size: 0.875rem;
-  color: var(--text-secondary, #aaa);
+.field-label {
+  font-size: 11px;
+  color: #98989D;
 }
 
-.form-group input {
-  padding: 0.625rem 0.75rem;
-  border: 1px solid var(--border-color, #2a2a4a);
-  border-radius: 8px;
-  background: var(--bg-primary, #0f0f1a);
-  color: var(--text-primary, #eee);
-  font-size: 0.9375rem;
+.field-input {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  background: rgba(44, 44, 46, 0.6);
+  color: #F5F5F7;
+  font-size: 14px;
   outline: none;
-  transition: border-color 0.2s;
+  font-family: inherit;
 }
 
-.form-group input:focus {
-  border-color: var(--accent-color, #6366f1);
+.field-input:focus {
+  border-color: #5AC8FA;
 }
 
-.form-group input:disabled {
-  opacity: 0.6;
+.field-input:disabled {
+  opacity: 0.5;
 }
 
-.login-error {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: #ef4444;
-  padding: 0.5rem 0.75rem;
+.error-msg {
+  padding: 8px 12px;
   border-radius: 8px;
-  font-size: 0.875rem;
+  background: rgba(255, 69, 58, 0.08);
+  color: #FF453A;
+  font-size: 12px;
+  text-align: center;
 }
 
-.login-btn {
-  padding: 0.75rem;
+.submit-btn {
+  margin-top: 6px;
+  width: 100%;
+  padding: 11px;
+  border-radius: 10px;
   border: none;
-  border-radius: 8px;
-  background: var(--accent-color, #6366f1);
-  color: #fff;
-  font-size: 1rem;
+  background: #5AC8FA;
+  color: #000;
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.2s;
+  font-family: inherit;
+  transition: opacity 0.15s;
 }
 
-.login-btn:hover {
-  opacity: 0.9;
+.submit-btn:hover {
+  opacity: 0.88;
 }
 
-.login-btn:disabled {
-  opacity: 0.5;
+.submit-btn:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 </style>

@@ -5,36 +5,29 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: {
-          DEFAULT: '#DEDBC8',
-          50: '#F5F4EE',
-          100: '#EBE9DD',
-          200: '#DEDBC8',
-          300: '#C4C0A3',
-          400: '#A9A47E',
-          500: '#8E8860',
-          600: '#716C4C',
-          700: '#555139',
-          800: '#393627',
-          900: '#1C1B14',
-        },
         surface: {
           ink: '#000000',
-          base: '#0a0a0a',
-          card: '#0f0f0f',
-          raised: '#141414',
-          overlay: '#1a1a1a',
+          base: '#000000',
+          card: '#1C1C1E',
+          raised: '#2C2C2E',
+          overlay: '#3A3A3C',
         },
         accent: {
-          green: '#4ADE80',
-          yellow: '#FBBF24',
-          red: '#F87171',
-          blue: '#60A5FA',
-          purple: '#A78BFA',
+          DEFAULT: '#5AC8FA',
+          green: '#30D158',
+          yellow: '#FFD60A',
+          orange: '#FF9F0A',
+          red: '#FF453A',
         },
       },
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        sans: [
+          'Microsoft YaHei',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Segoe UI',
+          'sans-serif',
+        ],
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       fontSize: {

@@ -1,41 +1,79 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import type { MemoryRecord, MemoryTreeNode } from '@/types/memory'
+import { ref } from 'vue'
+import type { LongTermMemoryEntry } from '@/types/memory'
+
+const STORAGE_PREFIX = 'agent_long_term_memory_'
+
+function generateId(): string {
+  return `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
 
 export const useMemoryStore = defineStore('memory', () => {
-  const memories = ref<MemoryRecord[]>([])
-  const selectedMemory = ref<MemoryRecord | null>(null)
-  const isLoading = ref(false)
-  const searchQuery = ref('')
+  const memories = ref<LongTermMemoryEntry[]>([])
+  const currentAgentId = ref<string>('')
 
-  const workingMemories = computed(() => memories.value.filter((m) => m.scope === 'working'))
-  const shortTermMemories = computed(() => memories.value.filter((m) => m.scope === 'short_term'))
-  const longTermMemories = computed(() => memories.value.filter((m) => m.scope === 'long_term'))
-
-  const memoryTree = computed<MemoryTreeNode[]>(() => [
-    { id: 'working', label: '工作记忆', children: workingMemories.value.map(toTreeNode) },
-    { id: 'short_term', label: '短期记忆', children: shortTermMemories.value.map(toTreeNode) },
-    { id: 'long_term', label: '长期记忆', children: longTermMemories.value.map(toTreeNode) },
-  ])
-
-  async function loadMemories(): Promise<void> {
-    isLoading.value = true
-    try {
-      memories.value = [
-        { id: 'm1', title: '用户偏好: 简洁回复', content: '用户 prefer concise responses', scope: 'short_term', type: 'semantic', path: '/preferences', createdAt: Date.now(), updatedAt: Date.now() },
-        { id: 'm2', title: '上次对话摘要', content: '讨论了旅游规划功能', scope: 'short_term', type: 'episodic', path: '/history', createdAt: Date.now(), updatedAt: Date.now() },
-        { id: 'm3', title: '代码规范文档', content: '使用 ESLint + Prettier', scope: 'long_term', type: 'procedural', path: '/knowledge/coding', createdAt: Date.now(), updatedAt: Date.now() },
-      ]
-    } finally { isLoading.value = false }
+  function getStorageKey(agentId: string): string {
+    return `${STORAGE_PREFIX}${agentId}`
   }
 
-  function toTreeNode(record: MemoryRecord): MemoryTreeNode {
-    return { id: record.id, label: record.title, record }
+  /** 加载指定 Agent 的长期记忆，切换 Agent 时调用 */
+  function loadMemories(agentId: string): void {
+    currentAgentId.value = agentId
+    if (!agentId) {
+      memories.value = []
+      return
+    }
+    try {
+      const raw = localStorage.getItem(getStorageKey(agentId))
+      memories.value = raw ? JSON.parse(raw) : []
+    } catch {
+      memories.value = []
+    }
+  }
+
+  function persist(): void {
+    if (!currentAgentId.value) return
+    localStorage.setItem(
+      getStorageKey(currentAgentId.value),
+      JSON.stringify(memories.value)
+    )
+  }
+
+  function addMemory(content: string): LongTermMemoryEntry {
+    const entry: LongTermMemoryEntry = {
+      id: generateId(),
+      content,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    memories.value.push(entry)
+    persist()
+    return entry
+  }
+
+  function updateMemory(id: string, content: string): void {
+    const idx = memories.value.findIndex((m) => m.id === id)
+    if (idx !== -1) {
+      memories.value[idx] = {
+        ...memories.value[idx],
+        content,
+        updatedAt: Date.now(),
+      }
+      persist()
+    }
+  }
+
+  function deleteMemory(id: string): void {
+    memories.value = memories.value.filter((m) => m.id !== id)
+    persist()
   }
 
   return {
-    memories, selectedMemory, isLoading, searchQuery,
-    workingMemories, shortTermMemories, longTermMemories, memoryTree,
+    memories,
+    currentAgentId,
     loadMemories,
+    addMemory,
+    updateMemory,
+    deleteMemory,
   }
 })

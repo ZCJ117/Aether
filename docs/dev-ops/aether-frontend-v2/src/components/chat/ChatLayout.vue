@@ -1,27 +1,28 @@
 <script setup lang="ts">
-// ============================================
-// ChatLayout — Three-part flex layout
-// ============================================
 </script>
 
 <template>
-  <div class="flex h-full bg-[#0a0a0a] text-[#DEDBC8]">
-    <!-- Left sidebar slot -->
-    <aside class="w-64 flex-shrink-0 border-r border-white/5 bg-[#0f0f0f]">
+  <div class="flex h-full">
+    <aside
+      class="w-[220px] flex-shrink-0 flex flex-col border-r overflow-hidden"
+      style="background: rgba(28,28,30,0.6); border-color: rgba(255,255,255,0.06);"
+    >
       <slot name="sidebar" />
     </aside>
 
-    <!-- Right area: header + content -->
-    <div class="flex flex-1 flex-col min-w-0">
-      <!-- Header slot -->
-      <header class="flex-shrink-0 border-b border-white/5 bg-[#0f0f0f] px-4 py-3">
+    <div class="flex-1 flex flex-col min-w-0">
+      <div
+        class="h-11 flex-shrink-0 flex items-center px-4 border-b"
+        style="background: rgba(28,28,30,0.5); border-color: rgba(255,255,255,0.06);"
+      >
         <slot name="header" />
-      </header>
-
-      <!-- Content slot -->
-      <main class="flex-1 min-h-0 flex flex-col">
+      </div>
+      <div class="flex-1 overflow-y-auto">
         <slot />
-      </main>
+      </div>
+      <div class="flex-shrink-0">
+        <slot name="footer" />
+      </div>
     </div>
   </div>
 </template>

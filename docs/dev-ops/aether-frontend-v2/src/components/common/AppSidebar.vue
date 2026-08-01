@@ -8,12 +8,8 @@ import {
   Bot,
   Cpu,
   Wrench,
-  Brain,
-  Workflow,
   Settings,
 } from 'lucide-vue-next'
-import ThemeToggle from './ThemeToggle.vue'
-import LocaleToggle from './LocaleToggle.vue'
 
 const ui = useUiStore()
 const route = useRoute()
@@ -30,8 +26,6 @@ const navItems: NavItem[] = [
   { to: '/app/agents', label: '智能体', icon: Bot },
   { to: '/app/models', label: '模型', icon: Cpu },
   { to: '/app/skills', label: '技能', icon: Wrench },
-  { to: '/app/memory', label: '记忆', icon: Brain },
-  { to: '/app/workflows', label: '工作流', icon: Workflow },
   { to: '/app/settings', label: '设置', icon: Settings },
 ]
 
@@ -47,17 +41,23 @@ function isActive(item: NavItem): boolean {
 
 <template>
   <aside
-    :class="ui.sidebarCollapsed ? 'w-[60px]' : 'w-[280px]'"
-    class="flex flex-col border-r border-white/5 bg-surface-card transition-all duration-300 flex-shrink-0 min-h-screen"
+    :class="ui.sidebarCollapsed ? 'w-[64px]' : 'w-[260px]'"
+    class="flex flex-col flex-shrink-0 min-h-screen transition-all duration-300"
+    style="background: rgba(28,28,30,0.85); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); border-right: 0.5px solid rgba(255,255,255,0.06);"
   >
-    <!-- Logo / Brand -->
-    <div class="h-14 flex items-center border-b border-white/5 px-4 flex-shrink-0">
+    <!-- Logo -->
+    <div class="h-11 flex items-center px-4 flex-shrink-0">
       <div class="flex items-center gap-3">
-        <div class="w-7 h-7 rounded-lg bg-accent-blue/20 flex items-center justify-center flex-shrink-0">
-          <span class="text-accent-blue text-xs font-bold">A</span>
+        <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+             style="background: rgba(90,200,250,0.12);">
+          <span class="text-xs font-bold" style="color: #5AC8FA;">A</span>
         </div>
         <Transition name="fade">
-          <span v-if="!ui.sidebarCollapsed" class="text-primary font-semibold text-base whitespace-nowrap">
+          <span
+            v-if="!ui.sidebarCollapsed"
+            class="font-semibold text-[15px] whitespace-nowrap"
+            style="color: #F5F5F7;"
+          >
             Aether
           </span>
         </Transition>
@@ -65,32 +65,33 @@ function isActive(item: NavItem): boolean {
     </div>
 
     <!-- Navigation -->
-    <nav class="flex-1 py-4 px-2 overflow-y-auto">
-      <ul class="flex flex-col gap-1">
+    <nav class="flex-1 py-3 px-2 overflow-y-auto">
+      <ul class="flex flex-col gap-0.5">
         <li v-for="item in navItems" :key="item.to">
           <router-link
             :to="item.to"
             :class="[
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors group relative',
+              'flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors group relative text-[13px]',
               isActive(item)
-                ? 'bg-white/5 text-primary border-l-2 border-l-white'
-                : 'text-secondary hover:bg-white/[0.03] hover:text-primary border-l-2 border-l-transparent',
+                ? 'font-medium'
+                : 'font-normal',
               ui.sidebarCollapsed ? 'justify-center' : ''
             ]"
+            :style="isActive(item)
+              ? 'background: rgba(90,200,250,0.08); color: #F5F5F7; border-left: 3px solid #5AC8FA;'
+              : 'color: #98989D; border-left: 3px solid transparent;'"
           >
-            <component :is="item.icon" class="w-5 h-5 flex-shrink-0" />
+            <component :is="item.icon" class="w-[18px] h-[18px] flex-shrink-0" />
             <Transition name="fade">
-              <span v-if="!ui.sidebarCollapsed" class="text-sm font-medium whitespace-nowrap">
+              <span v-if="!ui.sidebarCollapsed" class="whitespace-nowrap">
                 {{ item.label }}
               </span>
             </Transition>
 
-            <!-- Tooltip when collapsed -->
             <div
               v-if="ui.sidebarCollapsed"
-              class="absolute left-full ml-2 px-2 py-1 bg-surface-card border border-white/5 rounded
-                     text-xs text-primary whitespace-nowrap opacity-0 group-hover:opacity-100
-                     pointer-events-none z-50 transition-opacity"
+              class="absolute left-full ml-2 px-2 py-1 rounded text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none z-50 transition-opacity"
+              style="background: rgba(44,44,46,0.95); color: #F5F5F7;"
             >
               {{ item.label }}
             </div>
@@ -98,17 +99,6 @@ function isActive(item: NavItem): boolean {
         </li>
       </ul>
     </nav>
-
-    <!-- Bottom toggles -->
-    <div class="border-t border-white/5 px-4 py-3 flex-shrink-0">
-      <div
-        :class="ui.sidebarCollapsed ? 'flex-col' : 'flex-row'"
-        class="flex items-center gap-2"
-      >
-        <ThemeToggle />
-        <LocaleToggle />
-      </div>
-    </div>
   </aside>
 </template>
 
