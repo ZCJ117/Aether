@@ -4,3 +4,11 @@ spring:
   profiles:
 #   NOTE 2.在项目启动时优先加载application.yml, 在第六行激活 dev 因此它会加载 application-dev.yml 作为补充配置
     active: dev
+
+# ====== P0: Security Configuration ======
+aether:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:aether-dev-jwt-secret-key-min-32-chars!!}
+      access-token-expiration: 900000
+      refresh-token-expiration: 604800000

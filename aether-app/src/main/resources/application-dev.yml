@@ -21,7 +21,7 @@ spring:
       # NOTE 3.在加载application-dev.yml之后，上面又导入agents.yml配置文件
   datasource:
     username: postgres
-    password: 123456
+    password: ${DB_PASSWORD:123456}
     url: jdbc:postgresql://127.0.0.1:5432/aether
     driver-class-name: org.postgresql.Driver
     hikari:
@@ -45,6 +45,10 @@ aether:
   memory:
     pgvector:
       enabled: true
+  # ====== P0: JWT Security Configuration ======
+  security:
+    jwt:
+      secret: ${JWT_SECRET:aether-dev-jwt-secret-key-min-32-chars!!}
 
 # MyBatis 配置【如需使用记得打开】
 #mybatis:
