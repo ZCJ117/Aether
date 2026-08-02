@@ -56,7 +56,7 @@ public class ChatService implements IChatService {
     @Resource
     private GraphExecutor graphExecutor;
 
-    @Resource
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
     private MemoryStore memoryStore;
 
     /**
@@ -96,18 +96,18 @@ public class ChatService implements IChatService {
 
 
     @Override
-    public List<AiAgentConfigTableVO.Agent> queryAiAgentConfigList() {
+    public List<AiAgentConfigTableVO> queryAiAgentConfigList() {
         Map<String, AiAgentConfigTableVO> tables = aiAgentAutoConfigProperties.getTables();
 
-        List<AiAgentConfigTableVO.Agent> agentList = new ArrayList<>();
+        List<AiAgentConfigTableVO> list = new ArrayList<>();
         if (null != tables) {
             for (AiAgentConfigTableVO vo : tables.values()) {
                 if (null != vo.getAgent()) {
-                    agentList.add(vo.getAgent());
+                    list.add(vo);
                 }
             }
         }
-        return agentList;
+        return list;
     }
 
     @Override
@@ -164,7 +164,8 @@ public class ChatService implements IChatService {
 
         // 以配置中的智能体为准：有会话则显示计数，无会话则显示 0
         java.util.List<java.util.Map<String, Object>> agentStats = new java.util.ArrayList<>();
-        for (var agent : agentList) {
+        for (var vo : agentList) {
+            var agent = vo.getAgent();
             int count = sessionsByAgent.getOrDefault(agent.getAgentId(), 0);
             agentStats.add(java.util.Map.of(
                     "agentId", agent.getAgentId(),
@@ -496,6 +497,71 @@ public class ChatService implements IChatService {
     }
 
     /**
+     * 获取所有已配置的模型列表（从 YAML agent 配置中收集）。
+     */
+    public java.util.List<java.util.Map<String, String>> getConfiguredModels() {
+        java.util.Map<String, java.util.Map<String, String>> unique = new java.util.LinkedHashMap<>();
+        var tables = aiAgentAutoConfigProperties.getTables();
+        if (tables == null) return List.of();
+
+        for (var entry : tables.entrySet()) {
+            var vo = entry.getValue();
+            if (vo.getModule() == null || vo.getModule().getChatModel() == null) continue;
+            String modelId = vo.getModule().getChatModel().getModel();
+            if (modelId == null || modelId.isBlank()) continue;
+            if (unique.containsKey(modelId)) continue;
+
+            // 从 modelId 推断 provider
+            String providerId = inferProvider(modelId);
+            unique.put(modelId, java.util.Map.of(
+                "id", modelId.toLowerCase().replaceAll("[^a-z0-9-]", "-"),
+                "providerId", providerId,
+                "modelId", modelId,
+                "status", "ACTIVE"));
+        }
+        return new java.util.ArrayList<>(unique.values());
+    }
+
+    /** 从 modelId 推断 provider 名称 */
+    private String inferProvider(String modelId) {
+        if (modelId == null) return "unknown";
+        String lower = modelId.toLowerCase();
+        if (lower.contains("deepseek")) return "deepseek";
+        if (lower.contains("gpt") || lower.contains("o1") || lower.contains("o3")) return "openai";
+        if (lower.contains("claude")) return "anthropic";
+        if (lower.contains("qwen")) return "dashscope";
+        return "openai";
+    }
+
+    /**
+     * 从会话的 stateJson 中提取消息列表，供前端恢复历史对话。
+     */
+    public java.util.List<java.util.Map<String, String>> getSessionMessages(String sessionId) {
+        if (sessionRepository == null) return List.of();
+        var opt = sessionRepository.findBySessionId(sessionId);
+        if (opt.isEmpty() || opt.get().getStateJson() == null) return List.of();
+
+        try {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> state = objectMapper.readValue(opt.get().getStateJson(), java.util.Map.class);
+            @SuppressWarnings("unchecked")
+            java.util.List<java.util.Map<String, Object>> messages =
+                    (java.util.List<java.util.Map<String, Object>>) state.get("messages");
+            if (messages == null) return List.of();
+
+            return messages.stream()
+                    .filter(m -> "user".equals(m.get("role")) || "assistant".equals(m.get("role")))
+                    .map(m -> java.util.Map.of(
+                            "role", String.valueOf(m.getOrDefault("role", "")),
+                            "content", String.valueOf(m.getOrDefault("content", ""))))
+                    .toList();
+        } catch (Exception e) {
+            log.warn("提取会话消息失败: sessionId={}", sessionId, e);
+            return List.of();
+        }
+    }
+
+    /**
      * P1-4: 记忆注入（优先使用 MemoryFacade 语义搜索，回退文件存储关键词匹配）。
      */
     private String injectMemory(String instruction, String userMessage, String agentId) {
@@ -536,7 +602,8 @@ public class ChatService implements IChatService {
             }
         }
 
-        // 回退：文件存储关键词匹配
+        // 回退：文件存储关键词匹配（仅当 MemoryStore 可用时）
+        if (memoryStore == null) return instruction;
         String memoryPrompt = memoryStore.loadMemoryPrompt(userMessage);
         if (memoryPrompt == null || memoryPrompt.isEmpty()) return instruction;
         if (instruction == null) return memoryPrompt;

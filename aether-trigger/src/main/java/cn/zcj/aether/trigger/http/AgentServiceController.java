@@ -2,6 +2,7 @@ package cn.zcj.aether.trigger.http;
 
 import cn.zcj.aether.api.IAgentService;
 import cn.zcj.aether.api.dto.*;
+import cn.zcj.aether.api.dto.SessionMessageDTO;
 import cn.zcj.aether.api.response.Response;
 import cn.zcj.aether.domain.agent.model.valobj.AiAgentConfigTableVO;
 import cn.zcj.aether.domain.agent.service.IChatService;
@@ -60,13 +61,17 @@ public class AgentServiceController implements IAgentService {
         try {
             log.info("查询智能体配置列表");
 
-            List<AiAgentConfigTableVO.Agent> agentConfigs = chatService.queryAiAgentConfigList();
+            List<AiAgentConfigTableVO> configs = chatService.queryAiAgentConfigList();
 
-            List<AiAgentConfigResponseDTO> responseDTOS = agentConfigs.stream().map(agentConfig -> {
+            List<AiAgentConfigResponseDTO> responseDTOS = configs.stream().map(config -> {
                 AiAgentConfigResponseDTO responseDTO = new AiAgentConfigResponseDTO();
-                responseDTO.setAgentId(agentConfig.getAgentId());
-                responseDTO.setAgentName(agentConfig.getAgentName());
-                responseDTO.setAgentDesc(agentConfig.getAgentDesc());
+                responseDTO.setAgentId(config.getAgent().getAgentId());
+                responseDTO.setAgentName(config.getAgent().getAgentName());
+                responseDTO.setAgentDesc(config.getAgent().getAgentDesc());
+                // 从 YAML module.chatModel.model 提取模型名
+                if (config.getModule() != null && config.getModule().getChatModel() != null) {
+                    responseDTO.setModelRef(config.getModule().getChatModel().getModel());
+                }
                 return responseDTO;
             }).collect(java.util.stream.Collectors.toList());
 
@@ -213,6 +218,58 @@ public class AgentServiceController implements IAgentService {
         } catch (Exception e) {
             log.error("删除会话失败 sessionId={}", sessionId, e);
             return Response.<Void>builder()
+                    .code(ResponseCode.UN_ERROR.getCode())
+                    .info(ResponseCode.UN_ERROR.getInfo())
+                    .build();
+        }
+    }
+
+    @RequestMapping(value = "session_messages", method = RequestMethod.GET)
+    public Response<List<SessionMessageDTO>> getSessionMessages(@RequestParam("sessionId") String sessionId) {
+        try {
+            log.info("查询会话消息 sessionId={}", sessionId);
+            var rawMessages = chatServiceImpl.getSessionMessages(sessionId);
+            var dtos = rawMessages.stream()
+                    .map(m -> SessionMessageDTO.builder()
+                            .role(m.get("role"))
+                            .content(m.get("content"))
+                            .build())
+                    .toList();
+            return Response.<List<SessionMessageDTO>>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info(ResponseCode.SUCCESS.getInfo())
+                    .data(dtos)
+                    .build();
+        } catch (Exception e) {
+            log.error("查询会话消息失败 sessionId={}", sessionId, e);
+            return Response.<List<SessionMessageDTO>>builder()
+                    .code(ResponseCode.UN_ERROR.getCode())
+                    .info(ResponseCode.UN_ERROR.getInfo())
+                    .build();
+        }
+    }
+
+    @RequestMapping(value = "models", method = RequestMethod.GET)
+    public Response<List<ModelConfigDTO>> getModels() {
+        try {
+            log.info("查询模型列表");
+            var raw = chatServiceImpl.getConfiguredModels();
+            var dtos = raw.stream()
+                    .map(m -> ModelConfigDTO.builder()
+                            .id(m.get("id"))
+                            .providerId(m.get("providerId"))
+                            .modelId(m.get("modelId"))
+                            .status(m.get("status"))
+                            .build())
+                    .toList();
+            return Response.<List<ModelConfigDTO>>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info(ResponseCode.SUCCESS.getInfo())
+                    .data(dtos)
+                    .build();
+        } catch (Exception e) {
+            log.error("查询模型列表失败", e);
+            return Response.<List<ModelConfigDTO>>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info(ResponseCode.UN_ERROR.getInfo())
                     .build();

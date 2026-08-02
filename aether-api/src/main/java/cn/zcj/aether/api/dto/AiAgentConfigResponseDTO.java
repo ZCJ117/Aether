@@ -26,4 +26,9 @@ public class AiAgentConfigResponseDTO {
      */
     private String agentDesc;
 
+    /**
+     * 模型引用
+     */
+    private String modelRef;
+
 }

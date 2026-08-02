@@ -14,6 +14,16 @@ const sessionStore = useSessionStore()
 const inputText = ref('')
 const showPermissionDialog = computed(() => chatStore.hasActivePermissionRequest)
 
+const currentSessionTitle = computed(() => {
+  const sid = sessionStore.currentSessionId
+  if (!sid) return '新对话'
+  for (const sessions of Object.values(sessionStore.sessionsByAgent)) {
+    const found = sessions.find((s) => s.sessionId === sid)
+    if (found) return found.title
+  }
+  return '新对话'
+})
+
 onMounted(async () => {
   await agentStore.loadAgents()
   if (agentStore.selectedAgentId) {
@@ -33,8 +43,15 @@ watch(
 async function handleSend() {
   const text = inputText.value.trim()
   if (!text || !agentStore.selectedAgentId || chatStore.isSending) return
+
+  // 如果还没有会话，先创建一个
+  if (!sessionStore.currentSessionId) {
+    await sessionStore.newSession(agentStore.selectedAgentId, authStore.userId)
+    chatStore.switchToSession(sessionStore.currentSessionId)
+  }
+
   inputText.value = ''
-  await chatStore.sendMessage(text, agentStore.selectedAgentId, authStore.apiToken)
+  await chatStore.sendMessage(text, agentStore.selectedAgentId, authStore.userId)
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -48,13 +65,20 @@ function handleKeydown(e: KeyboardEvent) {
 <template>
   <ChatLayout>
     <template #sidebar>
-      <SessionSidebar />
+      <SessionSidebar
+        @new-chat="async (agentId: string) => {
+          await sessionStore.newSession(agentId, authStore.userId)
+          agentStore.selectAgent(agentId)
+          chatStore.switchToSession(sessionStore.currentSessionId)
+        }"
+        @select-session="(sid: string, _agentId: string) => chatStore.switchToSession(sid)"
+      />
     </template>
 
     <template #header>
       <div class="chat-topbar">
         <span class="chat-session-name">
-          {{ chatStore.sessionId || '新对话' }}
+          {{ currentSessionTitle }}
         </span>
         <span v-if="chatStore.turnCount > 0" class="chat-turn-badge">
           {{ chatStore.turnCount }} 轮

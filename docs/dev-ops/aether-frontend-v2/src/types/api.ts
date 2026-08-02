@@ -45,6 +45,7 @@ export interface AiAgentConfigDTO {
   agentId: string
   agentName: string
   agentDesc: string
+  modelRef?: string
 }
 
 // ============================================

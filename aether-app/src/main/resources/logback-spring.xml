@@ -19,7 +19,7 @@
             <level>info</level>
         </filter>
         <encoder>
-            <pattern>%d{yy-MM-dd.HH:mm:ss.SSS} [%-16t] %-5p %-22c{0}%X{ServiceId} -%X{trace-id} %m%n</pattern>
+            <pattern>%clr(%d{yy-MM-dd.HH:mm:ss.SSS}){faint} %clr([%-16t]){faint} %clr(%-5p) %clr(%-22c{0}){cyan}%X{ServiceId} -%X{trace-id} %m%n%wEx</pattern>
             <charset>UTF-8</charset>
         </encoder>
     </appender>

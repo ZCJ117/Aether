@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { sendMessageStream, confirmToolCalls } from '@/api/chat'
+import { fetchSessionMessages } from '@/api/session'
 import type {
   TextDeltaEvent, ToolCallEvent, ToolResultEvent, CompactBoundaryEvent,
   TurnCompleteEvent, TokenBudgetEvent, CheckpointEvent, InternalLlmCallEvent,
@@ -28,15 +29,47 @@ export const useChatStore = defineStore('chat', () => {
       sessionMessages.value[sessionId.value] = [...messages.value]
     }
     sessionId.value = sid
-    // 加载目标会话消息（如果有缓存）
+    // 加载目标会话消息（优先缓存，否则从后端加载）
     const key = sid || '__default__'
-    messages.value = sessionMessages.value[key] ? [...sessionMessages.value[key]] : []
+    if (sessionMessages.value[key] && sessionMessages.value[key].length > 0) {
+      messages.value = [...sessionMessages.value[key]]
+    } else {
+      messages.value = []
+      if (sid) {
+        loadHistoryFromBackend(sid)
+      }
+    }
     activeToolCalls.value.clear()
     permissionEvent.value = null
     compactBoundaries.value = []
     llmCallLogs.value = []
     turnCount.value = 0
     tokenBudget.value = { budgetUsed: 0, budgetTotal: 0, budgetPercent: 0 }
+  }
+
+  async function loadHistoryFromBackend(sid: string): Promise<void> {
+    try {
+      const raw = await fetchSessionMessages(sid)
+      if (!raw || raw.length === 0) return
+      const loaded: ChatMessage[] = raw
+        .filter((m) => m.content && m.content.trim())
+        .map((m) => ({
+          id: crypto.randomUUID(),
+          side: m.role === 'user' ? 'user' : 'agent',
+          text: m.content,
+          meta: {},
+          streaming: false,
+          timestamp: Date.now(),
+        }))
+      if (loaded.length > 0) {
+        sessionMessages.value[sid] = loaded
+        if (sessionId.value === sid) {
+          messages.value = loaded
+        }
+      }
+    } catch {
+      // 后端不可用时静默失败，使用本地缓存
+    }
   }
 
   // ---- 流状态 ----
@@ -113,7 +146,6 @@ export const useChatStore = defineStore('chat', () => {
 
   // ---- 核心: SSE 流式对话 ----
   async function sendMessage(message: string, agentId: string, userId: string): Promise<void> {
-    clearMessages()
     isSending.value = true
     setStatus('思考中...', 'info')
     addMessage('user', message)            // 用户消息加入消息列表

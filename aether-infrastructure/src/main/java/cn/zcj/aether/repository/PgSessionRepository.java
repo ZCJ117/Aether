@@ -82,7 +82,12 @@ public class PgSessionRepository implements SessionRepository {
                     ? Timestamp.from(entity.getCreatedAt()) : Timestamp.from(now),
                 Timestamp.from(now)
             );
-            log.debug("会话已持久化: sessionId={}, status={}", entity.getSessionId(), entity.getStatus());
+            log.info("会话已持久化: sessionId={}, status={}, stateJsonLen={}",
+                entity.getSessionId(), entity.getStatus(),
+                entity.getStateJson() != null ? entity.getStateJson().length() : 0);
+        }).exceptionally(ex -> {
+            log.error("会话持久化失败: sessionId={}, status={}", entity.getSessionId(), entity.getStatus(), ex);
+            return null;
         });
     }
 

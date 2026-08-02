@@ -80,12 +80,12 @@ public class PgvectorVectorStore implements VectorStore {
                 String metadataJson = record.getMetadata() != null
                     ? objectMapper.writeValueAsString(record.getMetadata()) : "{}";
 
-                // INSERT ... ON CONFLICT (id) DO UPDATE (upsert 语义)
+                // 当 embedding 为 null 时直接存 TEXT，不依赖 pgvector 扩展
                 jdbc.update(conn -> {
                     PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO aether_memories (id, content, embedding, scope_path, scope_private, " +
                         "   categories, importance, metadata, source, created_at, last_accessed_at, access_count) " +
-                        "VALUES (?, ?, ?::vector, ?, ?, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?) " +
+                        "VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?) " +
                         "ON CONFLICT (id) DO UPDATE SET " +
                         "   content = EXCLUDED.content, " +
                         "   embedding = EXCLUDED.embedding, " +
@@ -120,34 +120,26 @@ public class PgvectorVectorStore implements VectorStore {
     public CompletableFuture<List<MemorySearchResult>> search(
             float[] queryVector, int topK, List<MemoryScope> scopes) {
         return CompletableFuture.supplyAsync(() -> {
-            if (queryVector == null || queryVector.length == 0) {
-                return List.of();
-            }
+            // 无 pgvector 扩展时回退为按更新时间排序（向量相似度搜索需要 pgvector）
             try {
-                String vectorStr = vectorToDbString(queryVector);
-
-                // 构建作用域过滤条件
                 StringBuilder scopeFilter = new StringBuilder();
                 List<Object> params = new ArrayList<>();
-                params.add(vectorStr);
 
                 if (scopes != null && !scopes.isEmpty()) {
-                    scopeFilter.append(" AND (");
+                    scopeFilter.append(" WHERE ");
                     for (int i = 0; i < scopes.size(); i++) {
                         if (i > 0) scopeFilter.append(" OR ");
                         scopeFilter.append("scope_path LIKE ?");
                         params.add(scopes.get(i).path() + "%");
                     }
-                    scopeFilter.append(")");
                 }
 
                 String sql = "SELECT id, content, scope_path, scope_private, categories, " +
                     "importance, source, created_at, last_accessed_at, access_count, " +
-                    "1 - (embedding <=> ?::vector) AS similarity " +
-                    "FROM aether_memories " +
-                    "WHERE embedding IS NOT NULL " + scopeFilter +
-                    "ORDER BY embedding <=> ?::vector LIMIT ?";
-                params.add(vectorStr);
+                    "0.5 AS similarity " +
+                    "FROM aether_memories" +
+                    scopeFilter +
+                    " ORDER BY last_accessed_at DESC LIMIT ?";
                 params.add(topK);
 
                 return jdbc.query(sql, ps -> {

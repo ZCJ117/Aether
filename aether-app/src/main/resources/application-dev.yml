@@ -34,11 +34,17 @@ spring:
       connection-timeout: 30000
       connection-test-query: SELECT 1
     type: com.zaxxer.hikari.HikariDataSource
+  sql:
+    init:
+      mode: always
 
 # ====== P0-4: 会话持久化（PostgreSQL） ======
 aether:
   session:
     persistence: true
+  memory:
+    pgvector:
+      enabled: true
 
 # MyBatis 配置【如需使用记得打开】
 #mybatis:

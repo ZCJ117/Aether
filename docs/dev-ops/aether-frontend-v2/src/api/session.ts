@@ -17,3 +17,12 @@ export function fetchSessions(agentId: string, userId: string): Promise<SessionI
 export function deleteSession(sessionId: string): Promise<void> {
   return api.delete<void>(`${BASE}/delete_session?sessionId=${encodeURIComponent(sessionId)}`)
 }
+
+export interface SessionMessageDTO {
+  role: string
+  content: string
+}
+
+export function fetchSessionMessages(sessionId: string): Promise<SessionMessageDTO[]> {
+  return api.get<SessionMessageDTO[]>(`${BASE}/session_messages`, { sessionId })
+}
