@@ -26,8 +26,18 @@ const currentSessionTitle = computed(() => {
 
 onMounted(async () => {
   await agentStore.loadAgents()
+  if (!agentStore.selectedAgentId && agentStore.agents.length > 0) {
+    agentStore.selectAgent(agentStore.agents[0].agentId)
+  }
   if (agentStore.selectedAgentId) {
     await sessionStore.loadSessions(agentStore.selectedAgentId, authStore.userId)
+    // 自动选中最近会话并加载历史消息
+    const sessions = sessionStore.filteredSessions(agentStore.selectedAgentId)
+    if (sessions.length > 0) {
+      const latest = sessions[0] // filteredSessions 默认按时间倒序
+      sessionStore.switchSession(latest.sessionId)
+      chatStore.switchToSession(latest.sessionId)
+    }
   }
 })
 
