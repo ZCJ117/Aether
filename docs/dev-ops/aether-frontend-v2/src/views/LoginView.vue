@@ -15,8 +15,7 @@ const loading = ref(false)
 async function handleLogin() {
   error.value = ''
   loading.value = true
-  await new Promise((r) => setTimeout(r, 300))
-  const result = auth.login(username.value, password.value)
+  const result = await auth.login(username.value, password.value)
   loading.value = false
   if (result.ok) {
     const redirect = (route.query.redirect as string) || '/app/dashboard'
