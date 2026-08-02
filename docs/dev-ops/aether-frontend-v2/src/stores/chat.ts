@@ -67,8 +67,8 @@ export const useChatStore = defineStore('chat', () => {
           messages.value = loaded
         }
       }
-    } catch {
-      // 后端不可用时静默失败，使用本地缓存
+    } catch (err) {
+      console.error('[chat] loadHistoryFromBackend 失败:', err)
     }
   }
 

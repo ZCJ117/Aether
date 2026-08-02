@@ -44,7 +44,12 @@ apiClient.interceptors.response.use(
   (response: AxiosResponse<ApiResponse<unknown>>) => {
     const { code, info, data } = response.data
     if (code !== ResponseCode.SUCCESS) {
+      console.error('[api] 业务错误:', { url: response.config.url, code, info })
       throw new ApiError(info, code, response.status, data)
+    }
+    if (import.meta.env.DEV) {
+      console.log('[api]', response.config.method?.toUpperCase(), response.config.url,
+        '→', Array.isArray(data) ? `${data.length} items` : typeof data)
     }
     return data as unknown as AxiosResponse
   },

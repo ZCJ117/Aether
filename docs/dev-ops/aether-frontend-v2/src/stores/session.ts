@@ -47,8 +47,8 @@ export const useSessionStore = defineStore('session', () => {
         createdAt: new Date(item.createdAt).getTime(),
         updatedAt: new Date(item.updatedAt).getTime(),
       }))
-    } catch {
-      // Silent fail
+    } catch (err) {
+      console.error('[session] loadSessions 失败:', err)
     } finally {
       isLoading.value = false
     }
