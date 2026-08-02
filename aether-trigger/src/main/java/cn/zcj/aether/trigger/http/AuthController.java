@@ -159,6 +159,7 @@ public class AuthController {
         response.setAccessToken(accessToken);
         response.setRefreshToken(refreshToken);
         response.setExpiresIn(jwtService.getAccessTokenExpirationMs() / 1000);
+        response.setUser(userInfo);
 
         return Response.<AuthResponseDTO>builder()
                 .code(ResponseCode.SUCCESS.getCode())
