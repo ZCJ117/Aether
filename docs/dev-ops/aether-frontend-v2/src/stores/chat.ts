@@ -24,6 +24,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function switchToSession(sid: string | null): void {
+    console.log('[chat] switchToSession:', sid)
     // 保存当前会话消息
     if (sessionId.value) {
       sessionMessages.value[sessionId.value] = [...messages.value]
@@ -36,6 +37,7 @@ export const useChatStore = defineStore('chat', () => {
     } else {
       messages.value = []
       if (sid) {
+        console.log('[chat] 从后端加载会话消息:', sid)
         loadHistoryFromBackend(sid)
       }
     }
@@ -48,8 +50,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function loadHistoryFromBackend(sid: string): Promise<void> {
+    console.log('[chat] loadHistoryFromBackend 开始:', sid)
     try {
       const raw = await fetchSessionMessages(sid)
+      console.log('[chat] session_messages 返回:', raw?.length, '条')
       if (!raw || raw.length === 0) return
       const loaded: ChatMessage[] = raw
         .filter((m) => m.content && m.content.trim())
@@ -61,10 +65,12 @@ export const useChatStore = defineStore('chat', () => {
           streaming: false,
           timestamp: Date.now(),
         }))
+      console.log('[chat] 过滤后消息:', loaded.length, '条')
       if (loaded.length > 0) {
         sessionMessages.value[sid] = loaded
         if (sessionId.value === sid) {
           messages.value = loaded
+          console.log('[chat] 消息已渲染到界面:', loaded.length, '条')
         }
       }
     } catch (err) {
