@@ -7,7 +7,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 
@@ -19,9 +18,12 @@ import java.io.IOException;
  *
  * <p>通过 {@code aether.api.token} 属性配置（默认空字符串 = 跳过校验，向后兼容）。
  * 生产环境必须配置为强随机字符串。
+ *
+ * @deprecated Replaced by {@link JwtAuthFilter}. JWT-based authentication
+ *             provides standardized token validation with user identity extraction.
  */
 @Slf4j
-@Component
+@Deprecated
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class ApiTokenAuthFilter implements Filter {
 
