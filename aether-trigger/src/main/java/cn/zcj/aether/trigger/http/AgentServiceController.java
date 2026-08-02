@@ -5,6 +5,8 @@ import cn.zcj.aether.api.dto.*;
 import cn.zcj.aether.api.dto.SessionMessageDTO;
 import cn.zcj.aether.api.response.Response;
 import cn.zcj.aether.domain.agent.model.valobj.AiAgentConfigTableVO;
+import cn.zcj.aether.domain.agent.service.security.annotation.Auditable;
+import cn.zcj.aether.types.enums.AuditAction;
 import cn.zcj.aether.domain.agent.service.IChatService;
 import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
 import cn.zcj.aether.domain.agent.service.session.SessionEntity;
@@ -135,6 +137,7 @@ public class AgentServiceController implements IAgentService {
         return createSession(requestDTO);
     }
 
+    @Auditable(value = AuditAction.AGENT_CHAT, resource = "agent")
     @RequestMapping(value = "chat", method = RequestMethod.POST)
     @Override
     public Response<ChatResponseDTO> chat(@RequestBody ChatRequestDTO requestDTO) {

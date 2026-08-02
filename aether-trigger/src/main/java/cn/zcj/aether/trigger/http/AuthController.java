@@ -6,6 +6,8 @@ import cn.zcj.aether.api.dto.RegisterRequestDTO;
 import cn.zcj.aether.api.dto.TokenRefreshRequestDTO;
 import cn.zcj.aether.api.response.Response;
 import cn.zcj.aether.domain.agent.service.security.JwtService;
+import cn.zcj.aether.domain.agent.service.security.annotation.Auditable;
+import cn.zcj.aether.types.enums.AuditAction;
 import cn.zcj.aether.infrastructure.persistence.RefreshTokenRepository;
 import cn.zcj.aether.infrastructure.persistence.UserRepository;
 import cn.zcj.aether.types.enums.ResponseCode;
@@ -38,6 +40,7 @@ public class AuthController {
     /**
      * 用户注册。
      */
+    @Auditable(value = AuditAction.USER_CREATE, resource = "user")
     @PostMapping("/register")
     public Response<AuthResponseDTO> register(@RequestBody RegisterRequestDTO request) {
         if (request.getUsername() == null || request.getUsername().length() < 3
@@ -68,6 +71,7 @@ public class AuthController {
     /**
      * 用户登录。
      */
+    @Auditable(value = AuditAction.LOGIN, resource = "user")
     @PostMapping("/login")
     public Response<AuthResponseDTO> login(@RequestBody LoginRequestDTO request) {
         UserRepository.UserEntity entity = userRepository
@@ -96,6 +100,7 @@ public class AuthController {
     /**
      * 刷新 Access Token（轮转 Refresh Token）。
      */
+    @Auditable(value = AuditAction.TOKEN_REFRESH, resource = "token")
     @PostMapping("/refresh")
     public Response<AuthResponseDTO> refresh(@RequestBody TokenRefreshRequestDTO request) {
         RefreshTokenRepository.RefreshTokenEntity storedToken = refreshTokenRepository
