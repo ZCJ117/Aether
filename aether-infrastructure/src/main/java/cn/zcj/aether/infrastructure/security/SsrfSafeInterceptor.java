@@ -42,7 +42,11 @@ public class SsrfSafeInterceptor implements ClientHttpRequestInterceptor {
         URI uri = request.getURI();
         String host = uri.getHost();
 
-        if (host != null && BLOCKED_HOSTNAMES.contains(host.toLowerCase())) {
+        if (host == null) {
+            throw new SecurityException("SSRF blocked: null host");
+        }
+
+        if (BLOCKED_HOSTNAMES.contains(host.toLowerCase())) {
             throw new SecurityException(
                     "SSRF blocked: metadata endpoint " + host);
         }

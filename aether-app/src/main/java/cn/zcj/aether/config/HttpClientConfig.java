@@ -8,9 +8,13 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
 
 /**
- * HTTP 客户端全局超时配置
+ * HTTP 客户端配置。
  *
- * 配置 JDK HttpURLConnection 全局超时，应用于 Spring AI OpenAiApi 的底层请求
+ * <p><b>重要：</b>所有出站 HTTP 调用必须使用此 {@code @Bean} 注入的
+ * {@link RestTemplate}，以确保 SSRF 防护拦截器生效。
+ * 直接 {@code new RestTemplate()} 会绕过 SSRF 保护。
+ *
+ * <p>配置 JDK HttpURLConnection 全局超时，应用于 Spring AI OpenAiApi 的底层请求。
  */
 @Slf4j
 @Configuration

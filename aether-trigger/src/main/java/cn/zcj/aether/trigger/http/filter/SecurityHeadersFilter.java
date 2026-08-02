@@ -25,6 +25,9 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
             HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
 
+        // NOTE: Strict-Transport-Security (HSTS) header should be set at the
+        // reverse proxy / load balancer level in production, not here.
+
         response.setHeader("X-Content-Type-Options", "nosniff");
         response.setHeader("X-Frame-Options", "DENY");
         response.setHeader("Content-Security-Policy",

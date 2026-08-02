@@ -349,6 +349,7 @@ public class AgentServiceController implements IAgentService {
         return "新对话";
     }
 
+    @Auditable(value = AuditAction.AGENT_CHAT, resource = "agent")
     @RequestMapping(value = "chat_stream", method = RequestMethod.POST)
     @Override
     public ResponseBodyEmitter chatStream(@RequestBody ChatRequestDTO requestDTO) {

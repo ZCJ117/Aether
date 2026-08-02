@@ -58,7 +58,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         String ip = getClientIp(request);
         String path = request.getRequestURI();
-        boolean isLoginPath = path.contains("/auth/login");
+        boolean isLoginPath = path.endsWith("/auth/login");
         int maxRequests = isLoginPath ? LOGIN_MAX_REQUESTS : DEFAULT_MAX_REQUESTS;
 
         String key = isLoginPath ? "login:" + ip : ip;
@@ -82,6 +82,23 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         chain.doFilter(request, response);
+    }
+
+    /**
+     * 定期清理过期计数器，防止内存泄漏。
+     * 每分钟执行一次。
+     */
+    @jakarta.annotation.PostConstruct
+    public void scheduleCleanup() {
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "rate-limit-cleanup");
+            t.setDaemon(true);
+            return t;
+        }).scheduleAtFixedRate(() -> {
+            Instant cutoff = Instant.now().minus(WINDOW);
+            counters.entrySet().removeIf(e ->
+                    e.getValue().windowStart.isBefore(cutoff));
+        }, 1, 1, java.util.concurrent.TimeUnit.MINUTES);
     }
 
     private String getClientIp(HttpServletRequest request) {
