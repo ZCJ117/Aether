@@ -34,30 +34,41 @@ export const useSessionStore = defineStore('session', () => {
     return result
   }
 
+  // 防止并发重复请求
+  const pendingRequests = new Map<string, Promise<void>>()
+
   async function loadSessions(agentId: string, userId: string): Promise<void> {
-    if (!agentId || !userId) return  // 参数无效时不请求
-    isLoading.value = true
-    try {
-      const data = await fetchSessions(agentId, userId)
-      // 空结果不覆盖已有数据（防止竞态条件：组件重复挂载导致第二次请求覆盖第一次的结果）
-      if (data.length === 0 && sessionsByAgent.value[agentId]?.length > 0) {
-        console.log('[session] loadSessions 返回空，保留已有', sessionsByAgent.value[agentId].length, '条')
-        return
-      }
-      sessionsByAgent.value[agentId] = data.map((item) => ({
-        sessionId: item.sessionId,
-        agentId: item.agentId,
-        agentName: '',
-        title: item.title || '新对话',
-        status: item.status,
-        createdAt: new Date(item.createdAt).getTime(),
-        updatedAt: new Date(item.updatedAt).getTime(),
-      }))
-    } catch (err) {
-      console.error('[session] loadSessions 失败:', err)
-    } finally {
-      isLoading.value = false
+    if (!agentId || !userId) return
+    // 如果已有相同 agentId 的请求在进行中，直接复用
+    const key = `${agentId}:${userId}`
+    if (pendingRequests.has(key)) {
+      console.log('[session] loadSessions 跳过重复请求:', key)
+      return pendingRequests.get(key)!
     }
+
+    const promise = (async () => {
+      isLoading.value = true
+      try {
+        const data = await fetchSessions(agentId, userId)
+        sessionsByAgent.value[agentId] = data.map((item) => ({
+          sessionId: item.sessionId,
+          agentId: item.agentId,
+          agentName: '',
+          title: item.title || '新对话',
+          status: item.status,
+          createdAt: new Date(item.createdAt).getTime(),
+          updatedAt: new Date(item.updatedAt).getTime(),
+        }))
+      } catch (err) {
+        console.error('[session] loadSessions 失败:', err)
+      } finally {
+        isLoading.value = false
+        pendingRequests.delete(key)
+      }
+    })()
+
+    pendingRequests.set(key, promise)
+    return promise
   }
 
   async function newSession(agentId: string, userId: string): Promise<SessionInfo> {
