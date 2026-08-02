@@ -46,6 +46,8 @@ public class PermissionEngine {
         this.injectionGuardRule = new InjectionGuardRule();
 
         // ====== deny 组（优先级排序后统一求值） ======
+        // P2: 危险工具硬封锁规则（p=0，deny 组最高优先级）
+        registerDenyRule(new DangerousToolRule());
         registerDenyRule(new PlanModeDenyWriteRule());      // p=20: Plan 模式禁止写入
         // 注：ToolAllowlistRule 的黑名单部分以独立 deny 规则注册
 
