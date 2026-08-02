@@ -29,14 +29,21 @@ onMounted(async () => {
   if (!agentStore.selectedAgentId && agentStore.agents.length > 0) {
     agentStore.selectAgent(agentStore.agents[0].agentId)
   }
-  if (agentStore.selectedAgentId) {
-    await sessionStore.loadSessions(agentStore.selectedAgentId, authStore.userId)
-    // 自动选中最近会话并加载历史消息
-    const sessions = sessionStore.filteredSessions(agentStore.selectedAgentId)
+  // 加载所有 Agent 的会话
+  if (authStore.userId) {
+    for (const agent of agentStore.agents) {
+      await sessionStore.loadSessions(agent.agentId, authStore.userId)
+    }
+  }
+  // 自动选中第一个有会话的 Agent + 最近会话，加载历史消息
+  for (const agent of agentStore.agents) {
+    const sessions = sessionStore.filteredSessions(agent.agentId)
     if (sessions.length > 0) {
-      const latest = sessions[0] // filteredSessions 默认按时间倒序
+      agentStore.selectAgent(agent.agentId)
+      const latest = sessions[0]
       sessionStore.switchSession(latest.sessionId)
       chatStore.switchToSession(latest.sessionId)
+      break
     }
   }
 })
