@@ -143,21 +143,23 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 | 类别 | 技术 | 版本 |
 |---|---|---|
 | 语言 | Java | 17 |
-| 框架 | Spring Boot | 3.4.3 |
+| 框架 | Spring Boot + Spring Security + AOP | 3.4.3 |
 | 构建 | Maven | 3.x |
-| AI SDK | Spring AI (BOM) | 1.1.0-M3 |
+| AI SDK | Spring AI (BOM) + LangChain4j (BOM) | 1.1.0-M3 / 1.4.0 |
 | Agent 引擎 | **自研 Agent 接口 + ReActAgent + GraphExecutor** | — |
 | 工具集成 | MCP SDK + spring-ai-agent-utils | 0.4.2 |
 | 响应式 | RxJava 3 | — |
 | 缓存 | Guava | 32.1.3-jre |
 | Git 存储 | JGit | 6.10.0（Git 影子仓检查点） |
 | JSON | Jackson (domain 层) / FastJSON 2.0.28 (config 层) | — |
-| 数据库 | MySQL + MyBatis + HikariCP | 8.0.28 / 3.0.4 |
-| 向量数据库 | Pgvector（可选） | — |
-| 可观测性 | OpenTelemetry + Micrometer + Prometheus | — |
+| 数据库 | PostgreSQL + pgvector + HikariCP | 42.x（JDBC Driver） |
+| 向量数据库 | pgvector（PostgreSQL 扩展） | — |
+| 安全 | JWT (jjwt 0.12.5) + Jasypt (3.0.5) 配置加密 | 0.12.5 / 3.0.5 |
+| 可观测性 | OpenTelemetry + Micrometer + Prometheus | 1.41.0 |
 | 日志 | Logback + LogstashEncoder（JSON） | 7.4 |
 | 设计模式框架 | xfg-wrench-starter-design-framework | 3.0.0 |
 | 前端 | Vue 3 + Pinia + Vue Router + Vite + Axios | — |
+| HTTP 客户端 | Retrofit2 | 2.9.0 |
 | 测试 | JUnit 5 + Mockito | — |
 
 ---
@@ -336,7 +338,7 @@ aether/
 │       └── exception/AppException.java
 │
 └── docs/dev-ops/
-    └── AIagent_frontend/                 # Vue 3 聊天前端
+    └── aether-frontend-v2/               # Vue 3 聊天前端
 ```
 
 ---
@@ -608,17 +610,20 @@ agent-workflows:
 
 - JDK 17+
 - Maven 3.6+
-- MySQL 8.0+（可选——会话持久化需要）
-- PostgreSQL + Pgvector（可选——语义记忆需要）
+- PostgreSQL 12+ + pgvector 扩展（会话持久化与向量记忆）
+- （可选）OpenTelemetry Collector — 可观测性
 
 ### 构建与启动
 
 ```bash
 # 1. 构建项目
-mvn clean install
+mvn clean install -DskipTests
 mvn clean package -pl aether-app -am
 
 # 2. 配置 YAML
+# 编辑 aether-app/src/main/resources/application-dev.yml：
+#   - 配置 spring.datasource.* （PostgreSQL 连接信息）
+#   - 配置 aether.security.jwt.secret （JWT 签名密钥，至少 32 字符）
 # 编辑 aether-app/src/main/resources/agent/agents.yml：
 #   - 配置 ai-api（base-url 和 api-key）
 #   - 配置 chat-model（model 名称）
@@ -655,7 +660,7 @@ curl http://localhost:8091/actuator/prometheus | grep aether_agent
 ### 前端启动
 
 ```bash
-cd docs/dev-ops/AIagent_frontend
+cd docs/dev-ops/aether-frontend-v2
 npm install
 npm run dev
 ```
