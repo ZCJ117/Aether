@@ -35,13 +35,19 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function loadSessions(agentId: string, userId: string): Promise<void> {
+    if (!agentId || !userId) return  // 参数无效时不请求
     isLoading.value = true
     try {
       const data = await fetchSessions(agentId, userId)
+      // 空结果不覆盖已有数据（防止竞态条件：组件重复挂载导致第二次请求覆盖第一次的结果）
+      if (data.length === 0 && sessionsByAgent.value[agentId]?.length > 0) {
+        console.log('[session] loadSessions 返回空，保留已有', sessionsByAgent.value[agentId].length, '条')
+        return
+      }
       sessionsByAgent.value[agentId] = data.map((item) => ({
         sessionId: item.sessionId,
         agentId: item.agentId,
-        agentName: '', // agent name comes from agentStore, not session data
+        agentName: '',
         title: item.title || '新对话',
         status: item.status,
         createdAt: new Date(item.createdAt).getTime(),
