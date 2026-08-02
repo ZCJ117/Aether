@@ -50,6 +50,7 @@ export const useSessionStore = defineStore('session', () => {
       isLoading.value = true
       try {
         const data = await fetchSessions(agentId, userId)
+        console.log('[session] loadSessions API返回:', { agentId, userId, count: data.length, data })
         sessionsByAgent.value[agentId] = data.map((item) => ({
           sessionId: item.sessionId,
           agentId: item.agentId,
@@ -59,6 +60,7 @@ export const useSessionStore = defineStore('session', () => {
           createdAt: new Date(item.createdAt).getTime(),
           updatedAt: new Date(item.updatedAt).getTime(),
         }))
+        console.log('[session] sessionsByAgent 已更新:', agentId, '→', sessionsByAgent.value[agentId]?.length, '条')
       } catch (err) {
         console.error('[session] loadSessions 失败:', err)
       } finally {
