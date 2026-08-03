@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { label: '架构',     href: '#architecture',  type: 'anchor' as const },
   { label: '产品预览', href: '#preview',       type: 'anchor' as const },
   { label: '路线图',   href: '#roadmap',       type: 'anchor' as const },
+  { label: '设计参考', href: '#references',    type: 'anchor' as const },
   { label: '文档',     href: '/#/docs',          type: 'external' as const },
 ]
 

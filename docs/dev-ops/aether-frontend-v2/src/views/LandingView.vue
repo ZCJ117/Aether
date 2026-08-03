@@ -8,6 +8,7 @@ import HighlightsSection from '@/components/landing/HighlightsSection.vue'
 import ArchitectureSection from '@/components/landing/ArchitectureSection.vue'
 import PreviewSection from '@/components/landing/PreviewSection.vue'
 import RoadmapSection from '@/components/landing/RoadmapSection.vue'
+import ReferenceSection from '@/components/landing/ReferenceSection.vue'
 import LandingCTA from '@/components/landing/LandingCTA.vue'
 
 const router = useRouter()
@@ -59,6 +60,7 @@ function handleGetStarted() {
       <ArchitectureSection />
       <PreviewSection />
       <RoadmapSection />
+      <ReferenceSection />
       <LandingCTA @cta="handleGetStarted" />
     </div>
   </div>

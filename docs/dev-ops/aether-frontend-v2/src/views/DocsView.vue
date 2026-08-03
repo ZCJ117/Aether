@@ -28,6 +28,7 @@ const sections: DocSection[] = [
       { label: '上下文管理' },
       { label: '记忆系统' },
       { label: 'Human-in-the-Loop' },
+      { label: '设计参考来源' },
     ],
   },
   {
@@ -481,6 +482,90 @@ runner:
             <section class="mb-10">
               <h2 class="text-lg font-semibold text-white mb-3">PAUSED 状态保护</h2>
               <p class="text-white/50 text-sm">Agent 处于 PAUSED 状态时，发送新消息会抛出 AppException，防止状态冲突。必须先确认或取消待处理操作。</p>
+            </section>
+          </template>
+
+          <template v-if="activeSection === '设计参考来源'">
+            <h1 class="text-2xl md:text-3xl font-semibold mb-2">设计参考来源</h1>
+            <p class="text-white/50 text-sm mb-10">Aether 参考了以下 6 个开源 Agent 框架的核心设计</p>
+
+            <section class="mb-10">
+              <h2 class="text-lg font-semibold text-white mb-3">1. AutoGen（Microsoft Research · Python）</h2>
+              <p class="text-white/50 text-sm mb-2">参考内容：</p>
+              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
+                <li>Agent 协议 / 消息传递机制 → Aether 内部消息通信</li>
+                <li>DiGraph + GraphFlowManager 图执行 → Aether GRAPHFLOW DAG 执行模式</li>
+                <li>AssistantAgent 独立模型配置 → Aether 异构模型混用</li>
+                <li>OTel Span 追踪层级 → Aether 3 级 AgentTracer</li>
+                <li>MagenticOne 编排器（Plan → Delegate → Synthesize）→ Aether PlanActAgent</li>
+                <li>_head_and_tail 工具配对保护 → Aether ContextManager.alignToolPairBoundaries()</li>
+              </ul>
+            </section>
+
+            <section class="mb-10">
+              <h2 class="text-lg font-semibold text-white mb-3">2. AgentScope Java（Alibaba · Java）</h2>
+              <p class="text-white/50 text-sm mb-2">参考内容：</p>
+              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
+                <li>AgentState 双模状态（快照+增量）→ Aether 状态序列化设计</li>
+                <li>Hook 系统 7 个拦截点 → 直接架构移植为 Aether AgentHook</li>
+                <li>MiddlewareBase 五层洋葱模型 → Aether 同结构中间件系统</li>
+                <li>AgentEvent 多态事件（Jackson 类型化）→ Aether 10 类型事件系统</li>
+                <li>Per-Agent Toolkit 深拷贝隔离 → Aether Agent 级 toolNames 工具作用域</li>
+                <li>PermissionEngine 5 条优先级规则链 → Aether 权限引擎</li>
+              </ul>
+            </section>
+
+            <section class="mb-10">
+              <h2 class="text-lg font-semibold text-white mb-3">3. CrewAI（CrewAI Inc. · Python）</h2>
+              <p class="text-white/50 text-sm mb-2">参考内容：</p>
+              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
+                <li>BaseAgent 可序列化实体 → Aether Agent.state() / loadState()</li>
+                <li>BaseLLM 类层次结构 → Aether ModelProvider SPI</li>
+                <li>EncodingFlow / RecallFlow 记忆管线 → Aether MemoryFacade + llmRerank</li>
+                <li>CheckpointConfig 多粒度检查点 → Aether 检查点/恢复机制</li>
+                <li>EventBus 事件总线 → Aether AgentEventPublisher</li>
+                <li>build_schema_hint 工具校验反馈 → Aether SchemaHintBuilder</li>
+              </ul>
+            </section>
+
+            <section class="mb-10">
+              <h2 class="text-lg font-semibold text-white mb-3">4. MetaGPT（DeepWisdom · Python）</h2>
+              <p class="text-white/50 text-sm mb-2">参考内容：</p>
+              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
+                <li>RoleContext.llm 角色级模型配置 → Aether Per-Agent 模型</li>
+                <li>Working / Long-Term Memory 分层 → Aether 多层记忆系统</li>
+                <li>ProjectRepo 持久化 → Aether 会话状态仓储</li>
+                <li>ActionNode 编译时 {key} 校验 → Aether AgentGraphCompiler {outputKey} 校验</li>
+                <li>PLAN_AND_ACT 执行模式 → Aether PlanActAgent 三阶段</li>
+                <li>消息级去重 → Aether Caffeine LRU 响应缓存</li>
+              </ul>
+            </section>
+
+            <section class="mb-10">
+              <h2 class="text-lg font-semibold text-white mb-3">5. cc-haha（Claude Code Fork · TypeScript）</h2>
+              <p class="text-white/50 text-sm mb-2">参考内容：</p>
+              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
+                <li>cost-tracker Token 核算 → Aether TokenBudget / CostTracker</li>
+                <li>SessionMemory 后台 Fork Agent 异步提取 → Aether SessionMemoryExtractor</li>
+                <li>显式工具 allow/deny 列表 → Aether YAML toolNames 工具白名单</li>
+                <li>WAL JSONL 日志模式 → Aether 检查点 WAL 事件日志</li>
+                <li>PermissionMode 4 级权限层级 → Aether 权限模式（DEFAULT→PLAN→ACCEPT_EDITS→BYPASS）</li>
+                <li>autoCompact 熔断（MAX_CONSECUTIVE_FAILURES=3）→ Aether P2 压缩保护</li>
+                <li>isConcurrencySafe 安全/不安全分组 → Aether 工具执行器并发策略</li>
+              </ul>
+            </section>
+
+            <section class="mb-10">
+              <h2 class="text-lg font-semibold text-white mb-3">6. Hermes Agent（Nous Research · Python）</h2>
+              <p class="text-white/50 text-sm mb-2">参考内容：</p>
+              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
+                <li>FailoverReason 21 类型错误分类 → Aether P1 14 类型 FailoverReason 枚举</li>
+                <li>去相关抖动退避算法（base=2s, max=30s, jitterRatio=0.5）→ Aether P1 ResilientChatModelExecutor</li>
+                <li>try_activate_fallback 故障转移模型链 + 60s 冷却 → Aether ModelRoute 路由切换</li>
+                <li>ClassifiedError 内联 action hints（retryable / shouldCompress / shouldFallback）→ Aether P1 分级错误设计</li>
+                <li>禁用 SDK 内置重试、集中化重试所有权 → Aether P1 统一重试入口</li>
+                <li>摘要前缀防污染标注（SUMMARY_PREFIX）→ Aether P2 摘要隔离标注</li>
+              </ul>
             </section>
           </template>
 
