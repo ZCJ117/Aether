@@ -4,11 +4,9 @@ import { useAuthStore } from '@/stores/auth'
 import LandingNavbar from '@/components/landing/LandingNavbar.vue'
 import LandingHero from '@/components/landing/LandingHero.vue'
 import LandingAppBar from '@/components/landing/LandingAppBar.vue'
-import LandingConsole from '@/components/landing/LandingConsole.vue'
-import LandingOrchestration from '@/components/landing/LandingOrchestration.vue'
-import LandingIntegrations from '@/components/landing/LandingIntegrations.vue'
-import LandingTestimonials from '@/components/landing/LandingTestimonials.vue'
-import LandingPricing from '@/components/landing/LandingPricing.vue'
+import HighlightsSection from '@/components/landing/HighlightsSection.vue'
+import ArchitectureSection from '@/components/landing/ArchitectureSection.vue'
+import PreviewSection from '@/components/landing/PreviewSection.vue'
 import LandingCTA from '@/components/landing/LandingCTA.vue'
 
 const router = useRouter()
@@ -56,11 +54,9 @@ function handleGetStarted() {
       <LandingNavbar @cta="handleGetStarted" />
       <LandingHero @cta="handleGetStarted" />
       <LandingAppBar />
-      <LandingConsole />
-      <LandingOrchestration />
-      <LandingIntegrations />
-      <LandingTestimonials />
-      <LandingPricing />
+      <HighlightsSection />
+      <ArchitectureSection />
+      <PreviewSection />
       <LandingCTA @cta="handleGetStarted" />
     </div>
   </div>
