@@ -1,0 +1,76 @@
+<h2>设计段 3/5 — 路线图页面 (RoadmapView.vue)</h2>
+<p class="subtitle">独立子页面 /roadmap，基于 Aether 项目发展阶段的时间线布局</p>
+
+<div class="section">
+  <h3>页面结构</h3>
+  <pre style="background:#0d1117; padding:12px; border-radius:8px; font-size:12px;">
+&lt;template&gt;
+  &lt;div class="min-h-screen bg-[#0c0c0c] text-white"&gt;
+    &lt;LandingNavbar /&gt;                              &lt;!-- 复用导航栏 --&gt;
+    &lt;main class="max-w-4xl mx-auto px-6 pt-28 pb-20"&gt;
+      &lt;h1&gt;Aether 路线图&lt;/h1&gt;
+      &lt;p&gt;企业级多智能体 AI 运行时演进路径&lt;/p&gt;
+      &lt;Timeline /&gt;                                   &lt;!-- 垂直时间线 --&gt;
+    &lt;/main&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+  </pre>
+</div>
+
+<div class="mockup" style="margin-top:16px;">
+  <div class="mockup-header">时间线内容 — Aether 发展阶段</div>
+  <div class="mockup-body" style="font-size:13px;">
+
+    <!-- Timeline items -->
+    <div style="border-left:2px solid #30363d; padding-left:20px; display:flex; flex-direction:column; gap:16px;">
+
+      <div style="position:relative;">
+        <div style="position:absolute; left:-26px; top:4px; width:10px; height:10px; border-radius:50%; background:#3fb950; border:2px solid #0d1117;"></div>
+        <span style="background:#3fb950; color:#000; font-size:10px; padding:2px 8px; border-radius:99px; font-weight:600;">已完成</span>
+        <strong style="display:block; margin-top:4px;">v1.0 — 核心引擎</strong>
+        <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">自研 ReActAgent 主循环 · ChatModel 延迟注入 · MCP/Skills 工具集成 · DDD 6 模块分层 · SSE 流式对话</p>
+      </div>
+
+      <div style="position:relative;">
+        <div style="position:absolute; left:-26px; top:4px; width:10px; height:10px; border-radius:50%; background:#3fb950; border:2px solid #0d1117;"></div>
+        <span style="background:#3fb950; color:#000; font-size:10px; padding:2px 8px; border-radius:99px; font-weight:600;">已完成</span>
+        <strong style="display:block; margin-top:4px;">v1.1 — 多 Agent 编排</strong>
+        <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">YAML 配置驱动 AgentGraph · SEQUENTIAL / PARALLEL / LOOP 工作流 · 上下文压缩与熔断 · Vue 3 前端</p>
+      </div>
+
+      <div style="position:relative;">
+        <div style="position:absolute; left:-26px; top:4px; width:10px; height:10px; border-radius:50%; background:#58a6ff; border:2px solid #0d1117;"></div>
+        <span style="background:#58a6ff; color:#fff; font-size:10px; padding:2px 8px; border-radius:99px; font-weight:600;">进行中</span>
+        <strong style="display:block; margin-top:4px;">v1.2 — 工具生态 & 安全</strong>
+        <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">Agent 级工具作用域 · 工具调用权限控制 · Skills 本地执行沙箱 · 审计日志 · 多 Provider 路由</p>
+      </div>
+
+      <div style="position:relative;">
+        <div style="position:absolute; left:-26px; top:4px; width:10px; height:10px; border-radius:50%; background:#30363d; border:2px solid #0d1117;"></div>
+        <span style="background:#30363d; color:#8b949e; font-size:10px; padding:2px 8px; border-radius:99px; font-weight:600;">计划中</span>
+        <strong style="display:block; margin-top:4px;">v1.3 — 记忆 & 知识图谱</strong>
+        <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">向量化长期记忆 · 知识图谱自动构建 · 跨会话上下文继承 · RAG 检索增强 · 用户级记忆隔离</p>
+      </div>
+
+      <div style="position:relative;">
+        <div style="position:absolute; left:-26px; top:4px; width:10px; height:10px; border-radius:50%; background:#30363d; border:2px solid #0d1117;"></div>
+        <span style="background:#30363d; color:#8b949e; font-size:10px; padding:2px 8px; border-radius:99px; font-weight:600;">计划中</span>
+        <strong style="display:block; margin-top:4px;">v2.0 — 团队协作</strong>
+        <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">多用户工作空间 · Agent 共享与权限 · 团队知识库 · Webhook 触发器 · 定时任务调度 · 企业 SSO</p>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:16px;">
+  <h3>路由 & 导航</h3>
+  <pre style="background:#0d1117; padding:10px; border-radius:8px; font-size:12px;">
+// routes.ts 新增:
+{ path: '/roadmap', name: 'Roadmap', component: () => import('@/views/RoadmapView.vue'),
+  meta: { title: '路线图 — Aether', group: 'public' } }
+
+// 导航栏点击: router.push({ name: 'Roadmap' })
+// 滚动行为: scrollBehavior → { top: 0 } (路由默认)
+  </pre>
+</div>

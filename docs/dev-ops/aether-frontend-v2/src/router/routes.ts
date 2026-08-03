@@ -64,12 +64,6 @@ export const routes: RouteRecordRaw[] = [
     ],
   },
   {
-    path: '/roadmap',
-    name: 'Roadmap',
-    component: () => import('@/views/RoadmapView.vue'),
-    meta: { title: '路线图 — Aether', group: 'public' },
-  },
-  {
     path: '/docs',
     name: 'Docs',
     component: () => import('@/views/DocsView.vue'),

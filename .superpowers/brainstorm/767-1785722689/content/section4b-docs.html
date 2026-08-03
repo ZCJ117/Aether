@@ -1,0 +1,70 @@
+<h2>设计段 4/5 (修订) — 文档首页</h2>
+<p class="subtitle">右侧直接展示文档正文，不再使用快捷卡片</p>
+
+<div class="mockup">
+  <div class="mockup-header">文档首页布局 — 左侧目录 + 右侧正文</div>
+  <div class="mockup-body" style="font-size:12px;">
+    <div style="display:flex; min-height:360px;">
+      <!-- Sidebar -->
+      <div style="width:200px; background:#161b22; padding:12px; border-right:1px solid #30363d; flex-shrink:0;">
+        <p style="font-weight:700; margin-bottom:12px; font-size:11px;">📚 Aether 文档</p>
+        <div style="display:flex; flex-direction:column; gap:4px; font-size:10px;">
+          <span style="color:#58a6ff; font-weight:600; background:#1f2937; padding:2px 4px; border-radius:4px;">快速开始</span>
+          <span style="color:#8b949e; padding-left:8px;">环境要求</span>
+          <span style="color:#8b949e; padding-left:8px;">安装与启动</span>
+          <span style="color:#8b949e; padding-left:8px;">最小配置模板</span>
+          <span style="color:#8b949e; margin-top:8px; font-weight:600;">核心概念</span>
+          <span style="color:#8b949e; padding-left:8px;">Agent 生命周期</span>
+          <span style="color:#8b949e; padding-left:8px;">YAML 配置参考</span>
+          <span style="color:#8b949e; padding-left:8px;">工具系统</span>
+          <span style="color:#8b949e; margin-top:8px; font-weight:600;">开发指南</span>
+          <span style="color:#8b949e; padding-left:8px;">模块结构</span>
+          <span style="color:#8b949e; padding-left:8px;">自定义 Agent</span>
+          <span style="color:#8b949e; padding-left:8px;">前端开发</span>
+          <span style="color:#8b949e; margin-top:8px; font-weight:600;">API 参考</span>
+          <span style="color:#8b949e; padding-left:8px;">Chat API</span>
+          <span style="color:#8b949e; padding-left:8px;">SSE 协议</span>
+        </div>
+      </div>
+      <!-- Content -->
+      <div style="flex:1; padding:24px; overflow-y:auto;">
+        <h3 style="font-size:16px; margin-bottom:4px;">快速开始</h3>
+        <p style="color:#8b949e; font-size:11px; margin-bottom:16px;">5 分钟启动第一个 Aether Agent</p>
+
+        <h4 style="font-size:13px; margin-bottom:6px;">环境要求</h4>
+        <ul style="color:#8b949e; font-size:11px; padding-left:16px; margin-bottom:16px;">
+          <li>JDK 17+</li>
+          <li>Maven 3.8+</li>
+          <li>Node.js 18+ (前端开发)</li>
+        </ul>
+
+        <h4 style="font-size:13px; margin-bottom:6px;">克隆与构建</h4>
+        <pre style="background:#0d1117; padding:10px; border-radius:6px; font-size:10px; color:#c9d1d9; margin-bottom:16px;">
+git clone https://github.com/your-org/aether.git
+cd aether
+mvn clean install -DskipTests
+cd aether-app && mvn spring-boot:run</pre>
+
+        <h4 style="font-size:13px; margin-bottom:6px;">最小配置模板</h4>
+        <p style="color:#8b949e; font-size:11px; margin-bottom:8px;">在 <code style="background:#30363d; padding:1px 4px; border-radius:3px;">aether-app/src/main/resources/agent/</code> 下创建 YAML 配置文件：</p>
+        <pre style="background:#0d1117; padding:10px; border-radius:6px; font-size:10px; color:#c9d1d9; margin-bottom:16px;">
+ai-api:
+  base-url: https://api.openai.com
+  api-key: ${OPENAI_API_KEY}
+chat-model:
+  model: gpt-4o
+agents:
+  - name: assistant
+    system-prompt: 你是一个有用的助手。
+runner:
+  agent-name: assistant</pre>
+
+        <h4 style="font-size:13px; margin-bottom:6px;">验证运行</h4>
+        <pre style="background:#0d1117; padding:10px; border-radius:6px; font-size:10px; color:#c9d1d9;">
+curl -X POST http://localhost:8080/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello Aether!"}'</pre>
+      </div>
+    </div>
+  </div>
+</div>

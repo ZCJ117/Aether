@@ -1,0 +1,102 @@
+<h2>设计段 2/5 — 三个锚点 Section 内容纲要</h2>
+<p class="subtitle">替换 LandingConsole / LandingOrchestration / LandingIntegrations，内容基于 Aether 项目特性</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">亮点 (HighlightsSection.vue) — id="highlights"</div>
+    <div class="mockup-body" style="font-size:13px;">
+      <p style="color:#58a6ff; font-weight:600; margin-bottom:8px;">Aether 核心亮点</p>
+      <div style="display:grid; gap:8px;">
+        <div style="background:#161b22; padding:8px; border-radius:6px; border-left:2px solid #58a6ff;">
+          <strong>🔄 自研 ReActAgent 引擎</strong>
+          <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">主循环 + 多层上下文压缩 + 指数退避重试，100 轮稳定运行</p>
+        </div>
+        <div style="background:#161b22; padding:8px; border-radius:6px; border-left:2px solid #3fb950;">
+          <strong>📊 YAML 配置驱动多 Agent 编排</strong>
+          <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">SEQUENTIAL / PARALLEL / LOOP 三种工作流模式，声明式定义</p>
+        </div>
+        <div style="background:#161b22; padding:8px; border-radius:6px; border-left:2px solid #f0883e;">
+          <strong>🔧 Agent 级工具作用域</strong>
+          <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">MCP + Skills 工具接入，per-agent 精确控制工具可见性</p>
+        </div>
+        <div style="background:#161b22; padding:8px; border-radius:6px; border-left:2px solid #a371f7;">
+          <strong>🏗️ DDD 分层架构</strong>
+          <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">6 模块清晰分层，trigger → api → domain → infrastructure</p>
+        </div>
+        <div style="background:#161b22; padding:8px; border-radius:6px; border-left:2px solid #da3633;">
+          <strong>⚡ 流式对话 & 工具编排</strong>
+          <p style="color:#8b949e; margin:4px 0 0; font-size:11px;">SSE 实时推送，工具并发/串行可配，上下文自动压缩</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">架构 (ArchitectureSection.vue) — id="architecture"</div>
+    <div class="mockup-body" style="font-size:12px;">
+      <p style="color:#58a6ff; font-weight:600; margin-bottom:8px;">系统架构概览</p>
+      <pre style="background:#161b22; padding:10px; border-radius:6px; color:#c9d1d9; line-height:1.6; font-size:10px;">
+┌──────────────────────────────────────┐
+│          aether-trigger              │
+│    REST Controllers (Chat API)       │
+├──────────────────────────────────────┤
+│           aether-api                 │
+│    Service Interfaces · DTO          │
+├──────────────────────────────────────┤
+│         aether-domain  ⬡ Core        │
+│  ┌──────────┐  ┌──────────────────┐  │
+│  │ ReActAgent│  │  GraphExecutor   │  │
+│  │ 主循环    │  │  SEQUENTIAL      │  │
+│  │ 重试/压缩 │  │  PARALLEL / LOOP │  │
+│  └──────────┘  └──────────────────┘  │
+│  ┌──────────┐  ┌──────────────────┐  │
+│  │ ToolExec  │  │  ContextManager  │  │
+│  │ 并发/串行 │  │  压缩/截断/预算  │  │
+│  └──────────┘  └──────────────────┘  │
+│  ┌──────────────────────────────────┐│
+│  │     ArmoryService (装配链)       ││
+│  │  YAML → AgentGraph → Bean Registry││
+│  └──────────────────────────────────┘│
+├──────────────────────────────────────┤
+│      aether-infrastructure           │
+│    SessionStore · MCP Clients        │
+├──────────────────────────────────────┤
+│         aether-types                 │
+│    Enums · Exceptions · Constants    │
+└──────────────────────────────────────┘
+      </pre>
+      <p style="color:#8b949e; margin-top:8px; font-size:11px;">左侧描述各层职责，右侧展示数据流方向。下方附 YAML 配置 → Agent Bean 的装配时序说明。</p>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:24px;">
+  <div class="mockup-header">产品预览 (PreviewSection.vue) — id="preview"</div>
+  <div class="mockup-body" style="font-size:13px;">
+    <p style="color:#58a6ff; font-weight:600; margin-bottom:8px;">Aether 控制台界面预览</p>
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+      <div style="background:#161b22; padding:10px; border-radius:8px; text-align:center;">
+        <div style="background:#0d1117; height:80px; border-radius:4px; display:flex; align-items:center; justify-content:center; color:#58a6ff; font-size:10px;">
+          [仪表盘截图占位]
+        </div>
+        <p style="margin-top:6px; font-size:11px;">📊 仪表盘</p>
+        <p style="color:#8b949e; font-size:10px;">Token 用量 / Agent 状态 / 会话趋势</p>
+      </div>
+      <div style="background:#161b22; padding:10px; border-radius:8px; text-align:center;">
+        <div style="background:#0d1117; height:80px; border-radius:4px; display:flex; align-items:center; justify-content:center; color:#3fb950; font-size:10px;">
+          [对话界面截图占位]
+        </div>
+        <p style="margin-top:6px; font-size:11px;">💬 多 Agent 对话</p>
+        <p style="color:#8b949e; font-size:10px;">流式输出 / 工具调用可视化 / 会话管理</p>
+      </div>
+      <div style="background:#161b22; padding:10px; border-radius:8px; text-align:center;">
+        <div style="background:#0d1117; height:80px; border-radius:4px; display:flex; align-items:center; justify-content:center; color:#f0883e; font-size:10px;">
+          [Agent 配置截图占位]
+        </div>
+        <p style="margin-top:6px; font-size:11px;">⚙️ Agent 管理</p>
+        <p style="color:#8b949e; font-size:10px;">YAML 配置 / 工具绑定 / 权限控制</p>
+      </div>
+    </div>
+    <p style="color:#8b949e; margin-top:12px; font-size:11px;">采用三列卡片布局，每列展示一个核心功能截图占位。后续可替换为真实截图。</p>
+  </div>
+</div>

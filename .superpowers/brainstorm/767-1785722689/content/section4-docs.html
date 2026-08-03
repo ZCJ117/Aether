@@ -1,0 +1,117 @@
+<h2>设计段 4/5 — 文档首页 (DocsView.vue)</h2>
+<p class="subtitle">独立页面 /docs，新标签页打开，展示 Aether 文档目录框架</p>
+
+<div class="section">
+  <h3>页面行为</h3>
+  <pre style="background:#0d1117; padding:10px; border-radius:8px; font-size:12px;">
+// 导航栏中"文档"的点击处理:
+function handleDocClick(e: Event) {
+  e.preventDefault()
+  window.open('/docs', '_blank')
+}
+  </pre>
+</div>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">文档首页布局</div>
+    <div class="mockup-body" style="font-size:12px;">
+      <div style="display:flex; min-height:300px;">
+        <!-- Sidebar -->
+        <div style="width:200px; background:#161b22; padding:12px; border-right:1px solid #30363d; flex-shrink:0;">
+          <p style="font-weight:700; margin-bottom:12px; font-size:11px;">📚 Aether 文档</p>
+          <div style="display:flex; flex-direction:column; gap:4px; font-size:10px;">
+            <span style="color:#58a6ff; font-weight:600;">快速开始</span>
+            <span style="color:#8b949e; padding-left:8px;">环境要求</span>
+            <span style="color:#8b949e; padding-left:8px;">安装与启动</span>
+            <span style="color:#8b949e; padding-left:8px;">最小配置模板</span>
+            <span style="color:#8b949e; margin-top:8px; font-weight:600;">核心概念</span>
+            <span style="color:#8b949e; padding-left:8px;">Agent 生命周期</span>
+            <span style="color:#8b949e; padding-left:8px;">YAML 配置参考</span>
+            <span style="color:#8b949e; padding-left:8px;">工具系统</span>
+            <span style="color:#8b949e; margin-top:8px; font-weight:600;">开发指南</span>
+            <span style="color:#8b949e; padding-left:8px;">模块结构</span>
+            <span style="color:#8b949e; padding-left:8px;">自定义 Agent</span>
+            <span style="color:#8b949e; padding-left:8px;">前端开发</span>
+            <span style="color:#8b949e; margin-top:8px; font-weight:600;">API 参考</span>
+            <span style="color:#8b949e; padding-left:8px;">Chat API</span>
+            <span style="color:#8b949e; padding-left:8px;">SSE 协议</span>
+          </div>
+        </div>
+        <!-- Content -->
+        <div style="flex:1; padding:24px;">
+          <h3 style="font-size:14px; margin-bottom:6px;">Aether 文档</h3>
+          <p style="color:#8b949e; font-size:11px;">企业级多智能体 AI 运行时 — 从入门到精通</p>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px;">
+            <div style="background:#161b22; padding:10px; border-radius:6px;">
+              <strong style="font-size:11px;">🚀 快速开始</strong>
+              <p style="color:#8b949e; font-size:10px; margin:4px 0 0;">5 分钟启动第一个 Agent</p>
+            </div>
+            <div style="background:#161b22; padding:10px; border-radius:6px;">
+              <strong style="font-size:11px;">📖 核心概念</strong>
+              <p style="color:#8b949e; font-size:10px; margin:4px 0 0;">理解 Agent · 工具 · 工作流</p>
+            </div>
+            <div style="background:#161b22; padding:10px; border-radius:6px;">
+              <strong style="font-size:11px;">🛠️ 开发指南</strong>
+              <p style="color:#8b949e; font-size:10px; margin:4px 0 0;">扩展开发与模块定制</p>
+            </div>
+            <div style="background:#161b22; padding:10px; border-radius:6px;">
+              <strong style="font-size:11px;">📋 API 参考</strong>
+              <p style="color:#8b949e; font-size:10px; margin:4px 0 0;">REST 接口与 SSE 协议</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">目录框架 (文档结构树)</div>
+    <div class="mockup-body" style="font-size:12px;">
+      <pre style="background:#161b22; padding:12px; border-radius:6px; color:#c9d1d9; line-height:1.7; font-size:11px;">
+📚 Aether 文档
+│
+├─ 🚀 快速开始
+│  ├─ 环境要求 (Java 17, Maven 3.x, Node 18)
+│  ├─ 克隆与构建
+│  ├─ 最小配置模板 (only-one-agent.yml)
+│  └─ 验证 Agent 运行
+│
+├─ 📖 核心概念
+│  ├─ Agent 生命周期 (装配 → 执行 → 销毁)
+│  ├─ ReActAgent 引擎详解
+│  ├─ YAML 配置完整参考
+│  ├─ AgentGraph & 工作流类型
+│  ├─ 工具系统 (MCP / Skills / 作用域)
+│  ├─ 上下文管理与压缩策略
+│  └─ 记忆系统 (MemoryStore)
+│
+├─ 🛠️ 开发指南
+│  ├─ 6 模块 DDD 架构
+│  ├─ 自定义 Agent 开发
+│  ├─ 添加新工具 (MCP / Skills)
+│  ├─ 前端开发 (Vue 3 + Vite)
+│  ├─ Docker 部署
+│  └─ 故障排查
+│
+└─ 📋 API 参考
+   ├─ Chat API (POST /api/v1/chat)
+   ├─ SSE 流式协议
+   ├─ Agent 管理 API
+   └─ 模型管理 API
+      </pre>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:16px;">
+  <h3>路由</h3>
+  <pre style="background:#0d1117; padding:10px; border-radius:8px; font-size:12px;">
+// routes.ts 新增:
+{ path: '/docs', name: 'Docs', component: () => import('@/views/DocsView.vue'),
+  meta: { title: '文档 — Aether', group: 'public' } }
+
+// 导航栏点击: window.open('/docs', '_blank')
+  </pre>
+</div>

@@ -1,0 +1,101 @@
+<h2>设计段 2/5 (修订) — 架构 Section 重新设计</h2>
+<p class="subtitle">亮点部分保持不变，架构部分采用更清晰的排版</p>
+
+<div class="split">
+  <div class="mockup" style="border:2px solid #3fb950;">
+    <div class="mockup-header">✅ 亮点 — 已确认，保持不变</div>
+    <div class="mockup-body" style="font-size:13px;">
+      <p style="color:#8b949e; font-size:11px;">5 张特性卡片，彩色左边框，基于 Aether 核心能力</p>
+      <div style="display:grid; gap:6px; margin-top:8px;">
+        <div style="background:#161b22; padding:6px 8px; border-radius:4px; border-left:2px solid #58a6ff; font-size:11px;">🔄 自研 ReActAgent 引擎</div>
+        <div style="background:#161b22; padding:6px 8px; border-radius:4px; border-left:2px solid #3fb950; font-size:11px;">📊 YAML 配置驱动多 Agent 编排</div>
+        <div style="background:#161b22; padding:6px 8px; border-radius:4px; border-left:2px solid #f0883e; font-size:11px;">🔧 Agent 级工具作用域</div>
+        <div style="background:#161b22; padding:6px 8px; border-radius:4px; border-left:2px solid #a371f7; font-size:11px;">🏗️ DDD 分层架构</div>
+        <div style="background:#161b22; padding:6px 8px; border-radius:4px; border-left:2px solid #da3633; font-size:11px;">⚡ 流式对话 & 工具编排</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">🔄 架构 (ArchitectureSection.vue) — 新版设计</div>
+    <div class="mockup-body" style="font-size:13px;">
+      <p style="color:#58a6ff; font-weight:600; margin-bottom:10px;">模块分层 & 核心组件</p>
+
+      <!-- Layer 1 -->
+      <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:10px; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <span style="background:#58a6ff; color:#fff; font-size:10px; padding:1px 6px; border-radius:4px;">Trigger</span>
+          <span style="font-weight:600;">aether-trigger</span>
+        </div>
+        <p style="color:#8b949e; font-size:11px; margin:0;">REST 控制器层，Chat API / SSE 流式端点</p>
+      </div>
+
+      <div style="text-align:center; color:#30363d; margin:4px 0;">↓</div>
+
+      <!-- Layer 2 -->
+      <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:10px; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <span style="background:#3fb950; color:#fff; font-size:10px; padding:1px 6px; border-radius:4px;">API</span>
+          <span style="font-weight:600;">aether-api</span>
+        </div>
+        <p style="color:#8b949e; font-size:11px; margin:0;">服务接口 & DTO 定义，跨模块契约</p>
+      </div>
+
+      <div style="text-align:center; color:#30363d; margin:4px 0;">↓</div>
+
+      <!-- Layer 3 - Domain Core -->
+      <div style="background:#161b22; border:2px solid #f0883e; border-radius:8px; padding:10px; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+          <span style="background:#f0883e; color:#fff; font-size:10px; padding:1px 6px; border-radius:4px;">Domain Core</span>
+          <span style="font-weight:600;">aether-domain</span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+          <div style="background:#0d1117; padding:6px; border-radius:4px; font-size:10px;">
+            <strong>ReActAgent</strong><br>
+            <span style="color:#8b949e;">主循环 · 重试 · 熔断</span>
+          </div>
+          <div style="background:#0d1117; padding:6px; border-radius:4px; font-size:10px;">
+            <strong>GraphExecutor</strong><br>
+            <span style="color:#8b949e;">顺序 · 并行 · 循环</span>
+          </div>
+          <div style="background:#0d1117; padding:6px; border-radius:4px; font-size:10px;">
+            <strong>ContextManager</strong><br>
+            <span style="color:#8b949e;">压缩 · 截断 · 预算</span>
+          </div>
+          <div style="background:#0d1117; padding:6px; border-radius:4px; font-size:10px;">
+            <strong>ToolExecutor</strong><br>
+            <span style="color:#8b949e;">并发 · 串行 · 适配</span>
+          </div>
+          <div style="background:#0d1117; padding:6px; border-radius:4px; font-size:10px;">
+            <strong>ArmoryService</strong><br>
+            <span style="color:#8b949e;">YAML → Bean 装配</span>
+          </div>
+          <div style="background:#0d1117; padding:6px; border-radius:4px; font-size:10px;">
+            <strong>MemoryStore</strong><br>
+            <span style="color:#8b949e;">持久记忆读写</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align:center; color:#30363d; margin:4px 0;">↓</div>
+
+      <!-- Layer 4 -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+        <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:10px;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+            <span style="background:#a371f7; color:#fff; font-size:10px; padding:1px 6px; border-radius:4px;">Infra</span>
+            <span style="font-weight:600;">aether-infrastructure</span>
+          </div>
+          <p style="color:#8b949e; font-size:10px; margin:0;">SessionStore · MCP Client · Adapter</p>
+        </div>
+        <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:10px;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+            <span style="background:#8b949e; color:#fff; font-size:10px; padding:1px 6px; border-radius:4px;">Types</span>
+            <span style="font-weight:600;">aether-types</span>
+          </div>
+          <p style="color:#8b949e; font-size:10px; margin:0;">枚举 · 异常 · 常量定义</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

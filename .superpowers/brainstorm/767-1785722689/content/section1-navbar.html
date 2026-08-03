@@ -1,0 +1,98 @@
+<h2>设计段 1/5 — 导航栏组件 (LandingNavbar.vue)</h2>
+<p class="subtitle">基于 MateClaw 交互模式，适配 Aether 现有技术栈 (Vue 3 + TailwindCSS + @vueuse/motion)</p>
+
+<div class="section">
+  <h3>组件结构</h3>
+  <pre style="background:#0d1117; padding:12px; border-radius:8px; font-size:12px; overflow-x:auto;">
+&lt;template&gt;
+  &lt;header class="fixed top-0 left-0 right-0 z-50 transition-all duration-300"
+          :class="{ 'bg-black/70 backdrop-blur-xl border-b border-white/10': scrolled }"&gt;
+    &lt;div class="nav-inner flex items-center justify-between px-6 md:px-10 h-16"&gt;
+
+      &lt;!-- Logo --&gt;
+      &lt;a href="#" class="flex items-center gap-3 group"&gt;
+        &lt;AetherLogo className="w-8 h-8" /&gt;
+        &lt;span class="font-black text-lg text-white"&gt;Aether&lt;/span&gt;
+      &lt;/a&gt;
+
+      &lt;!-- Desktop Nav --&gt;
+      &lt;nav class="hidden md:flex items-center gap-1"&gt;
+        &lt;a v-for="item in NAV_ITEMS" :key="item.label"
+           :href="item.href"
+           @click="handleNavClick(item, $event)"
+           class="nav-link text-sm font-medium px-3.5 py-2 rounded-lg
+                  transition-all duration-200"
+           :class="{ 'text-white bg-white/10': isActive(item),
+                    'text-white/60 hover:text-white hover:bg-white/5': !isActive(item) }"&gt;
+          {{ item.label }}
+        &lt;/a&gt;
+      &lt;/nav&gt;
+
+      &lt;!-- Right: GitHub + CTA --&gt;
+      &lt;div class="flex items-center gap-2"&gt;
+        &lt;a href="https://github.com/..." target="_blank" class="w-9 h-9 ..."&gt;
+          &lt;!-- GitHub icon --&gt;
+        &lt;/a&gt;
+        &lt;LandingButton label="开始使用" @click="emit('cta')" /&gt;
+
+        &lt;!-- Mobile hamburger --&gt;
+        &lt;button @click="mobileOpen = !mobileOpen" class="md:hidden ..."&gt;
+          &lt;Menu /&gt;
+        &lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;!-- Mobile dropdown --&gt;
+    &lt;Transition name="slide-down"&gt;
+      &lt;div v-if="mobileOpen" class="md:hidden border-t border-white/10 bg-black/90 ..."&gt;
+        &lt;a v-for="item in NAV_ITEMS" ...&gt;{{ item.label }}&lt;/a&gt;
+      &lt;/div&gt;
+    &lt;/Transition&gt;
+  &lt;/header&gt;
+&lt;/template&gt;
+  </pre>
+</div>
+
+<div class="section">
+  <h3>关键交互细节</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <tr style="border-bottom:1px solid #30363d;">
+      <th style="text-align:left; padding:8px;">交互</th>
+      <th style="text-align:left; padding:8px;">实现方式</th>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d;">
+      <td style="padding:8px;">固定定位</td>
+      <td style="padding:8px;"><code>fixed top-0 z-50</code>，始终在最上层</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d;">
+      <td style="padding:8px;">滚动背景过渡</td>
+      <td style="padding:8px;"><code>window.scrollY > 0</code> → 添加毛玻璃背景 + 底部边框；CSS <code>transition-all duration-300</code></td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d;">
+      <td style="padding:8px;">当前项高亮</td>
+      <td style="padding:8px;">锚点项：监听 scroll 位置判断当前 section；路由项：匹配 <code>route.path</code></td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d;">
+      <td style="padding:8px;">移动端折叠</td>
+      <td style="padding:8px;"><code>mobileOpen</code> ref + <code>md:hidden</code> 汉堡按钮 + slide-down Transition</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;">导航项悬停</td>
+      <td style="padding:8px;"><code>text-white/60 hover:text-white hover:bg-white/5</code> + <code>rounded-lg</code></td>
+    </tr>
+  </table>
+</div>
+
+<div class="section">
+  <h3>NAV_ITEMS 数据结构</h3>
+  <pre style="background:#0d1117; padding:12px; border-radius:8px; font-size:12px;">
+const NAV_ITEMS = [
+  { label: '亮点',     href: '#highlights',   type: 'anchor' },
+  { label: '架构',     href: '#architecture',  type: 'anchor' },
+  { label: '产品预览', href: '#preview',       type: 'anchor' },
+  { label: '路线图',   href: '/roadmap',       type: 'route' },
+  { label: '文档',     href: '/docs',          type: 'external' },
+]
+  </pre>
+  <p>type 决定点击行为：<code>anchor</code> → smooth scroll；<code>route</code> → router.push；<code>external</code> → window.open(_blank)</p>
+</div>

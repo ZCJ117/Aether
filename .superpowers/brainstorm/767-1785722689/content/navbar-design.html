@@ -1,0 +1,144 @@
+<h2>Aether Landing — 导航栏与页面结构改造设计</h2>
+<p class="subtitle">左侧：当前状态 · 右侧：改造目标</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">当前 LandingView 结构</div>
+    <div class="mockup-body" style="font-size:13px; line-height:2;">
+      <div style="background:#1a1a2e; color:#fff; padding:8px 12px; border-radius:6px; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+        <span style="font-weight:700;">◆ Aether</span>
+        <span style="margin-left:auto; display:flex; gap:12px; font-size:11px; color:#aaa;">
+          <span>特性</span><span>定价</span><span>文档</span><span>关于</span>
+        </span>
+        <span style="background:#fff; color:#000; padding:2px 8px; border-radius:99px; font-size:11px;">开始使用</span>
+      </div>
+      <div style="background:#0d1117; padding:12px; border-radius:6px;">
+        <div style="color:#58a6ff; font-weight:600;">⬡ LandingHero</div>
+        <div style="color:#888; font-size:11px;">"你的 AI 智能体。即刻编排"</div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#888;">⬡ LandingAppBar <span style="font-size:10px;">(菜单栏装饰)</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#f0883e;">⬡ LandingConsole <span style="font-size:10px;">← 替换为 产品预览</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#f0883e;">⬡ LandingOrchestration <span style="font-size:10px;">← 替换为 架构</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#f0883e;">⬡ LandingIntegrations <span style="font-size:10px;">← 替换为 亮点</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#da3633; text-decoration:line-through;">⬡ LandingTestimonials <span style="font-size:10px;">✕ 删除</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#da3633; text-decoration:line-through;">⬡ LandingPricing <span style="font-size:10px;">✕ 删除</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#3fb950;">⬡ LandingCTA <span style="font-size:10px;">✓ 保留</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">改造后 LandingView 结构</div>
+    <div class="mockup-body" style="font-size:13px; line-height:2;">
+      <div style="background:#0d1117; border:1px solid #58a6ff; color:#fff; padding:8px 12px; border-radius:6px; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+        <span style="font-weight:700;">◆ Aether</span>
+        <span style="margin-left:auto; display:flex; gap:12px; font-size:11px; color:#58a6ff;">
+          <span>亮点</span><span>架构</span><span>产品预览</span><span>路线图</span><span>文档</span>
+        </span>
+        <span style="display:flex; gap:6px; align-items:center;">
+          <span style="color:#aaa; font-size:10px;">⬡ GitHub</span>
+          <span style="background:#fff; color:#000; padding:2px 8px; border-radius:99px; font-size:11px;">开始使用</span>
+        </span>
+      </div>
+      <div style="background:#0d1117; padding:12px; border-radius:6px;">
+        <div style="color:#58a6ff; font-weight:600;">⬡ LandingHero <span style="font-size:10px; color:#3fb950;">✓</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#888;">⬡ LandingAppBar <span style="font-size:10px; color:#3fb950;">✓</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#3fb950; font-weight:600;">⬡ HighlightsSection <span style="font-size:10px;">🆕 亮点 (id="highlights")</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#3fb950; font-weight:600;">⬡ ArchitectureSection <span style="font-size:10px;">🆕 架构 (id="architecture")</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#3fb950; font-weight:600;">⬡ PreviewSection <span style="font-size:10px;">🆕 产品预览 (id="preview")</span></div>
+        <div style="border-top:1px solid #21262d; margin:6px 0;"></div>
+        <div style="color:#3fb950;">⬡ LandingCTA <span style="font-size:10px;">✓ 保留</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>导航栏交互行为 (MateClaw 风格)</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead>
+      <tr style="border-bottom:1px solid #30363d;">
+        <th style="text-align:left; padding:8px;">特性</th>
+        <th style="text-align:left; padding:8px;">实现</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px;">固定定位</td>
+        <td style="padding:8px;"><code>fixed top-0 z-50</code>，始终可见</td>
+      </tr>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px;">滚动背景过渡</td>
+        <td style="padding:8px;">默认透明 → 滚动后显示毛玻璃背景 + 底部边框</td>
+      </tr>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px;">当前项高亮</td>
+        <td style="padding:8px;">根据滚动位置或当前路由激活对应导航项</td>
+      </tr>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px;">移动端折叠</td>
+        <td style="padding:8px;"><code>md:</code> 断点以下显示汉堡按钮，展开下拉菜单</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h3>导航项跳转规则</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead>
+      <tr style="border-bottom:1px solid #30363d;">
+        <th style="text-align:left; padding:8px;">导航项</th>
+        <th style="text-align:left; padding:8px;">目标</th>
+        <th style="text-align:left; padding:8px;">行为</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px; font-weight:600;">亮点</td>
+        <td style="padding:8px;"><code>#highlights</code></td>
+        <td style="padding:8px;">平滑滚动 (scroll-behavior: smooth)</td>
+      </tr>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px; font-weight:600;">架构</td>
+        <td style="padding:8px;"><code>#architecture</code></td>
+        <td style="padding:8px;">平滑滚动</td>
+      </tr>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px; font-weight:600;">产品预览</td>
+        <td style="padding:8px;"><code>#preview</code></td>
+        <td style="padding:8px;">平滑滚动</td>
+      </tr>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px; font-weight:600;">路线图</td>
+        <td style="padding:8px;"><code>/roadmap</code></td>
+        <td style="padding:8px;">router.push('/roadmap') — Vue Router 导航</td>
+      </tr>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px; font-weight:600;">文档</td>
+        <td style="padding:8px;"><code>/docs</code></td>
+        <td style="padding:8px;">window.open('/docs', '_blank') — 新标签页</td>
+      </tr>
+      <tr style="border-bottom:1px solid #21262d;">
+        <td style="padding:8px;">GitHub</td>
+        <td style="padding:8px;">外部链接</td>
+        <td style="padding:8px;">target="_blank" 跳转 GitHub</td>
+      </tr>
+      <tr>
+        <td style="padding:8px;">CTA 按钮</td>
+        <td style="padding:8px;">登录/仪表盘</td>
+        <td style="padding:8px;">已登录 → Dashboard，未登录 → Login</td>
+      </tr>
+    </tbody>
+  </table>
+</div>

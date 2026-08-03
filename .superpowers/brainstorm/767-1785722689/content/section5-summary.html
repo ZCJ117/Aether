@@ -1,0 +1,86 @@
+<h2>设计段 5/5 — 路由配置 & 文件变更汇总</h2>
+<p class="subtitle">方案 A 最小修改，全局字体: 微软雅黑</p>
+
+<div class="section">
+  <h3>路由配置 (routes.ts)</h3>
+  <pre style="background:#0d1117; padding:12px; border-radius:8px; font-size:12px;">
+// 新增 2 条路由:
+{ path: '/roadmap', name: 'Roadmap',
+  component: () => import('@/views/RoadmapView.vue'),
+  meta: { title: '路线图 — Aether', group: 'public' } },
+
+{ path: '/docs', name: 'Docs',
+  component: () => import('@/views/DocsView.vue'),
+  meta: { title: '文档 — Aether', group: 'public' } },
+  </pre>
+</div>
+
+<div class="section">
+  <h3>文件变更清单</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:12px;">
+    <tr style="border-bottom:1px solid #30363d;">
+      <th style="text-align:left; padding:8px;">操作</th>
+      <th style="text-align:left; padding:8px;">文件</th>
+      <th style="text-align:left; padding:8px;">说明</th>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d; background:#161b22;">
+      <td style="padding:8px; color:#f0883e;">修改</td>
+      <td style="padding:8px;"><code>src/components/landing/LandingNavbar.vue</code></td>
+      <td style="padding:8px;">5 导航项 + GitHub + 滚动背景 + 移动端折叠 + 高亮</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d; background:#161b22;">
+      <td style="padding:8px; color:#f0883e;">修改</td>
+      <td style="padding:8px;"><code>src/views/LandingView.vue</code></td>
+      <td style="padding:8px;">替换 3 个 section 引用，删除 Testimonials/Pricing</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d; background:#161b22;">
+      <td style="padding:8px; color:#f0883e;">修改</td>
+      <td style="padding:8px;"><code>src/router/routes.ts</code></td>
+      <td style="padding:8px;">新增 /roadmap 和 /docs 路由</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d; background:#0d1117;">
+      <td style="padding:8px; color:#3fb950;">新建</td>
+      <td style="padding:8px;"><code>src/components/landing/HighlightsSection.vue</code></td>
+      <td style="padding:8px;">亮点 section — 5 张特性卡片</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d; background:#0d1117;">
+      <td style="padding:8px; color:#3fb950;">新建</td>
+      <td style="padding:8px;"><code>src/components/landing/ArchitectureSection.vue</code></td>
+      <td style="padding:8px;">架构 section — 4 层模块卡片</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d; background:#0d1117;">
+      <td style="padding:8px; color:#3fb950;">新建</td>
+      <td style="padding:8px;"><code>src/components/landing/PreviewSection.vue</code></td>
+      <td style="padding:8px;">产品预览 section — 三列截图占位</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d; background:#0d1117;">
+      <td style="padding:8px; color:#3fb950;">新建</td>
+      <td style="padding:8px;"><code>src/views/RoadmapView.vue</code></td>
+      <td style="padding:8px;">路线图页面 — 垂直时间线</td>
+    </tr>
+    <tr style="background:#0d1117;">
+      <td style="padding:8px; color:#3fb950;">新建</td>
+      <td style="padding:8px;"><code>src/views/DocsView.vue</code></td>
+      <td style="padding:8px;">文档首页 — 左侧目录 + 右侧正文</td>
+    </tr>
+  </table>
+</div>
+
+<div class="section">
+  <h3>不改动的文件</h3>
+  <ul style="color:#8b949e; font-size:12px;">
+    <li><code>LandingHero.vue</code> / <code>LandingAppBar.vue</code> / <code>LandingCTA.vue</code> — 保留不动</li>
+    <li><code>LandingView.vue</code> 中的背景视频、噪音滤镜、辅助线 — 保留不动</li>
+    <li><code>AetherLogo.vue</code> / <code>LandingButton.vue</code> — 复用，不改动</li>
+    <li><code>App.vue</code> / <code>main.ts</code> / <code>index.html</code> — 不动</li>
+    <li>所有非 landing 相关组件和视图 — 不动</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>全局字体配置</h3>
+  <pre style="background:#0d1117; padding:10px; border-radius:8px; font-size:12px;">
+// 所有新增组件 body / root 层设置:
+font-family: 'Microsoft YaHei', '微软雅黑', sans-serif;
+  </pre>
+</div>
