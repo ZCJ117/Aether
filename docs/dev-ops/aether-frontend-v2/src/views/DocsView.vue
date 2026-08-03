@@ -487,85 +487,199 @@ runner:
 
           <template v-if="activeSection === '设计参考来源'">
             <h1 class="text-2xl md:text-3xl font-semibold mb-2">设计参考来源</h1>
-            <p class="text-white/50 text-sm mb-10">Aether 参考了以下 6 个开源 Agent 框架的核心设计</p>
+            <p class="text-white/50 text-sm mb-10">Aether 的设计大量参考了以下 6 个开源 Agent 框架，共研读 100+ 源文件，编写 9 个测试类（93 个测试用例）来验证借鉴模式的正确性。下面是每个框架的详细架构分析及 Aether 具体借鉴内容。</p>
 
-            <section class="mb-10">
-              <h2 class="text-lg font-semibold text-white mb-3">1. AutoGen（Microsoft Research · Python）</h2>
-              <p class="text-white/50 text-sm mb-2">参考内容：</p>
-              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
-                <li>Agent 协议 / 消息传递机制 → Aether 内部消息通信</li>
-                <li>DiGraph + GraphFlowManager 图执行 → Aether GRAPHFLOW DAG 执行模式</li>
-                <li>AssistantAgent 独立模型配置 → Aether 异构模型混用</li>
-                <li>OTel Span 追踪层级 → Aether 3 级 AgentTracer</li>
-                <li>MagenticOne 编排器（Plan → Delegate → Synthesize）→ Aether PlanActAgent</li>
-                <li>_head_and_tail 工具配对保护 → Aether ContextManager.alignToolPairBoundaries()</li>
-              </ul>
+            <!-- AutoGen -->
+            <section class="mb-12">
+              <h2 class="text-xl font-semibold text-white mb-4">1. AutoGen（Microsoft Research）</h2>
+              <div class="bg-white/[0.03] border border-white/10 rounded-xl p-5 mb-4">
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">项目概况：</strong>Python 语言，MIT 协议。分层架构（Core API / AgentChat API / Extensions API），支持 .NET 跨语言运行时。核心是消息传递 + 事件驱动的 Agent 抽象，提供 AssistantAgent、GroupChat、MagenticOne 等多种多 Agent 编排模式。</p>
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">核心架构：</strong></p>
+                <ul class="list-disc list-inside text-white/50 text-sm space-y-1 ml-4">
+                  <li>AgentRuntime — 消息路由与分布式运行时（local + gRPC）</li>
+                  <li>AssistantAgent — 主 Agent 实现，含模型客户端、工具/工作台、handoffs、记忆</li>
+                  <li>SelectorGroupChat — 基于选择器的群聊编排</li>
+                  <li>MagenticOne — 编排器模式参考实现（Plan → Delegate → Synthesize）</li>
+                </ul>
+              </div>
+              <h3 class="text-sm font-semibold text-[#5AC8FA] mb-3">Aether 借鉴项：</h3>
+              <table class="w-full text-sm border-collapse mb-3">
+                <thead><tr class="border-b border-white/10"><th class="text-left py-2 text-white/60 w-1/3">AutoGen 概念</th><th class="text-left py-2 text-white/60">Aether 实现</th></tr></thead>
+                <tbody class="text-white/50">
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">Agent 协议 / 消息传递</td><td class="py-2">内部消息通信机制，TurnMessage 包装 assistant/tool_use/tool_result</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">DiGraph + GraphFlowManager 图执行</td><td class="py-2">GRAPHFLOW DAG 执行模式：拓扑排序 + 就绪队列 + SpEL 条件路由</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">AssistantAgent 独立模型配置</td><td class="py-2">Per-Agent 异构模型混用，ChatModelNode 为每个 Agent 创建独立 ChatModel Bean</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">OTel Span 三层追踪</td><td class="py-2">AgentTracer 3 级追踪层级（Agent → Turn → Tool）</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">MagenticOne 编排器</td><td class="py-2">PlanActAgent 三阶段（Plan → Act → Synthesize）</td></tr>
+                  <tr><td class="py-2 pr-4">_head_and_tail 工具配对保护</td><td class="py-2">ContextManager.alignToolPairBoundaries() 防止截断导致孤儿 tool_use/tool_result</td></tr>
+                </tbody>
+              </table>
             </section>
 
-            <section class="mb-10">
-              <h2 class="text-lg font-semibold text-white mb-3">2. AgentScope Java（Alibaba · Java）</h2>
-              <p class="text-white/50 text-sm mb-2">参考内容：</p>
-              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
-                <li>AgentState 双模状态（快照+增量）→ Aether 状态序列化设计</li>
-                <li>Hook 系统 7 个拦截点 → 直接架构移植为 Aether AgentHook</li>
-                <li>MiddlewareBase 五层洋葱模型 → Aether 同结构中间件系统</li>
-                <li>AgentEvent 多态事件（Jackson 类型化）→ Aether 10 类型事件系统</li>
-                <li>Per-Agent Toolkit 深拷贝隔离 → Aether Agent 级 toolNames 工具作用域</li>
-                <li>PermissionEngine 5 条优先级规则链 → Aether 权限引擎</li>
-              </ul>
+            <!-- AgentScope Java -->
+            <section class="mb-12">
+              <h2 class="text-xl font-semibold text-white mb-4">2. AgentScope Java（Alibaba）</h2>
+              <div class="bg-white/[0.03] border border-white/10 rounded-xl p-5 mb-4">
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">项目概况：</strong>Java 语言（JDK 17+），Apache 2.0 协议。基于 Project Reactor 的响应式 Agent 框架，企业级生产特性最完备。五层洋葱中间件 + Hook 拦截系统 + 权限引擎 + OpenTelemetry 原生集成 + GraalVM 原生镜像支持。</p>
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">核心架构：</strong></p>
+                <ul class="list-disc list-inside text-white/50 text-sm space-y-1 ml-4">
+                  <li>AgentBase — 抽象基类，生命周期管理 + Hook 系统 + 中断处理 + 响应式状态</li>
+                  <li>ReActAgent — 主 Agent 实现，工具执行/校验、结构化输出、长记忆、RAG</li>
+                  <li>MiddlewareBase 五层洋葱 — onSystemPrompt / onAgent / onReasoning / onModelCall / onActing</li>
+                  <li>PermissionEngine — 5 条优先级规则链（SensitiveArgMask → ReadOnlyAllow → ToolAllowlist → PlanModeDenyWrite）</li>
+                  <li>AgentEvent 多态系统 — ToolCallStartEvent / TextBlockDeltaEvent / RequireUserConfirmEvent 等</li>
+                </ul>
+              </div>
+              <h3 class="text-sm font-semibold text-[#30D158] mb-3">Aether 借鉴项：</h3>
+              <table class="w-full text-sm border-collapse mb-3">
+                <thead><tr class="border-b border-white/10"><th class="text-left py-2 text-white/60 w-1/3">AgentScope 概念</th><th class="text-left py-2 text-white/60">Aether 实现</th></tr></thead>
+                <tbody class="text-white/50">
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">AgentState 双模（快照+增量）</td><td class="py-2">Agent 状态序列化，支持完整快照与增量更新两种恢复方式</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">Hook 系统 7 个拦截点</td><td class="py-2">AgentHook 系统，架构直接移植，覆盖生命周期关键节点</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">MiddlewareBase 五层洋葱</td><td class="py-2">同结构中间件系统（SystemPrompt → Agent → Reasoning → ModelCall → Acting）</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">AgentEvent 多态事件</td><td class="py-2">10 类型 Jackson 类型化事件系统，支持 polymorphic 序列化</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">Per-Agent Toolkit 深拷贝隔离</td><td class="py-2">Agent 级 toolNames 作用域，ChatModelNode 按 Agent 过滤 ToolCallback</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">PermissionEngine 规则链</td><td class="py-2">同优先级顺序的权限引擎，SensitiveArgMask → ReadOnly → Allowlist → DenyWrite</td></tr>
+                  <tr><td class="py-2 pr-4">InterruptControl 瞬态中断</td><td class="py-2">H5 中断信号处理，支持安全暂停/恢复而不丢失上下文</td></tr>
+                </tbody>
+              </table>
             </section>
 
-            <section class="mb-10">
-              <h2 class="text-lg font-semibold text-white mb-3">3. CrewAI（CrewAI Inc. · Python）</h2>
-              <p class="text-white/50 text-sm mb-2">参考内容：</p>
-              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
-                <li>BaseAgent 可序列化实体 → Aether Agent.state() / loadState()</li>
-                <li>BaseLLM 类层次结构 → Aether ModelProvider SPI</li>
-                <li>EncodingFlow / RecallFlow 记忆管线 → Aether MemoryFacade + llmRerank</li>
-                <li>CheckpointConfig 多粒度检查点 → Aether 检查点/恢复机制</li>
-                <li>EventBus 事件总线 → Aether AgentEventPublisher</li>
-                <li>build_schema_hint 工具校验反馈 → Aether SchemaHintBuilder</li>
-              </ul>
+            <!-- CrewAI -->
+            <section class="mb-12">
+              <h2 class="text-xl font-semibold text-white mb-4">3. CrewAI（CrewAI Inc.）</h2>
+              <div class="bg-white/[0.03] border border-white/10 rounded-xl p-5 mb-4">
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">项目概况：</strong>Python 语言（3.10-3.13），MIT 协议。零 LangChain 依赖，自研全套 Agent 基础设施。独特的 Crews + Flows 双范式架构，支持自主协作与精确控制混用。企业版提供 AMP 控制面。</p>
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">核心架构：</strong></p>
+                <ul class="list-disc list-inside text-white/50 text-sm space-y-1 ml-4">
+                  <li>Crews — 角色驱动的自治 Agent 团队，Process.sequential / Process.hierarchical 两种模式</li>
+                  <li>Flows — 事件驱动工作流，装饰器编程（@start / @listen / @router），FlowState 类型化状态</li>
+                  <li>Memory 系统 — 四层记忆（ShortTerm / LongTerm / Entity / User），MemoryScope 命名空间隔离</li>
+                  <li>CheckpointConfig — 多粒度检查点（per-task / per-agent / per-crew），from_checkpoint() 恢复</li>
+                  <li>Tool 生态 — BaseTool 抽象，支持 LangChain 工具适配、OpenAI Agents SDK 适配</li>
+                </ul>
+              </div>
+              <h3 class="text-sm font-semibold text-[#FF9F0A] mb-3">Aether 借鉴项：</h3>
+              <table class="w-full text-sm border-collapse mb-3">
+                <thead><tr class="border-b border-white/10"><th class="text-left py-2 text-white/60 w-1/3">CrewAI 概念</th><th class="text-left py-2 text-white/60">Aether 实现</th></tr></thead>
+                <tbody class="text-white/50">
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">BaseAgent 可序列化实体</td><td class="py-2">Agent.state() / loadState() 方法，支持 JSON 序列化与反序列化恢复</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">BaseLLM 类层次 + 提供者抽象</td><td class="py-2">ModelProvider SPI，支持多 Provider 统一路由与切换</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">EncodingFlow / RecallFlow 记忆管线</td><td class="py-2">MemoryFacade（语义搜索）+ llmRerank（重排序）+ Shallow/Deep 双模召回</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">CheckpointConfig 多粒度</td><td class="py-2">检查点/恢复机制，支持 resumeFromCheckpoint() 端点</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">EventBus 事件总线</td><td class="py-2">AgentEventPublisher 发布/订阅模式，解耦 Agent 内部组件通信</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">build_schema_hint 反馈</td><td class="py-2">SchemaHintBuilder：工具校验失败时自动构建 Schema 提示，反馈给 LLM 自修正</td></tr>
+                  <tr><td class="py-2 pr-4">并发分段摘要</td><td class="py-2">ChunkSummarizer：大上下文分段并发摘要，提升压缩效率</td></tr>
+                </tbody>
+              </table>
             </section>
 
-            <section class="mb-10">
-              <h2 class="text-lg font-semibold text-white mb-3">4. MetaGPT（DeepWisdom · Python）</h2>
-              <p class="text-white/50 text-sm mb-2">参考内容：</p>
-              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
-                <li>RoleContext.llm 角色级模型配置 → Aether Per-Agent 模型</li>
-                <li>Working / Long-Term Memory 分层 → Aether 多层记忆系统</li>
-                <li>ProjectRepo 持久化 → Aether 会话状态仓储</li>
-                <li>ActionNode 编译时 {key} 校验 → Aether AgentGraphCompiler {outputKey} 校验</li>
-                <li>PLAN_AND_ACT 执行模式 → Aether PlanActAgent 三阶段</li>
-                <li>消息级去重 → Aether Caffeine LRU 响应缓存</li>
-              </ul>
+            <!-- MetaGPT -->
+            <section class="mb-12">
+              <h2 class="text-xl font-semibold text-white mb-4">4. MetaGPT（DeepWisdom）</h2>
+              <div class="bg-white/[0.03] border border-white/10 rounded-xl p-5 mb-4">
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">项目概况：</strong>Python 语言（3.9-3.11），MIT 协议。核心理念 Code = SOP(Team)，将软件公司 SOP 编码为 Agent 团队。基于 Role 的角色抽象，三种执行模式（REACT / BY_ORDER / PLAN_AND_ACT），ActionNode 编译时校验。</p>
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">核心架构：</strong></p>
+                <ul class="list-disc list-inside text-white/50 text-sm space-y-1 ml-4">
+                  <li>Role — 基本单元，含 profile / goal / constraints / actions / RoleContext</li>
+                  <li>RoleContext — 运行时状态分离（memory / working_memory / msg_buffer / state 机）</li>
+                  <li>RoleReactMode 三种模式 — REACT（动态选择 Action）/ BY_ORDER（顺序执行）/ PLAN_AND_ACT（先计划后执行）</li>
+                  <li>ActionNode — 可组合工具抽象，编译时 FillMode {key} 校验</li>
+                  <li>Environment — 发布/订阅消息传递，Role 间通信</li>
+                </ul>
+              </div>
+              <h3 class="text-sm font-semibold text-[#BF5AF2] mb-3">Aether 借鉴项：</h3>
+              <table class="w-full text-sm border-collapse mb-3">
+                <thead><tr class="border-b border-white/10"><th class="text-left py-2 text-white/60 w-1/3">MetaGPT 概念</th><th class="text-left py-2 text-white/60">Aether 实现</th></tr></thead>
+                <tbody class="text-white/50">
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">RoleContext.llm 角色级模型</td><td class="py-2">Per-Agent 异构模型配置，每个 Agent 可指定不同模型</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">Working / Long-Term Memory</td><td class="py-2">多层记忆系统设计（短期对话上下文 + 长期持久化存储）</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">ProjectRepo 持久化</td><td class="py-2">SessionRepository 会话状态仓储，跨请求状态恢复</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">ActionNode {key} 编译校验</td><td class="py-2">AgentGraphCompiler 编译时 {outputKey} 引用检查，防止运行时空引用</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">PLAN_AND_ACT 执行模式</td><td class="py-2">PlanActAgent 三阶段实现（Plan → Act → Synthesize）</td></tr>
+                  <tr><td class="py-2 pr-4">消息级去重</td><td class="py-2">Caffeine LRU 响应缓存，基于消息指纹的 LLM 调用去重</td></tr>
+                </tbody>
+              </table>
             </section>
 
-            <section class="mb-10">
-              <h2 class="text-lg font-semibold text-white mb-3">5. cc-haha（Claude Code Fork · TypeScript）</h2>
-              <p class="text-white/50 text-sm mb-2">参考内容：</p>
-              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
-                <li>cost-tracker Token 核算 → Aether TokenBudget / CostTracker</li>
-                <li>SessionMemory 后台 Fork Agent 异步提取 → Aether SessionMemoryExtractor</li>
-                <li>显式工具 allow/deny 列表 → Aether YAML toolNames 工具白名单</li>
-                <li>WAL JSONL 日志模式 → Aether 检查点 WAL 事件日志</li>
-                <li>PermissionMode 4 级权限层级 → Aether 权限模式（DEFAULT→PLAN→ACCEPT_EDITS→BYPASS）</li>
-                <li>autoCompact 熔断（MAX_CONSECUTIVE_FAILURES=3）→ Aether P2 压缩保护</li>
-                <li>isConcurrencySafe 安全/不安全分组 → Aether 工具执行器并发策略</li>
-              </ul>
+            <!-- cc-haha -->
+            <section class="mb-12">
+              <h2 class="text-xl font-semibold text-white mb-4">5. cc-haha（Claude Code Fork）</h2>
+              <div class="bg-white/[0.03] border border-white/10 rounded-xl p-5 mb-4">
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">项目概况：</strong>TypeScript 语言（Bun 运行时），基于 Anthropic Claude Code 的分叉。终端 UI（Ink/React）+ 工具执行循环 + 多 Agent Swarm 团队协作。核心关注：Token 成本控制、工具安全、会话持久化、上下文压缩。</p>
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">核心架构：</strong></p>
+                <ul class="list-disc list-inside text-white/50 text-sm space-y-1 ml-4">
+                  <li>Agent Loop — 标准 LLM-Agent 循环：用户输入 → 模型调用 → 解析 tool_use → 执行工具 → 返回结果 → 重复</li>
+                  <li>Tool System — 文件操作 / bash / grep / MCP / LSP / Computer Use</li>
+                  <li>Swarm 多 Agent — Tmux 后端 + 进程内后端，会话级并行</li>
+                  <li>PermissionMode 四级 — DEFAULT → PLAN → ACCEPT_EDITS → BYPASS</li>
+                  <li>autoCompact 熔断 — 连续 3 次压缩失败后永久禁用，基于生产数据分析（日浪费 25 万次 API 调用）</li>
+                  <li>WAL 日志 — Write-Ahead Log JSONL 模式，检查点/恢复</li>
+                </ul>
+              </div>
+              <h3 class="text-sm font-semibold text-[#FF453A] mb-3">Aether 借鉴项：</h3>
+              <table class="w-full text-sm border-collapse mb-3">
+                <thead><tr class="border-b border-white/10"><th class="text-left py-2 text-white/60 w-1/3">cc-haha 概念</th><th class="text-left py-2 text-white/60">Aether 实现</th></tr></thead>
+                <tbody class="text-white/50">
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">cost-tracker Token 核算</td><td class="py-2">TokenBudget / CostTracker，实时追踪每次模型调用的 Token 消耗与费用</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">SessionMemory Fork Agent</td><td class="py-2">SessionMemoryExtractor：后台异步 Agent 从对话历史中提取结构化记忆</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">显式 allow/deny 工具列表</td><td class="py-2">YAML toolNames 配置（支持 "*" 全量 / 精确名称列表），Agent 级工具白名单</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">WAL JSONL 日志</td><td class="py-2">检查点 WAL 事件日志，支持崩溃恢复和状态回放</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">PermissionMode 四级</td><td class="py-2">同结构权限模式：DEFAULT → PLAN → ACCEPT_EDITS → BYPASS</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">autoCompact 熔断（3次）</td><td class="py-2">ContextManager.MAX_CONSECUTIVE_COMPACT_FAILURES = 3，P2 压缩保护</td></tr>
+                  <tr><td class="py-2 pr-4">isConcurrencySafe 分组</td><td class="py-2">ToolExecutor：safe 组并发（CompletableFuture, 60s 超时） + unsafe 组串行</td></tr>
+                </tbody>
+              </table>
             </section>
 
+            <!-- Hermes Agent -->
+            <section class="mb-12">
+              <h2 class="text-xl font-semibold text-white mb-4">6. Hermes Agent（Nous Research）</h2>
+              <div class="bg-white/[0.03] border border-white/10 rounded-xl p-5 mb-4">
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">项目概况：</strong>Python 语言，MIT 协议。自改进 AI Agent，内置学习循环。核心特色：21 类 FailoverReason 错误分类、去相关抖动退避算法、闭环技能进化、多渠道通信网关。运行环境从 $5 VPS 到 GPU 集群均可。</p>
+                <p class="text-white/50 text-sm mb-3"><strong class="text-white/80">核心架构：</strong></p>
+                <ul class="list-disc list-inside text-white/50 text-sm space-y-1 ml-4">
+                  <li>Conversation Loop — 模型调用（流式）→ 工具分发 → 结果处理 → 重试/故障转移 → 压缩 → post-turn hooks</li>
+                  <li>ContextEngine — 可插拔上下文引擎（ContextCompressor 默认：DAG 或线性摘要 + Token 追踪）</li>
+                  <li>ErrorClassifier — FailoverReason 21 种分类，每种含 action hint（retryable / shouldCompress / shouldFallback）</li>
+                  <li>Learning Loop — 自主技能创建 → 使用中自改进 → 定期策展提示持久化 → FTS5 + LLM 跨会话召回</li>
+                  <li>Multi-Interface Gateway — 6 种终端后端 + IM 网关（Telegram / Discord / Slack / WhatsApp / Signal / Email）</li>
+                </ul>
+              </div>
+              <h3 class="text-sm font-semibold text-[#FFD60A] mb-3">Aether 借鉴项：</h3>
+              <table class="w-full text-sm border-collapse mb-3">
+                <thead><tr class="border-b border-white/10"><th class="text-left py-2 text-white/60 w-1/3">Hermes Agent 概念</th><th class="text-left py-2 text-white/60">Aether 实现</th></tr></thead>
+                <tbody class="text-white/50">
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">FailoverReason 21 类分类</td><td class="py-2">14 类 FailoverReason 枚举（覆盖 auth / rate_limit / timeout / context_overflow 等核心场景）</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">去相关抖动退避算法</td><td class="py-2">ResilientChatModelExecutor：base=2s, max=30s, jitterRatio=0.5 去相关抖动</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">try_activate_fallback 链切换</td><td class="py-2">ModelRoute：有序 Provider 列表 + 60s 冷却，超限自动切换到备用模型</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">ClassifiedError 内联 action hints</td><td class="py-2">分级错误设计：每个错误携带 retryable / shouldCompress / shouldFallback 标志</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">禁用 SDK 内置重试</td><td class="py-2">所有重试逻辑统一收敛到 ResilientChatModelExecutor，避免多层重试叠加</td></tr>
+                  <tr class="border-b border-white/5"><td class="py-2 pr-4">SUMMARY_PREFIX 防污染</td><td class="py-2">摘要前缀 "[对话历史摘要 — 仅供参考，非活跃指令]" 防止模型误执行摘要内容</td></tr>
+                  <tr><td class="py-2 pr-4">Hibernation / Wake 模式</td><td class="py-2">会话状态持久化 + 按需恢复，支持长时间闲置后无缝继续</td></tr>
+                </tbody>
+              </table>
+            </section>
+
+            <!-- Summary -->
             <section class="mb-10">
-              <h2 class="text-lg font-semibold text-white mb-3">6. Hermes Agent（Nous Research · Python）</h2>
-              <p class="text-white/50 text-sm mb-2">参考内容：</p>
-              <ul class="list-disc list-inside text-white/50 text-sm space-y-1">
-                <li>FailoverReason 21 类型错误分类 → Aether P1 14 类型 FailoverReason 枚举</li>
-                <li>去相关抖动退避算法（base=2s, max=30s, jitterRatio=0.5）→ Aether P1 ResilientChatModelExecutor</li>
-                <li>try_activate_fallback 故障转移模型链 + 60s 冷却 → Aether ModelRoute 路由切换</li>
-                <li>ClassifiedError 内联 action hints（retryable / shouldCompress / shouldFallback）→ Aether P1 分级错误设计</li>
-                <li>禁用 SDK 内置重试、集中化重试所有权 → Aether P1 统一重试入口</li>
-                <li>摘要前缀防污染标注（SUMMARY_PREFIX）→ Aether P2 摘要隔离标注</li>
-              </ul>
+              <h2 class="text-xl font-semibold text-white mb-4">借鉴总结</h2>
+              <div class="bg-white/[0.03] border border-white/10 rounded-xl p-5">
+                <table class="w-full text-sm border-collapse">
+                  <thead><tr class="border-b border-white/10"><th class="text-left py-2 text-white/60">领域</th><th class="text-left py-2 text-white/60">主要参考框架</th><th class="text-left py-2 text-white/60">Aether 落地模块</th></tr></thead>
+                  <tbody class="text-white/50">
+                    <tr class="border-b border-white/5"><td class="py-2">Agent 主循环</td><td class="py-2">AutoGen · cc-haha · MetaGPT</td><td class="py-2">ReActAgent.queryLoop() — 4 阶段循环</td></tr>
+                    <tr class="border-b border-white/5"><td class="py-2">多 Agent 编排</td><td class="py-2">AutoGen · CrewAI · MetaGPT</td><td class="py-2">GraphExecutor — SEQUENTIAL / PARALLEL / LOOP</td></tr>
+                    <tr class="border-b border-white/5"><td class="py-2">工具系统</td><td class="py-2">AgentScope Java · cc-haha</td><td class="py-2">ToolExecutor + toolNames 作用域 + MCP/Skills</td></tr>
+                    <tr class="border-b border-white/5"><td class="py-2">上下文管理</td><td class="py-2">cc-haha · Hermes Agent</td><td class="py-2">ContextManager — 三层压缩 + 熔断</td></tr>
+                    <tr class="border-b border-white/5"><td class="py-2">错误处理 & 重试</td><td class="py-2">Hermes Agent</td><td class="py-2">ResilientChatModelExecutor + FailoverReason</td></tr>
+                    <tr class="border-b border-white/5"><td class="py-2">状态 & 检查点</td><td class="py-2">CrewAI · AgentScope Java</td><td class="py-2">CheckpointCollector + AgentState</td></tr>
+                    <tr class="border-b border-white/5"><td class="py-2">权限 & 安全</td><td class="py-2">AgentScope Java · cc-haha</td><td class="py-2">PermissionEngine — 4 级权限 + 规则链</td></tr>
+                    <tr class="border-b border-white/5"><td class="py-2">记忆系统</td><td class="py-2">CrewAI · MetaGPT · cc-haha</td><td class="py-2">MemoryFacade + MemoryStore + IdentifierRegistry</td></tr>
+                    <tr><td class="py-2">可观测性</td><td class="py-2">AutoGen · AgentScope Java</td><td class="py-2">AgentEvent 10 类型 + AgentTracer 3 层级</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </section>
           </template>
 
