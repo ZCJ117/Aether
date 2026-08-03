@@ -2,7 +2,7 @@
 
 Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、**PlanActAgent 规划执行模式**、**检查点/恢复机制**、**LLM 响应缓存**、**上下文工程架构升级**（Token 预算 + AgentScope 6步压缩管道 + 信号策展 + 运行时即时检索 + 子Agent 物理隔离 + 外部笔记）、**三级优先级代码优化**（P0 工具校验闭环与 Schema 回喂 + P1 错误分类容错与 Fallback 模型链 + P2 上下文压缩守卫与熔断）、工具沙箱、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
 
-设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha、hermes-agent 六大开源 Agent 框架，累计 100+ 源文件、9 个测试类（93 个测试用例）。
+设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha、hermes-agent 六大开源 Agent 框架，累计 100+ 源文件、9 个测试类（112 个测试用例）。
 
 ---
 
@@ -60,10 +60,45 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
   - **连续压缩失败熔断器**：`MAX_CONSECUTIVE_COMPACT_FAILURES=3`（来源 cc-haha 生产数据，可消除日 25 万次徒劳 API 调用），成功重置、达阈值永久放弃本会话自动压缩
   - **上下文窗口配置化**：`ModelContextWindowRegistry` 窗口大小外置可配（精确 modelId → 关键字包含 → 默认 128k），chars-per-token 估算系数同样外置
 
-### 2.3 横切关注点增强（H4/H5）
+### 2.3 架构优化增强（H4/H5 + M1/M2/M3/M7）
 
-- **H4 权限确认回执**：新增 `POST /api/v1/confirm` 端点支持用户提交工具调用批准/拒绝回执，SSE 事件新增 `permissionAsking / agentPaused` 类型，`AgentState` 增加 `SuspendedToolCall` 挂起队列（`CopyOnWriteArrayList`），CORS 改为按 profile 配置白名单（`aether.cors.allowed-origins`）替代 `*` 全开
-- **H5 状态完整恢复与检查点增强**：`AgentState` 槽位化子上下文（`ToolContextState` 工具激活组 + 校验计数 + `InterruptControl` 中断信号 transient 语义永不序列化），写操作前自动触发工作区快照（`ToolExecutor` 每轮每目录至多一次去重，异常静默不阻塞），`GitShadowCheckpointStore`（JGit）Git 影子仓检查点存储，新增 `POST /api/v1/resume` 检查点恢复端点
+**审计基线**：基于《Aether 多架构优势融合策略》7 份优化方案文档，经源码逐行核查，**41 项优化中 36 项完整落地（87.8%）**，高优先级 P0/P1/P2/H4/H5 100% 完整活跃。
+
+#### 人机审批闭环与安全链（H4）
+- **deny-first 分组短路权限引擎**：`PermissionEngine` 严格分组求值（deny → ask → 工具自检 → allow → BYPASS → 默认 ASK_USER），`ASK_USER` 决策不再静默放行
+- **挂起-确认-恢复协议**：`SuspendedToolCall` / `ConfirmResult` 记录，ASK_USER → Agent PAUSED → SSE `permission_asking` 事件 → 前端确认回执 → `applyConfirmResults()` 恢复执行
+- **Prompt 注入防护**：`InjectionGuardRule` 16 种中英文注入模式检测（"忽略之前的指令"、"system prompt leak"等），命中 → ASK_USER 走人工确认
+- **脱敏原地污染修复**：`SensitiveArgMaskRule` 不再原地修改真实参数，`MaskingUtil.forDisplay()` 仅对展示/日志副本脱敏
+- **API 安全收敛**：CORS 按 profile 白名单 (`aether.cors.allowed-origins`) + JWT 鉴权 + BCrypt 密码编码 + API token 校验
+
+#### 状态完整恢复与透明检查点（H5）
+- **AgentState 槽位化**：`context/summary/turn/permission/tool` 子上下文全覆盖，`transient volatile InterruptControl` 运行期信号永不序列化
+- **loadState 全字段恢复**：`requireKeys()` 强校验缺失字段 → `StateRestoreException` 响亮报错（对标 autogen "恢复失败要响亮地失败"）
+- **Git 影子仓检查点**：`GitShadowCheckpointStore`（JGit, 654行）共享 bare 仓 → 内容寻址去重 → write-tree→commit-tree→update-ref 底层管道 → 三级清理（per-ref 保留/保留天数/总量上限）→ 恢复前自动 pre-rollback 快照
+- **写操作前自动快照**：`ToolExecutor.triggerWriteSnapshot()` 每轮每目录至多一次去重，异常静默不阻塞工具
+
+#### M2 委派即工具（Delegation-as-Tool）
+- **SubAgentDelegationTool**：将 `SubAgentOrchestrator.dispatch()` 建模为 `Tool` 接口实现，LLM 通过标准 `tool_use` 调用 `delegate_to_subagent` 发起子Agent派遣
+- **零新增协议**：自动继承 P0 的 ToolExecutor 两级校验 + P1 的容错重试链路，复用现有 `ToolResult.error()` 回传通道
+- **向后兼容**：GraphExecutor 的 SUBAGENT 结构路径与 LLM-initiated Tool 路径互补共存
+
+#### M1 消息路由 cause_by/watch（Event-Driven 路由）
+- **MessageEnvelope**：消息信封携带路由元数据（causeBy, topic, timestamp, correlationId, senderAgentId），对齐 MetaGPT 三要素 + AutoGen Topic
+- **SubscriptionRouter**：评估 Agent 的 `watch` 订阅声明，将匹配消息投递到有界私有邮箱（`BlockingQueue<MessageEnvelope>(100)`）
+- **AgentEdgeType.EVENT_DRIVEN**：新增事件驱动模式——读邮箱 → 执行 → 完成后按 watch 路由输出到下游订阅者
+- **YAML 可配**：`agent-workflows[].type: event_driven` + `edges[].watch: [topicA, topicB]` + `agents[].subscriptions: ["*"]`
+
+#### M3 子Agent上下文隔离增强
+- **task_id 命名空间隔离**：`SubAgentBoundary` 生成 `parentSessionId-taskId-uuid6` 命名空间，RuntimeContext metadata 设 `subAgentContext=true`
+- **工具黑名单过滤**：`AgentConfig.toolDenylist` + `PermissionEngine` deny 组注册 `SubAgentDenyApprovalRule`(p=5)，子Agent审批工具自动拒绝
+- **并发审批 auto-deny**：`PermissionMiddleware` 读取 `subAgentContext` 标记 → `SubAgentDenyApprovalRule.evaluate()` 返回 DENY，防线程池死锁
+- **委派审计**：`AuditAction.DELEGATION` 枚举 + `AgentEvent.DelegationDispatched` 事件 + `RuntimeEvent.delegation()` SSE 通知
+
+#### M7 成本熔断自动阻断
+- **ModelPricing / ModelPricingRegistry**：模型定价注册表，支持精确匹配 + 通配符（"deepseek-*"）+ 默认保守定价，YAML `aether.pricing.models[]` 可配
+- **TokenBudget 成本跟踪**：`accumulateCost(inputTokens, outputTokens, pricing)` 累计 USD 成本 + `isWithinBudget()` 熔断检查
+- **ReActAgent 主循环集成**：Phase 2 模型调用后 → 累计成本 → 超限 emit `RuntimeEvent.costExceeded()` SSE 事件 + 立即终止执行
+- **AgentConfig.maxCostUsd**：per-agent YAML 可配 `agents[].max-cost-usd`，null = 无限制（向后兼容）
 
 ### 2.4 模型提供商可插拔
 

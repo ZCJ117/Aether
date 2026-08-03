@@ -155,6 +155,17 @@ public class AgentEventPublisher {
         log.info("permission_resolved: {}", toJson(event));
     }
 
+    /**
+     * M3: 发布子Agent委派事件 —— 审计委派操作。
+     */
+    public void publishDelegation(String agentId, String sessionId, String correlationId,
+                                 String taskId, int toolCount, String status) {
+        AgentEvent.DelegationDispatched event = new AgentEvent.DelegationDispatched(
+                java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
+                agentId, sessionId, correlationId, taskId, toolCount, status);
+        log.info("delegation_dispatched: {}", toJson(event));
+    }
+
     private String toJson(Object obj) {
         try { return MAPPER.writeValueAsString(obj); } catch (Exception e) { return obj.toString(); }
     }

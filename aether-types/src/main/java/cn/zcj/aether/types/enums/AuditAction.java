@@ -24,7 +24,9 @@ public enum AuditAction {
     USER_DELETE("USER_DELETE", "用户删除"),
     USER_UPDATE("USER_UPDATE", "用户信息更新"),
     CONFIG_CHANGE("CONFIG_CHANGE", "系统配置变更"),
-    PERMISSION_CHANGE("PERMISSION_CHANGE", "权限配置变更");
+    PERMISSION_CHANGE("PERMISSION_CHANGE", "权限配置变更"),
+    // M3 新增：子Agent委派审计
+    DELEGATION("DELEGATION", "子Agent委派操作");
 
     private String code;
     private String desc;

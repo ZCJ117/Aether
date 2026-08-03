@@ -32,4 +32,14 @@ public class AgentNodeDef {
      */
     @Builder.Default
     private String agentType = "react";
+
+    // ====== M1 新增：消息订阅字段 ======
+
+    /**
+     * Agent 直接订阅的主题列表（对齐 MetaGPT watch）。
+     * Agent 将接收匹配这些主题的消息到其私有邮箱。
+     * 可为 null 或空（不订阅）。
+     * 支持通配符 "*"。
+     */
+    private List<String> subscriptions;
 }

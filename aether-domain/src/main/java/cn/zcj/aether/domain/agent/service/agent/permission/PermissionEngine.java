@@ -48,6 +48,8 @@ public class PermissionEngine {
         // ====== deny 组（优先级排序后统一求值） ======
         // P2: 危险工具硬封锁规则（p=0，deny 组最高优先级）
         registerDenyRule(new DangerousToolRule());
+        // M3: 子Agent审批自动拒绝（p=5），防线程池死锁
+        registerDenyRule(new SubAgentDenyApprovalRule());
         registerDenyRule(new PlanModeDenyWriteRule());      // p=20: Plan 模式禁止写入
         // 注：ToolAllowlistRule 的黑名单部分以独立 deny 规则注册
 

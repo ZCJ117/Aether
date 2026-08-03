@@ -46,7 +46,9 @@ public class RuntimeEvent {
         checkpoint,         // P0-#8: Agent 检查点事件
         tokenBudget,        // Token 预算监控事件
         permissionAsking,   // H4: 权限挂起等待用户确认
-        agentPaused         // H4: Agent 已暂停
+        agentPaused,        // H4: Agent 已暂停
+        delegation,          // M3: 子Agent委派审计事件
+        costExceeded         // M7: 成本熔断触发
     }
 
     public static RuntimeEvent text(String delta) {
@@ -103,6 +105,25 @@ public class RuntimeEvent {
         return RuntimeEvent.builder()
                 .type(EventType.agentPaused)
                 .errorMessage(reason)
+                .build();
+    }
+
+    /** M3: 子Agent委派审计事件 */
+    public static RuntimeEvent delegation(String taskId, int toolCount, String status) {
+        return RuntimeEvent.builder()
+                .type(EventType.delegation)
+                .toolCallId(taskId)
+                .turnCount(toolCount)
+                .toolOutput(status)
+                .build();
+    }
+
+    /** M7: 成本熔断触发事件 */
+    public static RuntimeEvent costExceeded(double currentCost, double maxCost) {
+        return RuntimeEvent.builder()
+                .type(EventType.costExceeded)
+                .budgetPercent(currentCost)
+                .errorMessage(String.format("成本超限: $%.4f >= $%.4f", currentCost, maxCost))
                 .build();
     }
 }

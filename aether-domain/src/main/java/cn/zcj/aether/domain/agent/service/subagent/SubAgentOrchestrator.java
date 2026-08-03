@@ -63,11 +63,21 @@ public class SubAgentOrchestrator {
             return new ResultRefiner.SubAgentResult("失败", "[子任务被中断]", Map.of());
         }
         try {
+            // M3: 生成任务ID（基于任务哈希的前8位作为命名空间标识）
+            String taskId = "t" + Integer.toHexString(Math.abs(task.hashCode())).substring(0, 6);
+
             AgentConfig config = boundary.createIsolatedConfig(parentSessionId,
-                    task, toolNames, modelRef);
+                    task, toolNames, modelRef, taskId, null);
             Agent subAgent = agentFactory.create(config);
+
+            // M3: 子Agent上下文标记 — 设置 metadata.subAgentContext=true
+            // 此标记由 PermissionMiddleware 读取，触发 SubAgentDenyApprovalRule 的 auto-deny
+            Map<String, Object> subMetadata = new java.util.HashMap<>();
+            subMetadata.put("subAgentContext", Boolean.TRUE);
+            subMetadata.put("taskId", taskId);
+
             RuntimeContext ctx = new RuntimeContext(userId, config.getName(),
-                    null, null, task, Map.of(), null);
+                    null, null, task, subMetadata, null);
             List<TurnMessage> collected = new ArrayList<>();
             long start = System.currentTimeMillis();
             subAgent.execute(ctx)

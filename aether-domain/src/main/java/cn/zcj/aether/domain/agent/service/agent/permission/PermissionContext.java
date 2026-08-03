@@ -26,4 +26,11 @@ public class PermissionContext {
      */
     @Builder.Default
     Map<String, Object> attributes = new HashMap<>();
+
+    /**
+     * M3 新增：标记当前权限检查是否在子Agent上下文中。
+     * 子Agent 运行在线程池 worker 中，审批工具应被自动拒绝（auto-deny）。
+     */
+    @Builder.Default
+    boolean isSubAgentContext = false;
 }

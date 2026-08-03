@@ -25,6 +25,7 @@ import java.util.UUID;
     @JsonSubTypes.Type(value = AgentEvent.CheckpointCreated.class, name = "checkpoint.created"),
     @JsonSubTypes.Type(value = AgentEvent.PermissionAsking.class, name = "permission.asking"),
     @JsonSubTypes.Type(value = AgentEvent.PermissionResolved.class, name = "permission.resolved"),
+    @JsonSubTypes.Type(value = AgentEvent.DelegationDispatched.class, name = "delegation.dispatched"),
 })
 public interface AgentEvent {
 
@@ -154,5 +155,17 @@ public interface AgentEvent {
         String replyId,
         int approvedCount,
         int deniedCount
+    ) implements AgentEvent {}
+
+    /** M3: 子Agent委派事件 —— 审计委派操作 */
+    record DelegationDispatched(
+        String eventId,
+        java.time.Instant timestamp,
+        String agentId,
+        String sessionId,
+        String correlationId,
+        String taskId,
+        int toolCount,
+        String status
     ) implements AgentEvent {}
 }

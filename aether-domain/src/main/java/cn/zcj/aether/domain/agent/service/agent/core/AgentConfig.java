@@ -27,6 +27,12 @@ public class AgentConfig {
     @Builder.Default
     List<String> toolNames = List.of();
 
+    /** M3 新增：工具黑名单（子Agent被禁止使用的工具名称列表） */
+    List<String> toolDenylist;
+
+    /** M7 新增：USD 成本上限（null=无限制），超出后触发成本熔断 */
+    Double maxCostUsd;
+
     /** 模型引用（如 "deepseek-chat"、"gpt-4o"） */
     String modelRef;
 

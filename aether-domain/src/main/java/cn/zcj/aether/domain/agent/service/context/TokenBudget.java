@@ -67,6 +67,69 @@ public class TokenBudget {
         return elasticBudget > 0 ? (double) currentElasticUsage / elasticBudget : 0;
     }
 
+    // ========== M7: 成本跟踪与熔断 ==========
+
+    /** M7: 累计 USD 成本 */
+    private double totalCostUsd = 0.0;
+
+    /** M7: 美元成本上限（0 = 无限制，默认无限制） */
+    private double maxCostUsd = 0.0;
+
+    /** M7: 是否已触发熔断 */
+    private boolean costExhausted = false;
+
+    /**
+     * M7: 设置美元成本上限。
+     *
+     * @param maxCostUsd 最大美元成本，0 或负数表示无限制
+     */
+    public void setMaxCostUsd(double maxCostUsd) {
+        this.maxCostUsd = maxCostUsd > 0 ? maxCostUsd : 0.0;
+        if (this.maxCostUsd > 0) {
+            log.info("TokenBudget 成本上限已设置: ${}", String.format("%.4f", this.maxCostUsd));
+        }
+    }
+
+    /**
+     * M7: 累计模型调用成本。
+     *
+     * @param inputTokens  输入 token 数
+     * @param outputTokens 输出 token 数
+     * @param pricing      模型定价（可为 null，null 时跳过累计）
+     */
+    public void accumulateCost(int inputTokens, int outputTokens, ModelPricing pricing) {
+        if (pricing == null || costExhausted) return;
+        double callCost = pricing.calculateCost(inputTokens, outputTokens);
+        totalCostUsd += callCost;
+        checkCostThreshold();
+    }
+
+    /**
+     * M7: 检查成本是否已超过上限。
+     *
+     * @return false 表示已超限（应终止执行），true 表示继续
+     */
+    public boolean isWithinBudget() {
+        if (maxCostUsd <= 0) return true; // 无限制
+        return !costExhausted;
+    }
+
+    /** M7: 获取累计 USD 成本 */
+    public double getTotalCostUsd() { return totalCostUsd; }
+
+    /** M7: 获取成本上限 */
+    public double getMaxCostUsd() { return maxCostUsd; }
+
+    private void checkCostThreshold() {
+        if (maxCostUsd <= 0) return;
+        if (totalCostUsd >= maxCostUsd && !costExhausted) {
+            costExhausted = true;
+            log.error("成本熔断已触发: 累计=${} >= 上限=${}, currentElasticUsage={}/{}",
+                    String.format("%.4f", totalCostUsd), String.format("%.4f", maxCostUsd),
+                    currentElasticUsage, elasticBudget);
+        }
+    }
+
     private void checkThresholds() {
         double ratio = usageRatio();
         if (ratio >= ERROR_THRESHOLD) {

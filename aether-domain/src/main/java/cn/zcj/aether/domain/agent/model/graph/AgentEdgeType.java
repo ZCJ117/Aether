@@ -12,7 +12,8 @@ public enum AgentEdgeType {
     PARALLEL,
     LOOP,
     GRAPHFLOW,    // P1-1 新增：DAG 图流模式
-    SUBAGENT;     // 子Agent派遣模式
+    SUBAGENT,     // 子Agent派遣模式
+    EVENT_DRIVEN; // M1 新增：事件驱动模式（基于 cause_by/watch 订阅路由）
 
     public static AgentEdgeType fromYamlType(String yamlType) {
         if (yamlType == null) return null;
@@ -22,6 +23,7 @@ public enum AgentEdgeType {
             case "loop" -> LOOP;
             case "graphflow" -> GRAPHFLOW;    // P1-1 新增
             case "subagent" -> SUBAGENT;
+            case "event_driven", "event-driven" -> EVENT_DRIVEN;  // M1 新增
             default -> throw new AppException(ResponseCode.ILLEGAL_PARAMETER.getCode(),
                     "未知的工作流类型: " + yamlType);
         };

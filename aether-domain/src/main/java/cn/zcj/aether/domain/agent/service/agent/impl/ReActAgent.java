@@ -53,6 +53,8 @@ public class ReActAgent extends BaseAgent {
 
     /** Phase 9: Token 预算 */
     private final TokenBudget tokenBudget;
+    /** M7: 模型定价注册表（成本熔断基础） */
+    private final cn.zcj.aether.domain.agent.service.context.ModelPricingRegistry pricingRegistry;
     /** Phase 9: 策展管道 */
     private final cn.zcj.aether.domain.agent.service.curation.CurationPipeline curationPipeline;
     /** Phase 9: 外部笔记 */
@@ -68,6 +70,7 @@ public class ReActAgent extends BaseAgent {
                       AgentEventPublisher eventPublisher,
                       CheckpointCollector checkpointCollector,
                       TokenBudget tokenBudget,
+                      cn.zcj.aether.domain.agent.service.context.ModelPricingRegistry pricingRegistry,
                       cn.zcj.aether.domain.agent.service.curation.CurationPipeline curationPipeline,
                       cn.zcj.aether.domain.agent.service.notes.ExternalNotes externalNotes) {
         super(config);
@@ -78,6 +81,7 @@ public class ReActAgent extends BaseAgent {
         this.eventPublisher = eventPublisher;
         this.checkpointCollector = checkpointCollector;
         this.tokenBudget = tokenBudget;
+        this.pricingRegistry = pricingRegistry;
         this.curationPipeline = curationPipeline;
         this.externalNotes = externalNotes;
     }
@@ -243,6 +247,27 @@ public class ReActAgent extends BaseAgent {
             if (modelResult.hasError()) {
                 emitter.onNext(RuntimeEvent.error(modelResult.getError()));
                 break;
+            }
+
+            // ====== M7: 成本跟踪与熔断检查 ======
+            if (pricingRegistry != null && tokenBudget != null) {
+                // 设置每轮成本上限（从 AgentConfig 读取）
+                if (config.getMaxCostUsd() != null && config.getMaxCostUsd() > 0) {
+                    tokenBudget.setMaxCostUsd(config.getMaxCostUsd());
+                }
+                var pricing = pricingRegistry.lookup(config.getModelRef());
+                tokenBudget.accumulateCost(
+                        modelResult.getInputTokens(),
+                        modelResult.getOutputTokens(),
+                        pricing);
+                if (!tokenBudget.isWithinBudget()) {
+                    log.warn("Agent [{}] 成本超限 ${}，触发熔断",
+                            getId(), String.format("%.4f", tokenBudget.getTotalCostUsd()));
+                    emitter.onNext(RuntimeEvent.costExceeded(
+                            tokenBudget.getTotalCostUsd(), tokenBudget.getMaxCostUsd()));
+                    emitter.onComplete();
+                    return;
+                }
             }
 
             // 转发模型事件

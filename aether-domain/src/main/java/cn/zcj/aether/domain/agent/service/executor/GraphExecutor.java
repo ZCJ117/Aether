@@ -1,6 +1,7 @@
 package cn.zcj.aether.domain.agent.service.executor;
 
 import cn.zcj.aether.domain.agent.model.graph.AgentEdge;
+import cn.zcj.aether.domain.agent.model.graph.AgentEdgeType;
 import cn.zcj.aether.domain.agent.model.graph.AgentGraph;
 import cn.zcj.aether.domain.agent.model.graph.AgentNodeDef;
 import cn.zcj.aether.domain.agent.service.agent.DefaultAgentFactory;
@@ -97,6 +98,8 @@ public class GraphExecutor {
                         case LOOP -> executeLoop(
                                 graph, edge, userId, sessionId, state, emitter);
                         case SUBAGENT -> executeSubAgents(
+                                graph, edge, userId, sessionId, state, emitter);
+                        case EVENT_DRIVEN -> executeEventDriven(
                                 graph, edge, userId, sessionId, state, emitter);
                     }
                 }
@@ -327,6 +330,12 @@ public class GraphExecutor {
     }
 
     // ========== SUBAGENT (DIRECT 通道) ==========
+    //
+    // M2 (委派即工具): 子Agent派遣现在有两条路径:
+    //   1. 结构路径(本方法) — GraphExecutor 按 YAML 配置的 SUBAGENT edge 派遣，LLM 无感知
+    //   2. Tool 路径 — LLM 通过 tool_use 调用 SubAgentDelegationTool，
+    //      自动走 ToolExecutor → 两级校验 → 权限检查 → 执行，LLM 自主决策何时委派
+    // 两条路径互补共存，向后兼容。
 
     private void executeSubAgents(
             AgentGraph graph, AgentEdge edge,
@@ -378,6 +387,145 @@ public class GraphExecutor {
 
             log.info("SUBAGENT 完成: agent={} status={}", agentName, result.status());
         }
+    }
+
+    // ========== EVENT_DRIVEN (M1 新增：基于 cause_by/watch 订阅路由) ==========
+
+    /**
+     * 事件驱动执行模式。
+     *
+     * <p>Agent 通过声明式 {@code watch} 订阅接收消息，
+     * SubscriptionRouter 根据消息的 {@code topic} 和 {@code causeBy} 投递到订阅者邮箱。
+     * 对齐 MetaGPT 的双重过滤 + AutoGen Topic 发布订阅。
+     *
+     * <h3>执行流程</h3>
+     * <ol>
+     *   <li>构建订阅声明映射：从 edge.watch + nodeDef.subscriptions 合并</li>
+     *   <li>为每个订阅者创建有界邮箱</li>
+     *   <li>发送初始消息到匹配的订阅者邮箱</li>
+     *   <li>循环：排空订阅者邮箱 → 执行 Agent → 发布输出到下游订阅者</li>
+     *   <li>所有邮箱空且无活跃 Agent 时退出</li>
+     * </ol>
+     */
+    private void executeEventDriven(
+            AgentGraph graph, AgentEdge edge,
+            String userId, String sessionId,
+            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
+
+        List<String> agentNames = edge.getSubAgents() != null
+                ? edge.getSubAgents() : List.of();
+        if (agentNames.isEmpty()) {
+            log.warn("EVENT_DRIVEN: subAgents 列表为空，跳过");
+            return;
+        }
+
+        Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
+        Map<String, List<String>> watches = buildWatchMap(graph, edge, agentNames);
+        SubscriptionRouter router = new SubscriptionRouter();
+
+        // 发送初始消息（initialMessage 作为无 topic 的广播）
+        if (edge.getCauseBy() != null || edge.getWatch() != null) {
+            MessageEnvelope initialMsg = MessageEnvelope.broadcast(
+                    "init", edge.getCauseBy() != null ? edge.getCauseBy() : "system",
+                    sessionId, "graph-executor");
+            router.route(initialMsg, state.agentMailboxes, watches);
+        }
+
+        int maxIterations = edge.getMaxIterations() != null
+                ? edge.getMaxIterations() : 10;
+        int eventTimeoutMs = edge.getEventTimeoutMs() != null
+                ? edge.getEventTimeoutMs() : 30_000;
+
+        for (int iter = 0; iter < maxIterations; iter++) {
+            boolean anyExecuted = false;
+
+            for (String agentName : agentNames) {
+                long pollTimeout = iter == 0 ? eventTimeoutMs : 1000;
+                List<MessageEnvelope> msgs = state.drainMailbox(agentName, pollTimeout);
+                if (msgs.isEmpty()) continue;
+
+                anyExecuted = true;
+                // 合并接收到的消息作为 Agent 输入
+                String combinedInput = msgs.stream()
+                        .map(m -> "[来自 " + m.causeBy() + "] " + m.content())
+                        .reduce((a, b) -> a + "\n" + b).orElse("");
+
+                AgentNodeDef def = agentDefs.get(agentName);
+                if (def == null) {
+                    log.warn("EVENT_DRIVEN: Agent 未找到: {}", agentName);
+                    continue;
+                }
+
+                log.info("EVENT_DRIVEN: 执行 agent={} messagesCount={} topic={}",
+                        agentName, msgs.size(),
+                        msgs.stream().map(MessageEnvelope::topic)
+                                .filter(Objects::nonNull).findFirst().orElse("none"));
+
+                String instruction = state.resolveTemplate(
+                        def.getInstruction() != null ? def.getInstruction() : "");
+                String input = instruction.isEmpty() ? combinedInput
+                        : instruction + "\n\n" + combinedInput;
+
+                // DIRECT 通道：拦截异常回传
+                InterventionContext ictx = new InterventionContext(
+                        InterventionContext.ChannelType.DIRECT,
+                        agentName, sessionId, userId,
+                        AgentEdgeType.EVENT_DRIVEN.name(),
+                        edge.getWorkflowName(), Map.of());
+                if (applyDirectInterception(input, ictx, emitter)) continue;
+
+                executeSingle(def, userId, sessionId, input, state, emitter, agentName);
+
+                // 执行完成后，将输出作为消息发布到匹配的订阅者
+                String output = state.getLastOutput();
+                if (output != null && !output.isBlank()) {
+                    MessageEnvelope outMsg = MessageEnvelope.create(
+                            output, agentName,
+                            def.getOutputKey(),  // 用 outputKey 作为 topic
+                            sessionId, agentName);
+                    int delivered = router.route(outMsg, state.agentMailboxes, watches);
+                    log.debug("EVENT_DRIVEN: agent={} 发布消息到 {} 个订阅者", agentName, delivered);
+                }
+            }
+
+            if (!anyExecuted) {
+                log.info("EVENT_DRIVEN: 无活跃 Agent，第 {} 轮退出", iter);
+                break;
+            }
+        }
+    }
+
+    /**
+     * 构建订阅声明映射（agentName → watch 主题列表）。
+     * 合并 AgentEdge.watch 和 AgentNodeDef.subscriptions。
+     */
+    private Map<String, List<String>> buildWatchMap(
+            AgentGraph graph, AgentEdge edge, List<String> agentNames) {
+        Map<String, List<String>> watches = new LinkedHashMap<>();
+        Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
+
+        for (String agentName : agentNames) {
+            List<String> merged = new ArrayList<>();
+
+            // 边级别的 watch（所有 subAgents 共享）
+            if (edge.getWatch() != null) {
+                merged.addAll(edge.getWatch());
+            }
+
+            // Agent 级别的 subscriptions
+            AgentNodeDef def = agentDefs.get(agentName);
+            if (def != null && def.getSubscriptions() != null) {
+                merged.addAll(def.getSubscriptions());
+            }
+
+            if (!merged.isEmpty()) {
+                watches.put(agentName, List.copyOf(merged));
+            }
+        }
+
+        log.info("EVENT_DRIVEN 订阅声明: agents={} subscribers={}",
+                agentNames, watches.keySet());
+        return watches;
     }
 
     // ========== GRAPHFLOW (BROADCAST 通道 per 并发批次) ==========

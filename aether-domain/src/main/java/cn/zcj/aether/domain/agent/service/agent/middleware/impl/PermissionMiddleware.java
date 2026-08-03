@@ -60,6 +60,10 @@ public class PermissionMiddleware implements AgentMiddleware {
             Tool tool = toolRegistry.get(request.toolName());
             boolean isReadOnly = tool != null && tool.isReadOnly();
 
+            // M3: 检测子Agent上下文标记
+            boolean isSubAgent = ctx.metadata() != null
+                    && Boolean.TRUE.equals(ctx.metadata().get("subAgentContext"));
+
             PermissionContext permCtx = PermissionContext.builder()
                 .toolName(request.toolName())
                 .toolCallId(request.toolCallId())
@@ -69,6 +73,7 @@ public class PermissionMiddleware implements AgentMiddleware {
                 .sessionId(ctx.sessionId())
                 .isReadOnly(isReadOnly)
                 .mode(mode)
+                .isSubAgentContext(isSubAgent)
                 .build();
 
             PermissionDecision decision = permissionEngine.check(permCtx, mode);

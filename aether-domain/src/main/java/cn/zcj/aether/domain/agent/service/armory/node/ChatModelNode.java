@@ -78,6 +78,10 @@ public class ChatModelNode extends AbstractArmorySupport {
     @Resource
     private cn.zcj.aether.domain.agent.service.notes.NotesTools.NoteWriteTool noteWriteTool;
 
+    /** M2: 子Agent委派工具 —— SubAgentOrchestrator 建模为 Tool，LLM 可通过 tool_use 发起委派 */
+    @Resource
+    private cn.zcj.aether.domain.agent.service.subagent.SubAgentOrchestrator subAgentOrchestrator;
+
     /** M4: MCP 连接缓存 —— 按 name@baseUri 去重，避免重复创建 SSE/Stdio 连接 */
     private final Map<String, ToolCallback[]> mcpCallbackCache = new ConcurrentHashMap<>();
 
@@ -290,6 +294,17 @@ public class ChatModelNode extends AbstractArmorySupport {
         registerBuiltinTool(sessionSearchTool, "SessionSearchTool");
         registerBuiltinTool(todoWriteTool, "TodoWriteTool");
         registerBuiltinTool(noteWriteTool, "NoteWriteTool");
+
+        // M2: 注册子Agent委派工具 —— 将 SubAgentOrchestrator 建模为 Tool，
+        // LLM 可通过 tool_use 自然发起子Agent派遣，自动继承 P0 校验/重试/审批链路
+        try {
+            var delegationTool = new cn.zcj.aether.domain.agent.service.subagent
+                    .SubAgentDelegationTool(subAgentOrchestrator);
+            toolRegistry.register(delegationTool);
+            log.info("委派工具已注册: {} (delegate_to_subagent)", delegationTool.name());
+        } catch (Exception e) {
+            log.warn("委派工具注册失败（不阻断启动）: {}", e.getMessage());
+        }
     }
 
     /**

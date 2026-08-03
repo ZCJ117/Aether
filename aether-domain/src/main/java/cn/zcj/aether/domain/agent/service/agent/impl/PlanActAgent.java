@@ -152,7 +152,7 @@ public class PlanActAgent extends BaseAgent {
 
                     ReActAgent subAgent = new ReActAgent(stepConfig, chatModel, modelInvoker,
                             toolExecutor, contextManager, eventPublisher, checkpointCollector,
-                            tokenBudget, curationPipeline, externalNotes);
+                            tokenBudget, null, curationPipeline, externalNotes);
 
                     RuntimeContext stepCtx = new RuntimeContext(
                             ctx.userId(), ctx.sessionId() + "-s" + step.getId(),

@@ -60,6 +60,27 @@ public class AgentEdge {
      */
     private String exitCondition;
 
+    // ====== M1 新增：消息路由字段 ======
+
+    /**
+     * 产生此边关联消息的 Agent 名称（对齐 MetaGPT cause_by）。
+     * 当消息的 causeBy 匹配此字段时，边被激活并路由消息到目标 Agent。
+     * 可为 null（不限制消息来源）。
+     */
+    private String causeBy;
+
+    /**
+     * Agent 订阅的主题列表（对齐 AutoGen Topic 发布订阅）。
+     * 当消息的 topic 或 causeBy 匹配此列表时，目标 Agent 接收消息。
+     * 支持通配符 "*" 匹配所有消息。
+     * 可为 null 或空列表（不订阅任何主题）。
+     */
+    private List<String> watch;
+
+    /** 事件驱动模式的等待超时（毫秒），默认 30000（30秒） */
+    @Builder.Default
+    private Integer eventTimeoutMs = 30_000;
+
     // ====== 兼容判断 ======
 
     /** 是否为 GraphFlow 模式的边 */

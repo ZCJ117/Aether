@@ -66,9 +66,11 @@ public class DefaultAgentFactory {
                 AgentEventPublisher publisher = resolveBean(AgentEventPublisher.class);
                 CheckpointCollector checkpointCollector = resolveBean(CheckpointCollector.class);
                 TokenBudget tokenBudget = createTokenBudget(config);
+                var pricingRegistry = resolveBean(
+                        cn.zcj.aether.domain.agent.service.context.ModelPricingRegistry.class);
                 ReActAgent agent = new ReActAgent(config, chatModel, modelInvoker,
                         toolExecutor, contextManager, publisher, checkpointCollector,
-                        tokenBudget, curationPipeline, externalNotes);
+                        tokenBudget, pricingRegistry, curationPipeline, externalNotes);
                 injectHooks(agent);
                 return agent;
             }

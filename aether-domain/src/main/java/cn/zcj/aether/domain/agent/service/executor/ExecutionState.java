@@ -3,6 +3,7 @@ package cn.zcj.aether.domain.agent.service.executor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Map;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -106,5 +107,55 @@ public class ExecutionState {
         if (key != null && text != null && !text.isBlank()) {
             finalOutputs.put(key, text);
         }
+    }
+
+    // ========== M1 新增：消息路由邮箱 ==========
+
+    /**
+     * 订阅者私有邮箱映射（agentName → 有界阻塞队列）。
+     * 容量 100，防内存泄漏。
+     */
+    /** M1: 订阅者私有邮箱映射 (agentName -> 有界阻塞队列). 容量100. */
+    final Map<String, java.util.concurrent.BlockingQueue<MessageEnvelope>> agentMailboxes
+            = new ConcurrentHashMap<>();
+
+    /**
+     * 获取或创建 Agent 的私有邮箱。
+     *
+     * @param agentName Agent 名称
+     * @return 该 Agent 的阻塞队列邮箱（有界，容量 100）
+     */
+    public java.util.concurrent.BlockingQueue<MessageEnvelope> getOrCreateMailbox(String agentName) {
+        return agentMailboxes.computeIfAbsent(agentName,
+                k -> new java.util.concurrent.LinkedBlockingQueue<>(100));
+    }
+
+    /**
+     * 将消息路由到指定 Agent 的邮箱。
+     *
+     * @param agentName 目标 Agent 名称
+     * @param message   消息信封
+     * @return true 投递成功，false 邮箱满
+     */
+    public boolean routeToMailbox(String agentName, MessageEnvelope message) {
+        java.util.concurrent.BlockingQueue<MessageEnvelope> mailbox = getOrCreateMailbox(agentName);
+        boolean offered = mailbox.offer(message);
+        if (!offered) {
+            log.warn("Agent [{}] 邮箱已满，消息丢弃: topic={}", agentName, message.topic());
+        }
+        return offered;
+    }
+
+    /**
+     * 从 Agent 邮箱中排出所有消息并清空。
+     *
+     * @param agentName Agent 名称
+     * @param timeoutMs 等待超时毫秒（0 = 不等待，仅排空已有消息）
+     * @return 消息列表（按接收顺序）
+     */
+    public List<MessageEnvelope> drainMailbox(String agentName, long timeoutMs) {
+        java.util.concurrent.BlockingQueue<MessageEnvelope> mailbox = agentMailboxes.get(agentName);
+        if (mailbox == null) return List.of();
+        return new SubscriptionRouter().drain(mailbox, timeoutMs);
     }
 }
