@@ -28,6 +28,15 @@ function handleNavClick(item: typeof NAV_ITEMS[number], e: Event) {
 
   if (item.type === 'anchor') {
     e.preventDefault()
+    if (route.path !== '/') {
+      router.push('/').then(() => {
+        setTimeout(() => {
+          const el = document.querySelector(item.href)
+          if (el) el.scrollIntoView({ behavior: 'smooth' })
+        }, 100)
+      })
+      return
+    }
     const el = document.querySelector(item.href)
     if (el) el.scrollIntoView({ behavior: 'smooth' })
     return
@@ -83,7 +92,7 @@ onUnmounted(() => window.removeEventListener('scroll', onScroll))
   >
     <div class="nav-inner flex items-center justify-between px-6 md:px-10 h-16">
       <!-- Logo -->
-      <a href="#" aria-label="Aether home" class="flex items-center gap-3 group">
+      <a href="#" aria-label="Aether home" class="flex items-center gap-3 group" @click.prevent="router.push('/')">
         <AetherLogo className="w-8 h-8 text-white" />
         <span class="font-black text-lg tracking-tight text-white">Aether</span>
       </a>
