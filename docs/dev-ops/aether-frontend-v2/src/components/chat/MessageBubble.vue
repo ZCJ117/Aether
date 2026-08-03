@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Copy, RotateCcw } from 'lucide-vue-next'
 import type { ChatMessage, ToolCallState } from '@/types/chat'
-import { renderMarkdown } from '@/utils/markdown'
+import { parseStreamingMarkdown } from '@/utils/markdown'
+import MarkdownRender from 'markstream-vue'
+import 'markstream-vue/index.css'
+import type { ParsedNode } from 'markstream-vue'
 import ToolCallDisplay from './ToolCallDisplay.vue'
 import MessageReactions from './MessageReactions.vue'
 
@@ -13,13 +16,27 @@ const props = defineProps<{
 const showTimestamp = ref(false)
 const expandedMeta = computed<Record<string, unknown>>(() => props.message.meta || {})
 
-const renderedText = computed(() => {
-  try {
-    return renderMarkdown(props.message.text || '')
-  } catch {
-    return props.message.text || ''
-  }
-})
+// 流式 Markdown 解析：watch message.text 变化时增量解析
+const parsedNodes = ref<ParsedNode[]>([])
+
+watch(
+  () => props.message.text,
+  (text) => {
+    try {
+      parsedNodes.value = parseStreamingMarkdown(text || '')
+    } catch (e) {
+      console.warn('[Markdown] 流式解析异常，回退到纯文本', e)
+      // 解析失败时手动构造纯文本节点，确保内容始终可见
+      parsedNodes.value = [
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', content: text || '' }],
+        } as unknown as ParsedNode,
+      ]
+    }
+  },
+  { immediate: true }
+)
 
 // Extract tool calls from meta
 const toolCalls = computed(() => {
@@ -113,10 +130,21 @@ function handleRetry() {
       </div>
 
       <!-- Markdown content -->
-      <div
-        class="prose prose-invert prose-sm max-w-none text-[#DEDBC8]"
-        v-html="renderedText"
+      <MarkdownRender
+        v-if="parsedNodes.length > 0"
+        :nodes="parsedNodes"
+        :max-live-nodes="0"
+        :batch-rendering="true"
+        :render-batch-size="8"
+        :render-batch-delay="16"
+        :is-dark="true"
       />
+      <div
+        v-else-if="message.streaming"
+        class="text-[#DEDBC8]/40 text-sm italic"
+      >
+        思考中...
+      </div>
 
       <!-- Streaming cursor -->
       <span
