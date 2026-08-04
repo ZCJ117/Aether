@@ -1,4 +1,4 @@
-import { api } from './client'
+import { api, getAccessToken } from './client'
 import { createSSEConnection } from './sse-client'
 import type { ChatRequestDTO, ChatResponseDTO, ConfirmRequestDTO } from '@/types/api'
 import type { StreamEvent, StreamHandle } from '@/types/sse'
@@ -33,6 +33,7 @@ export function sendMessageStream(
   onError?: (error: Error) => void,
   onComplete?: () => void
 ): StreamHandle {
+  const token = getAccessToken()
   return createSSEConnection({
     url: `${BASE}/chat_stream`,
     body: {
@@ -41,6 +42,7 @@ export function sendMessageStream(
       sessionId: sessionId ?? undefined,
       message,
     } satisfies ChatRequestDTO,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
     onEvent,
     onError,
     onComplete,

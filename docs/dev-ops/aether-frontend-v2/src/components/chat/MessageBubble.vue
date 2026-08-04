@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { Copy, RotateCcw } from 'lucide-vue-next'
 import type { ChatMessage, ToolCallState } from '@/types/chat'
-import { parseStreamingMarkdown } from '@/utils/markdown'
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
-import type { ParsedNode } from 'markstream-vue'
 import ToolCallDisplay from './ToolCallDisplay.vue'
 import MessageReactions from './MessageReactions.vue'
 
@@ -15,28 +13,6 @@ const props = defineProps<{
 
 const showTimestamp = ref(false)
 const expandedMeta = computed<Record<string, unknown>>(() => props.message.meta || {})
-
-// 流式 Markdown 解析：watch message.text 变化时增量解析
-const parsedNodes = ref<ParsedNode[]>([])
-
-watch(
-  () => props.message.text,
-  (text) => {
-    try {
-      parsedNodes.value = parseStreamingMarkdown(text || '')
-    } catch (e) {
-      console.warn('[Markdown] 流式解析异常，回退到纯文本', e)
-      // 解析失败时手动构造纯文本节点，确保内容始终可见
-      parsedNodes.value = [
-        {
-          type: 'paragraph',
-          children: [{ type: 'text', content: text || '' }],
-        } as unknown as ParsedNode,
-      ]
-    }
-  },
-  { immediate: true }
-)
 
 // Extract tool calls from meta
 const toolCalls = computed(() => {
@@ -131,13 +107,10 @@ function handleRetry() {
 
       <!-- Markdown content -->
       <MarkdownRender
-        v-if="parsedNodes.length > 0"
-        :nodes="parsedNodes"
-        :max-live-nodes="0"
-        :batch-rendering="true"
-        :render-batch-size="8"
-        :render-batch-delay="16"
-        :is-dark="true"
+        v-if="message.text"
+        mode="chat"
+        :content="message.text"
+        :final="!message.streaming"
       />
       <div
         v-else-if="message.streaming"

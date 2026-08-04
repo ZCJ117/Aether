@@ -5,6 +5,8 @@ import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { ChatLayout, SessionSidebar } from '@/components/chat'
+import MarkdownRender from 'markstream-vue'
+import 'markstream-vue/index.css'
 
 const agentStore = useAgentStore()
 const authStore = useAuthStore()
@@ -121,7 +123,13 @@ function handleKeydown(e: KeyboardEvent) {
             {{ (agentStore.selectedAgent?.agentName || 'A').charAt(0) }}
           </div>
           <div :class="['msg-bubble', msg.side === 'user' ? 'bubble-user' : 'bubble-agent']">
-            {{ msg.text }}
+            <MarkdownRender
+              v-if="msg.side === 'agent' && msg.text"
+              mode="chat"
+              :content="msg.text"
+              :final="!msg.streaming"
+            />
+            <span v-else>{{ msg.text }}</span>
           </div>
         </div>
 
@@ -237,6 +245,7 @@ function handleKeydown(e: KeyboardEvent) {
   background: rgba(44, 44, 46, 0.6);
   color: #F5F5F7;
   border-radius: 14px 14px 14px 4px;
+  max-width: 85%;
 }
 
 .streaming-hint {

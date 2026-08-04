@@ -35,13 +35,17 @@ const emit = defineEmits<{
       <span class="flex-shrink-0 text-xs text-[#DEDBC8]/30 rounded-full bg-white/5 px-1.5 py-0.5">
         {{ sessions.length }}
       </span>
-      <button
-        class="flex-shrink-0 rounded p-0.5 text-[#DEDBC8]/50 hover:bg-emerald-500/20 hover:text-emerald-400 transition-colors"
+      <span
+        class="flex-shrink-0 rounded p-0.5 text-[#DEDBC8]/50 hover:bg-emerald-500/20 hover:text-emerald-400 transition-colors cursor-pointer"
         title="新建对话"
+        role="button"
+        tabindex="0"
         @click.stop="emit('create-session')"
+        @keydown.enter.prevent="emit('create-session')"
+        @keydown.space.prevent="emit('create-session')"
       >
         <Plus :size="16" />
-      </button>
+      </span>
     </button>
 
     <!-- Sessions list (expandable) -->

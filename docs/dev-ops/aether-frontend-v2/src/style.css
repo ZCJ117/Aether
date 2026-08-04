@@ -2,6 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ====================================================================
+   Markstream Markdown 渲染样式补充
+   Tailwind Preflight 会重置 h1-h6/ul/ol/blockquote 等语义标签的默认样式，
+   此处显式恢复 Markstream 渲染所需的排版样式。
+   ==================================================================== */
+.markstream-vue h1, .markstream-vue .h1 { font-size: 2rem; font-weight: 700; line-height: 1.25; margin: 0.67em 0; }
+.markstream-vue h2, .markstream-vue .h2 { font-size: 1.5rem; font-weight: 600; line-height: 1.3; margin: 0.75em 0; }
+.markstream-vue h3, .markstream-vue .h3 { font-size: 1.25rem; font-weight: 600; line-height: 1.4; margin: 0.83em 0; }
+.markstream-vue h4, .markstream-vue .h4 { font-size: 1.1rem; font-weight: 600; line-height: 1.45; margin: 1em 0; }
+.markstream-vue h5, .markstream-vue .h5 { font-size: 1rem; font-weight: 600; line-height: 1.5; margin: 1em 0; }
+.markstream-vue h6, .markstream-vue .h6 { font-size: 0.9rem; font-weight: 600; line-height: 1.5; margin: 1em 0; }
+.markstream-vue p { margin: 0.5em 0; }
+.markstream-vue ul, .markstream-vue ol { margin: 0.5em 0; padding-left: 2em; }
+.markstream-vue ul { list-style-type: disc; }
+.markstream-vue ul ul { list-style-type: circle; }
+.markstream-vue ul ul ul { list-style-type: square; }
+.markstream-vue ol { list-style-type: decimal; }
+.markstream-vue li { margin: 0.25em 0; }
+.markstream-vue blockquote { margin: 0.5em 0; padding-left: 1em; border-left: 3px solid rgba(255,255,255,0.2); color: rgba(255,255,255,0.6); }
+.markstream-vue code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.875em; background: rgba(255,255,255,0.08); padding: 0.15em 0.35em; border-radius: 3px; }
+.markstream-vue pre { margin: 0.5em 0; }
+.markstream-vue pre code { background: transparent; padding: 0; border-radius: 0; font-size: inherit; }
+.markstream-vue hr { margin: 1em 0; border: none; border-top: 1px solid rgba(255,255,255,0.1); }
+.markstream-vue table { width: 100%; margin: 0.5em 0; border-collapse: collapse; }
+.markstream-vue th, .markstream-vue td { border: 1px solid rgba(255,255,255,0.12); padding: 0.4em 0.8em; text-align: left; }
+.markstream-vue th { font-weight: 600; background: rgba(255,255,255,0.04); }
+.markstream-vue a { color: #5AC8FA; text-decoration: underline; }
+.markstream-vue img { max-width: 100%; height: auto; }
+
 :root {
   --bg-base: #000000;
   --bg-elevated: #1C1C1E;
