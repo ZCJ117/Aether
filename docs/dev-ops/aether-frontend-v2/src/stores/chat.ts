@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { sendMessageStream, confirmToolCalls } from '@/api/chat'
 import { fetchSessionMessages } from '@/api/session'
 import type {
-  TextDeltaEvent, ToolCallEvent, ToolResultEvent, CompactBoundaryEvent,
+  TurnStartedEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent, CompactBoundaryEvent,
   TurnCompleteEvent, TokenBudgetEvent, CheckpointEvent, InternalLlmCallEvent,
   PermissionAskingEvent, AgentPausedEvent, DoneEvent, MaxTurnsReachedEvent,
   ErrorEvent, StreamHandle, PendingToolCall, StreamEvent,
@@ -24,6 +24,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function switchToSession(sid: string | null): void {
+    // 去重：已是同一会话则跳过
+    if (sid === sessionId.value) return
     console.log('[chat] switchToSession:', sid)
     // 保存当前会话消息
     if (sessionId.value) {
@@ -186,6 +188,9 @@ export const useChatStore = defineStore('chat', () => {
   // ---- 13 种 SSE 事件处理 ----
   function handleStreamEvent(event: StreamEvent, placeholderId: string): void {
     switch (event.type) {
+      case 'turnStarted':
+        handleTurnStarted(event as unknown as TurnStartedEvent)
+        break
       case 'textDelta':
         handleTextDelta(event as unknown as TextDeltaEvent, placeholderId)
         break
@@ -226,6 +231,11 @@ export const useChatStore = defineStore('chat', () => {
         handleError(event as unknown as ErrorEvent)
         break
     }
+  }
+
+  function handleTurnStarted(event: TurnStartedEvent): void {
+    turnCount.value = event.turnCount
+    setStatus(`第 ${event.turnCount} 轮思考中...`, 'info')
   }
 
   function handleTextDelta(event: TextDeltaEvent, placeholderId: string): void {

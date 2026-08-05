@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue'
-import { SendHorizontal, Square, Code, List, Bold } from 'lucide-vue-next'
+import { SendHorizontal, Square, Code, List, Bold, Paperclip, X, HardDrive } from 'lucide-vue-next'
+import FilePickerModal from './FilePickerModal.vue'
+import HostFolderModal from './HostFolderModal.vue'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -11,7 +13,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  send: [message: string]
+  send: [message: string, files?: { name: string; path: string; size: number }[]]
   cancel: []
 }>()
 
@@ -21,6 +23,9 @@ const SHOW_COUNT_THRESHOLD = 3000
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const message = ref('')
 const shaking = ref(false)
+const showFilePicker = ref(false)
+const showBridgeModal = ref(false)
+const attachedFiles = ref<{ name: string; path: string; size: number }[]>([])
 
 const charCount = computed(() => message.value.length)
 const showCharCount = computed(() => charCount.value > SHOW_COUNT_THRESHOLD)
@@ -46,9 +51,27 @@ function handleSend() {
   }
   if (charCount.value > MAX_LENGTH) return
   const text = message.value.trim()
+  const files = attachedFiles.value.length > 0 ? [...attachedFiles.value] : undefined
   message.value = ''
+  attachedFiles.value = []
   nextTick(autoResize)
-  emit('send', text)
+  emit('send', text, files)
+}
+
+function onFilesUploaded(files: { name: string; path: string; size: number }[]) {
+  attachedFiles.value.push(...files)
+}
+
+function onBridgeMounted(payload: { workspacePath: string; hostPath: string; mountName: string }) {
+  attachedFiles.value.push({
+    name: `📁 ${payload.mountName} (${payload.hostPath})`,
+    path: payload.workspacePath,
+    size: 0,
+  })
+}
+
+function removeFile(idx: number) {
+  attachedFiles.value.splice(idx, 1)
 }
 
 function handleCancel() {
@@ -96,6 +119,35 @@ function insertText(text: string) {
 
 <template>
   <div class="border-t border-white/5 bg-[#0f0f0f] p-4">
+    <!-- FilePicker Modal -->
+    <FilePickerModal
+      v-if="showFilePicker"
+      @close="showFilePicker = false"
+      @uploaded="onFilesUploaded"
+    />
+
+    <!-- Bridge Modal -->
+    <HostFolderModal
+      v-if="showBridgeModal"
+      @close="showBridgeModal = false"
+      @mounted="onBridgeMounted"
+    />
+
+    <!-- Attached files -->
+    <div v-if="attachedFiles.length > 0" class="flex flex-wrap gap-1.5 mb-2">
+      <div
+        v-for="(f, i) in attachedFiles"
+        :key="i"
+        class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px]"
+        style="background: rgba(90,200,250,0.1); color: #5AC8FA"
+      >
+        📎 {{ f.name }}
+        <button @click="removeFile(i)" class="hover:opacity-70 ml-0.5">
+          <X class="w-3 h-3" />
+        </button>
+      </div>
+    </div>
+
     <!-- Quick action buttons -->
     <div class="flex items-center gap-1 mb-2">
       <button
@@ -118,6 +170,23 @@ function insertText(text: string) {
         @click="insertBold"
       >
         <Bold :size="16" />
+      </button>
+      <div class="w-px h-4 mx-1" style="background: rgba(255,255,255,0.06)" />
+      <button
+        class="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[#DEDBC8]/50 hover:text-[#5AC8FA] hover:bg-white/5 transition-colors text-[12px]"
+        title="选择本地文件"
+        @click="showFilePicker = true"
+      >
+        <Paperclip :size="14" />
+        文件
+      </button>
+      <button
+        class="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[#DEDBC8]/50 hover:text-[#30D158] hover:bg-white/5 transition-colors text-[12px]"
+        title="挂载本地文件夹"
+        @click="showBridgeModal = true"
+      >
+        <HardDrive :size="14" />
+        本地文件夹
       </button>
     </div>
 

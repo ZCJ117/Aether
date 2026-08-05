@@ -90,6 +90,9 @@ export function createSSEConnection(options: SSEOptions): StreamHandle {
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         onError?.(err as Error)
+      } else {
+        // 流被中止（用户取消/连接中断）时也要复位 UI 状态，否则 isSending 永不复位
+        onComplete?.()
       }
     } finally {
       reader?.releaseLock()

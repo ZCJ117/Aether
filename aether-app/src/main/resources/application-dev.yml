@@ -45,6 +45,9 @@ aether:
   memory:
     pgvector:
       enabled: true
+  # 开发环境允许访问本地 Python 微服务 (localhost:8001-8003)
+  ssrf:
+    allow-private-urls: true
   # ====== P0: JWT Security Configuration ======
   security:
     jwt:

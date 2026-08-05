@@ -93,6 +93,7 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function switchSession(sessionId: string): void {
+    if (sessionId === currentSessionId.value) return
     currentSessionId.value = sessionId
   }
 

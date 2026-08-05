@@ -15,20 +15,12 @@ const emit = defineEmits<{
   'select-session': [sessionId: string, agentId: string]
 }>()
 
-// Load sessions for each agent on mount
-onMounted(async () => {
-  if (authStore.userId) {
-    for (const agent of agentStore.agents) {
-      await sessionStore.loadSessions(agent.agentId, authStore.userId)
-    }
-  }
-})
-
-// Reload when agents change
+// Sessions are loaded by ChatView.vue's onMounted — no need to duplicate here.
+// Only reload when agents list changes (e.g. after a config refresh).
 watch(
   () => agentStore.agents.length,
-  async () => {
-    if (authStore.userId) {
+  async (len) => {
+    if (authStore.userId && len > 0) {
       for (const agent of agentStore.agents) {
         await sessionStore.loadSessions(agent.agentId, authStore.userId)
       }

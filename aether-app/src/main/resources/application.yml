@@ -7,6 +7,9 @@ spring:
 
 # ====== P0: Security Configuration ======
 aether:
+  # SSRF 防护：生产环境必须为 false；开发环境在 application-dev.yml 中覆盖为 true
+  ssrf:
+    allow-private-urls: false
   security:
     jwt:
       secret: ${JWT_SECRET:aether-dev-jwt-secret-key-min-32-chars!!}

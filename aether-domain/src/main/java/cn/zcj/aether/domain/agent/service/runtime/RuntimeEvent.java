@@ -34,6 +34,7 @@ public class RuntimeEvent {
     private String confirmReplyId;        // permission_asking: 确认回执 ID
 
     public enum EventType {
+        turnStarted,        // 新一轮思考开始（在模型调用前发出，避免前端长时间空白）
         textDelta,
         toolCall,
         toolResult,
@@ -49,6 +50,10 @@ public class RuntimeEvent {
         agentPaused,        // H4: Agent 已暂停
         delegation,          // M3: 子Agent委派审计事件
         costExceeded         // M7: 成本熔断触发
+    }
+
+    public static RuntimeEvent turnStarted(int turnNumber) {
+        return RuntimeEvent.builder().type(EventType.turnStarted).turnCount(turnNumber).build();
     }
 
     public static RuntimeEvent text(String delta) {

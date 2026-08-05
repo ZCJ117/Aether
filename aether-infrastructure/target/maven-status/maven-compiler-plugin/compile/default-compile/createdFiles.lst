@@ -1,5 +1,6 @@
 cn\zcj\aether\infrastructure\persistence\UserRepository$UserRowMapper.class
 cn\zcj\aether\repository\PgvectorVectorStore.class
+cn\zcj\aether\infrastructure\python\PythonServiceClient.class
 cn\zcj\aether\infrastructure\persistence\RefreshTokenRepository$RefreshTokenRowMapper.class
 cn\zcj\aether\infrastructure\persistence\AuditLogRepository.class
 cn\zcj\aether\infrastructure\persistence\RefreshTokenRepository.class

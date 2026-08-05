@@ -357,7 +357,9 @@ public class AgentServiceController implements IAgentService {
         String correlationId = UUID.randomUUID().toString().substring(0, 8);
         MDC.put("correlationId", correlationId);
 
-        ResponseBodyEmitter emitter = new ResponseBodyEmitter(3 * 60 * 1000L);
+        // 超时对齐最长工具等待预算：baidu-search MCP requestTimeout=500s + 多轮调用，
+        // 3min 会在 Agent 仍在执行时切断 SSE（前端"生成中"卡住 + 重发重复执行）。
+        ResponseBodyEmitter emitter = new ResponseBodyEmitter(10 * 60 * 1000L);
         try {
             log.info("流式对话 agentId:{} userId:{} sessionId:{} message:{}",
                     requestDTO.getAgentId(), requestDTO.getUserId(),
@@ -416,7 +418,7 @@ public class AgentServiceController implements IAgentService {
         String correlationId = UUID.randomUUID().toString().substring(0, 8);
         MDC.put("correlationId", correlationId);
 
-        ResponseBodyEmitter emitter = new ResponseBodyEmitter(3 * 60 * 1000L);
+        ResponseBodyEmitter emitter = new ResponseBodyEmitter(10 * 60 * 1000L);
         try {
             String agentId = (String) requestBody.get("agentId");
             String userId = (String) requestBody.get("userId");

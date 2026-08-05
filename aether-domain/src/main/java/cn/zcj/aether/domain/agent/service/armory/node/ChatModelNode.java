@@ -18,6 +18,7 @@ import cn.zcj.aether.domain.agent.service.tool.McpToolAdapter;
 import cn.zcj.aether.domain.agent.service.tool.SkillsToolAdapter;
 import cn.zcj.aether.domain.agent.service.tool.Tool;
 import cn.zcj.aether.domain.agent.service.tool.ToolRegistry;
+import cn.zcj.aether.domain.agent.service.tool.python.PythonTools;
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
@@ -56,6 +57,10 @@ public class ChatModelNode extends AbstractArmorySupport {
 
     @Resource
     private SkillsToolAdapter skillsToolAdapter;
+
+    /** Python 微服务工具（文件系统/沙箱/文档），需要转换为 ToolCallback 注入模型供 LLM 调用 */
+    @Resource
+    private PythonTools pythonTools;
 
     @Resource
     private ModelProviderRegistry modelProviderRegistry;  // P0-2 新增
@@ -121,6 +126,13 @@ public class ChatModelNode extends AbstractArmorySupport {
                 ToolCallback[] toolCallbacks = toolSkillsCreateService.buildToolCallback(toolSkills);
                 toolCallbackList.addAll(List.of(toolCallbacks));
             }
+        }
+
+        // Python 微服务工具（read_file / list_directory / read_document 等）—— 注入模型供 LLM 调用
+        if (pythonTools != null) {
+            ToolCallback[] pythonCallbacks = pythonTools.toolCallbacks();
+            toolCallbackList.addAll(List.of(pythonCallbacks));
+            log.info("Python 微服务工具已注入模型: {} 个", pythonCallbacks.length);
         }
 
         // P0-2 改造：通过 ModelProvider 创建 ChatModel（自动处理 toolCallbacks）

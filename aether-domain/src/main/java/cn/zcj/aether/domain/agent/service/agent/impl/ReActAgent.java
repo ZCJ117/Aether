@@ -215,6 +215,9 @@ public class ReActAgent extends BaseAgent {
             // P1-2: 通过中间件链处理推理消息
             List<Message> enrichedMessages = chain.applyReasoning(springMessages);
 
+            // 在模型调用前发送 turnStarted，避免前端长时间空白
+            emitter.onNext(RuntimeEvent.turnStarted(state.getCurrentTurn()));
+
             // P1-6: Hook - before model call
             long modelStart = System.currentTimeMillis();
             for (AgentHook hook : hooks) {
@@ -228,7 +231,7 @@ public class ReActAgent extends BaseAgent {
                         return modelInvoker.callWithStreamCachedAsync(chatModel,
                                 enrichedMessages, enrichedInstruction, config.getModelRef(),
                                 config.isCacheEnabled(), config.getCacheTtlSeconds())
-                                .block(java.time.Duration.ofMinutes(5));
+                                .block(java.time.Duration.ofMinutes(2));
                     } catch (Exception e) {
                         log.warn("异步缓存调用失败，回退同步: {}", e.getMessage());
                         return modelInvoker.callWithStreamCached(chatModel, enrichedMessages,

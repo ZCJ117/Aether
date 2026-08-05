@@ -68,6 +68,9 @@ public class ToolExecutor {
             },
             new ThreadPoolExecutor.CallerRunsPolicy());
 
+    /** 串行（非并发安全）工具超时，防止单个工具挂起阻塞整个 SSE 流。 */
+    private static final long SERIAL_TOOL_TIMEOUT_SECONDS = 120;
+
     /**
      * P0-1 新增：JSON Schema 校验器。
      * 无状态，可在构造时手动创建或由 Spring 注入。
@@ -178,9 +181,28 @@ public class ToolExecutor {
     private List<ToolResult> executeSerially(List<ToolCallRequest> requests, ToolContext ctx) {
         List<ToolResult> results = new ArrayList<>();
         for (ToolCallRequest req : requests) {
-            results.add(executeOne(req, ctx));
+            results.add(executeWithTimeout(req, ctx));
         }
         return results;
+    }
+
+    /**
+     * 串行工具同样有界执行，避免单个工具挂起导致 SSE 流永久阻塞（前端表现为"一直在生成中"）。
+     * 串行组多为慢操作（文档生成/代码执行），超时放宽到 120s；并行组保持 60s。
+     */
+    private ToolResult executeWithTimeout(ToolCallRequest request, ToolContext ctx) {
+        CompletableFuture<ToolResult> future =
+                CompletableFuture.supplyAsync(() -> executeOne(request, ctx), executor);
+        try {
+            return future.get(SERIAL_TOOL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            return ToolResult.error(request.toolCallId(), request.toolName(),
+                    "Tool timeout: " + e.getMessage(), ToolResult.ErrorType.TIMEOUT);
+        } catch (Exception e) {
+            return ToolResult.error(request.toolCallId(), request.toolName(),
+                    "Tool execution failed: " + e.getMessage());
+        }
     }
 
     /**
@@ -188,7 +210,7 @@ public class ToolExecutor {
      *
      * <p>数据结构变化：校验失败的 ToolResult 与执行失败的 ToolResult
      * 走同一通道回到 ReActAgent 的消息流，LLM 下一轮读到 Schema 提示自我修正——
-     * 不新增任何协议，复用现有 {@link ToolResult#error} 回传路径。
+     * 不新增任何协议，复用现有 {@link ToolResult# error} 回传路径。
      */
     private ToolResult executeOne(ToolCallRequest request, ToolContext ctx) {
         try {

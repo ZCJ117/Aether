@@ -3,6 +3,7 @@
 // ============================================
 
 export type SSEEventType =
+  | 'turnStarted'
   | 'textDelta'
   | 'toolCall'
   | 'toolResult'
@@ -18,6 +19,11 @@ export type SSEEventType =
   | 'error'
 
 // ---- 各事件接口 ----
+
+export interface TurnStartedEvent {
+  type: 'turnStarted'
+  turnCount: number
+}
 
 export interface TextDeltaEvent {
   type: 'textDelta'
@@ -97,6 +103,7 @@ export interface ErrorEvent {
 // ---- 联合类型 ----
 
 export type StreamEvent =
+  | TurnStartedEvent
   | TextDeltaEvent
   | ToolCallEvent
   | ToolResultEvent
