@@ -106,6 +106,7 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **内置三个 Provider**：OpenAI（兜底，兼容 DeepSeek/Qwen 等所有 OpenAI 协议）、Anthropic、DashScope
 - **ModelProviderRegistry**：Spring Bean 自动发现，按 `supports()` 匹配，注册表可动态扩展
 - **ModelConfig**：从 YAML 的 `ai-api` + `chat-model` 节点统一映射
+- **双通道 HTTP 超时（`buildOpenAiApi()`，重要）**：OpenAiApi 必须同时配置 **RestClient**（`call()` 非流式路径）与 **WebClient**（`stream()` 流式路径，ReActAgent 经 `ModelInvoker.callWithStreamAsync()` 实际使用）的显式超时——连接 30s / 读取 120s。**流式通道此前无任何超时**，模型服务端不响应时会无限挂起（前端"思考中"永久卡死）。新增 ChatModel 时务必走此方法，禁止裸 `OpenAiApi.builder()`
 
 ### 2.5 横切关注点体系
 
@@ -726,9 +727,14 @@ npm run dev
 
 | 配置项 | 位置 | 值 |
 |---|---|---|
-| HTTP 连接超时 | `HttpClientConfig.java` | 30s |
-| HTTP 读取超时 | `HttpClientConfig.java` | 300s (5min) |
+| HTTP 连接超时（模型 RestClient/WebClient） | `ModelProvider.buildOpenAiApi()` | 30s |
+| HTTP 读取超时（模型 RestClient/WebClient） | `ModelProvider.buildOpenAiApi()` | 120s (2min) |
+| Python 微服务连接超时 | `HttpClientConfig.restTemplate()` | 10s |
+| Python 微服务读取超时 | `HttpClientConfig.restTemplate()` | 90s |
+| 前端 fs 服务超时 | `python-services.ts` | 15s |
+| SSE emitter 超时 | `AgentServiceController` | 10min（对齐 MCP 500s 工具预算） |
 | 并行工具超时 | `ToolExecutor.executeConcurrently()` | 60s |
+| 串行工具超时 | `ToolExecutor.executeWithTimeout()` | 120s |
 | 并行 Agent 超时 | `GraphExecutor.executeParallel()` | 10min |
 | 模型调用重试 | `ModelInvoker.java` | 3 次，退避 1s→2s→4s，上限 15s |
 | 可重试错误 | `ModelInvoker.isRetryable()` | Connection reset, Broken pipe, Timeout, 503, 502, 429 |
@@ -791,6 +797,7 @@ npm run dev
 - **业务错误**: `AppException(ResponseCode.XXX)` 抛出
 - **JSON**: domain 层使用 Jackson `ObjectMapper`，禁止 `com.alibaba.fastjson`
 - **ChatModel 延迟注入**: 使用 `@Lazy`，因 ChatModel 在装配阶段动态注册
+- **模型 HTTP 双通道超时**: 新增 ChatModel 必须走 `ModelProvider.buildOpenAiApi()`（RestClient + WebClient 均配 30s/120s），禁止裸 `OpenAiApi.builder()`——流式 WebClient 通道无超时会导致"思考中"无限卡死（见十一节现象 1）
 - **tool_result 格式**: 必须转为 `ToolResponseMessage`，禁止转为 `UserMessage`
 - **禁止硬编码密钥**: API key 只允许在 `application-dev.yml` 中
 - **校验结果**: `Tool.validate()` 必须返回结构化 `ValidationResult`（弃用 `validateInput()` boolean 签名）
@@ -800,7 +807,53 @@ npm run dev
 
 ---
 
-## 十一、下一步扩展方向
+## 十一、常见故障排查（Troubleshooting）
+
+> 本节沉淀自实际生产联调 bug（上传卡死 + 智能体输出卡死 + 服务挂起）。完整方法论见 `D:\Config\CLAUDE记忆文件\bug.md`。
+
+### 现象 1：模型调用卡"思考中"无限等待
+
+- **症状**：前端"思考中"永久停留；后端日志停在 `ModelInvoker - 异步模型调用`，之后 120s 内无 `异步模型调用完成` 也无异常。
+- **根因**：模型 HTTP 调用无超时。ReActAgent 经 `ModelInvoker.callWithStreamAsync()` 实际走 `chatModel.stream()` → **WebClient 通道**（spring-webflux + reactor-netty）；另有一条 RestClient 通道（`call()` 非流式）。**两条通道都必须配显式超时**，否则模型服务端不响应时无限挂起。
+- **修复**：`ModelProvider.buildOpenAiApi()` 同时配置 RestClient（`SimpleClientHttpRequestFactory` 30s/120s）与 WebClient（`ReactorClientHttpConnector` + `CONNECT_TIMEOUT_MILLIS=30s` + `responseTimeout=120s`）。新增 ChatModel 必须走此方法，禁止裸 `OpenAiApi.builder()`。
+- **排查**：`netstat -ano | findstr :8091` 拿 PID → `jstack <PID>` 看 `http-nio-8091-exec-*` 线程；用 `javap` 反编译 `.class` 确认部署的字节码含超时配置（源码改了 ≠ 运行的是新代码）。
+
+### 现象 2：上传文件/文件夹卡死，重启 Docker Python 服务才能恢复
+
+- **症状**：fs 服务（:8003）整体无响应，`/health` 也超时，必须重启容器；日志无明确错误。
+- **根因**：FastAPI `async def` 端点直接调用**同步阻塞操作**（`rglob` 递归扫描 / `subprocess.run` / 文件 I/O）→ 单个慢请求**冻结整个事件循环**；单 worker uvicorn 下服务整体挂死。Agent 指令会 `recursive=true` 扫描挂载的宿主机盘符（百万级条目），无上限时卡死数小时。
+- **修复**（`aether-python-services/filesystem-service/`）：
+  1. 所有阻塞操作包 `run_in_threadpool`（事件循环永不被冻结）
+  2. 递归扫描加条目上限 `FS_LIST_MAX_ENTRIES=5000`
+  3. 容忍权限错误（跳过不可读条目而非 500，如 Windows 系统文件 `DumpStack.log.tmp`）
+- **排查**：挂起时 `curl -m 5 http://localhost:8003/health` 无响应 = 事件循环冻结。
+
+### 现象 3：`/workspace/local/<盘符>` 映射消失（重启后"恢复"又复现）
+
+- **症状**：Agent 读不到挂载的宿主机盘符路径；`docker exec <容器> ls /workspace/local/` 为空。
+- **根因 1**：`/health` 检查中的 `cleanup_orphaned_symlinks()` 会删除注册表外的桥接 symlink——**健康检查不应有破坏性副作用**。
+- **根因 2**：盘符映射路径错误——Docker Desktop 实际挂载点在 `/host-root/mnt/host/<盘符>`（不是 `/host-root/mnt/<盘符>`）。
+- **根因 3**：`resolve_workspace_path` 基于"解析后"路径做包含性校验，workspace 内 symlink 解析到 `/host-root` 被误判为"逃逸工作区"拒绝。
+- **修复**：health 只报告状态；盘符映射经 `/bridge/mount` 创建并写入注册表（持久化于卷）；包含性校验改为基于未解析路径（拒绝 `..` 穿越，允许 workspace 内 symlink 桥接）。
+
+### 现象 4：前端"生成中"永久卡住
+
+- **症状**：发送后一直"生成中"，输入框禁用，刷新才恢复。
+- **根因 1**：`sse-client.ts` 的 catch 分支在 `AbortError` 时既不调 `onError` 也不调 `onComplete` → `chatStore.isSending` 永不复位。
+- **根因 2**：SSE emitter 超时（原 3min）< 工具调用时长（baidu-search MCP `requestTimeout=500s`），Agent 执行中途被服务器端切断 SSE。
+- **修复**：`AbortError` 分支也调用 `onComplete()` 复位 UI；`AgentServiceController` 的 emitter 超时提升到 10min。
+
+### 排查通用方法论（五步）
+
+1. **分层隔离**：先证明哪层坏——`curl` 直连各服务边界（模型 API / fs 服务 / 后端），不猜测。
+2. **验证运行中的代码**：`javap` 反编译字节码 / 对比 `.class` 与 `.java` 时间戳 / 搜启动日志特征行——确认部署的是新代码而非只改了源码。
+3. **追踪运行时实际路径**：用运行日志反推实际执行分支（对比成功/失败案例），不读注释假设。
+4. **症状在边界、根因在内部**：加超时/重试是治标；卡顿时要读到最内层服务源码找阻塞点。
+5. **回归验证**：每次只改一个变量，修完用能复现原症状的用例证明（如慢操作进行中测 `/health` 是否仍秒回）。
+
+---
+
+## 十二、下一步扩展方向
 
 | 方向 | 说明 |
 |------|------|

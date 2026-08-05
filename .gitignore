@@ -45,3 +45,4 @@ build/
 /aether-app/src/test/
 /aether-app/src/main/resources/agent/agents.yml
 /aether-app/src/main/resources/agent/demo.yml
+/logs/
