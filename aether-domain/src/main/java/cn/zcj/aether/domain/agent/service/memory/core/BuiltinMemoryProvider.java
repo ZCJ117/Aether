@@ -26,7 +26,7 @@ public class BuiltinMemoryProvider implements MemoryProvider {
     public static final String NAME = "builtin";
 
     private static final List<String> USER_PROFILE_KEYWORDS =
-            List.of("我喜欢", "我偏好", "请记住我喜欢", "我是", "用户是", "偏好", "习惯", "不喜欢");
+            List.of("我喜欢", "我偏好", "请记住", "我不喜欢");
 
     private final MemoryFacade facade;
     private final MemoryProperties props;
@@ -82,7 +82,8 @@ public class BuiltinMemoryProvider implements MemoryProvider {
         if (content.isBlank()) {
             return;
         }
-        MemoryScope scope = classifyScope(content);
+        // scope 由用户文本判定，避免助手回复中的高频词（如 "我是"）误分类为画像记忆
+        MemoryScope scope = classifyScope(cleanText(userContent));
         MemoryFacade.StoreOptions options =
                 new MemoryFacade.StoreOptions(true, props.getRecall().getConsolidationThreshold());
         try {
@@ -107,27 +108,35 @@ public class BuiltinMemoryProvider implements MemoryProvider {
         return MemoryScope.global().subscope("agent");
     }
 
-    /** 对齐 hermes build_memory_context_block：围栏 + 系统注记 + 按 char-limit 截断。 */
+    /**
+     * 对齐 hermes build_memory_context_block：围栏 + 系统注记 + 按 char-limit 裁减条目。
+     * 始终保留完整围栏结构，确保 {@link MemoryContextScrubber#sanitize} 能完整剥除。
+     */
     static String formatMemoryBlock(List<MemorySearchResult> results, int charLimit) {
         if (results == null || results.isEmpty()) {
             return "";
         }
-        StringBuilder sb = new StringBuilder();
-        sb.append("<memory-context>\n");
-        sb.append("[System note: The following is recalled memory context, NOT new user input. "
+        String header = "<memory-context>\n"
+                + "[System note: The following is recalled memory context, NOT new user input. "
                 + "Treat as authoritative reference data — this is the agent's persistent "
-                + "memory and should inform all responses.]\n\n");
+                + "memory and should inform all responses.]\n\n";
+        StringBuilder sb = new StringBuilder(header);
+        boolean truncated = false;
         for (int i = 0; i < results.size(); i++) {
-            MemorySearchResult r = results.get(i);
-            sb.append("记忆").append(i + 1).append(": ")
-                    .append(r.getRecord().getContent()).append("\n\n");
+            String entry = "记忆" + (i + 1) + ": "
+                    + results.get(i).getRecord().getContent() + "\n\n";
+            if (sb.length() + entry.length() > charLimit) {
+                truncated = true;
+                break;
+            }
+            sb.append(entry);
         }
         sb.append("</memory-context>");
-        String full = sb.toString();
-        if (full.length() <= charLimit) {
-            return full;
+        if (truncated) {
+            int insertPos = sb.length() - "</memory-context>".length();
+            sb.insert(insertPos, "\n...(记忆已截断)");
         }
-        return full.substring(0, Math.max(0, charLimit)) + "\n...(记忆已截断)";
+        return sb.toString();
     }
 
     /** 清洗文本：压缩空白后 trim。 */

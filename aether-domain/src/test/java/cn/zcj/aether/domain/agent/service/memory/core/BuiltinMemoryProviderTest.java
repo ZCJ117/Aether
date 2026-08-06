@@ -1,5 +1,6 @@
 package cn.zcj.aether.domain.agent.service.memory.core;
 
+import cn.zcj.aether.domain.agent.service.memory.MemoryRecord;
 import cn.zcj.aether.domain.agent.service.memory.MemoryScope;
 import cn.zcj.aether.domain.agent.service.memory.MemorySearchResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,10 +62,31 @@ class BuiltinMemoryProviderTest {
 
     @Test
     void prefetchTruncatesByCharLimit() {
-        props.setMemoryCharLimit(50);
+        props.setMemoryCharLimit(120);
         provider.syncTurn("用户问", "助手回答关于分布式锁的内容", "s1", null);
         String block = provider.prefetch("分布式锁", "s1");
-        assertTrue(block.length() <= 50 + 20, "截断后长度应接近 char limit: " + block.length());
+        // 结构完整：以闭合围栏结束、系统注记保留
+        assertTrue(block.endsWith("</memory-context>"));
+        assertTrue(block.contains("System note"));
+        // 条目被裁掉 → 出现截断标记
+        assertTrue(block.contains("记忆已截断"));
+    }
+
+    @Test
+    void truncatedBlockStillRoundTripsThroughSanitize() {
+        props.setMemoryCharLimit(120);
+        provider.syncTurn("用户问", "助手回答关于分布式锁的内容", "s1", null);
+        String block = provider.prefetch("分布式锁", "s1");
+        // 截断后的块围栏结构完整，仍可被净化器完整剥除
+        assertEquals("", MemoryContextScrubber.sanitize(block).trim());
+    }
+
+    @Test
+    void assistantMentioningUserProfileKeywordStaysInAgentScope() {
+        // 用户文本无画像关键词，仅助手回复含 "我是" → 仍归 agent 作用域（防误分类）
+        provider.syncTurn("帮我看看这个配置", "我是这样实现的：设置超时时间", "s1", null);
+        MemoryRecord r = facade.records.values().iterator().next();
+        assertEquals("agent", r.getScope().path());
     }
 
     @Test
