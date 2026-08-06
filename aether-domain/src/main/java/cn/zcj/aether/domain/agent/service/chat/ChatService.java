@@ -253,7 +253,7 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.E0001.getCode(), "入口Agent未配置: " + graph.getEntryPoint());
         }
 
-        // P1-4: 记忆注入（优先 MemoryFacade 语义搜索，回退文件存储）
+        // P1-4: 记忆注入（优先 MemoryLifecycleHooks prefetch，回退文件存储）
         String instruction = injectMemory(entry.getInstruction(), message, entry.getName(), sessionId);
         log.info("Agent entry resolved: name={}, instructionLen={}, modelRef={}",
                 entry.getName(),
@@ -297,9 +297,9 @@ public class ChatService implements IChatService {
                     }
                 });
 
-        // 记忆生命周期：turn 后持久化（异步）
+        // 记忆生命周期：turn 后持久化（异步，经净化防记忆回显递归污染）
         if (memoryLifecycleHooks != null && !outputs.isEmpty()) {
-            String assistantText = String.join("", outputs);
+            String assistantText = MemoryContextScrubber.sanitize(String.join("", outputs));
             memoryLifecycleHooks.syncTurn(message, assistantText, sessionId, null);
         }
 
@@ -315,7 +315,7 @@ public class ChatService implements IChatService {
             return Flowable.error(new AppException(ResponseCode.E0001.getCode()));
         }
 
-        // P1-4: 记忆注入（优先 MemoryFacade 语义搜索，回退文件存储）
+        // P1-4: 记忆注入（优先 MemoryLifecycleHooks prefetch，回退文件存储）
 
         // 多Agent工作流 → GraphExecutor（P0-1 改造：不再传 chatModel）
         if (graph.getEdges() != null && !graph.getEdges().isEmpty()) {
@@ -373,6 +373,8 @@ public class ChatService implements IChatService {
         RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, metadata, null);
 
         // 记忆生命周期：捕获助手文本（经流式净化防记忆回显递归污染）+ turn 后持久化
+        // 注意：Flowable 为冷流，闭包捕获的 scrubber/captured 仅支持单次订阅；
+        //       onError 终止时（模型失败/超时/取消）不触发 syncTurn，避免持久化残缺轮次。
         MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
         StringBuilder captured = new StringBuilder();
         return agent.execute(ctx)
@@ -609,7 +611,7 @@ public class ChatService implements IChatService {
     }
 
     /**
-     * P1-4: 记忆注入（优先使用 MemoryFacade 语义搜索，回退文件存储关键词匹配）。
+     * P1-4: 记忆注入（优先 MemoryLifecycleHooks prefetch，内部经 BuiltinMemoryProvider 委托 MemoryFacade；回退文件存储关键词匹配）。
      */
     private String injectMemory(String instruction, String userMessage, String agentId, String sessionId) {
         // Phase 9: 注入标识符上下文（项目文件结构+文档索引）
