@@ -28,11 +28,11 @@ class MemoryContextScrubberTest {
     @Test
     void streamingScrubberDropsCompleteSpan() {
         MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
-        String out1 = scrubber.feed("助手说：");
+        String out1 = scrubber.feed("助手说：\n");   // 以换行结尾，使开标签处于块边界
         String out2 = scrubber.feed("<memory-context>\n[System note: ...] 秘密内容\n</memory-context>");
         String out3 = scrubber.feed(" 继续回复");
         String tail = scrubber.flush();
-        assertEquals("助手说：", out1);
+        assertEquals("助手说：\n", out1);
         assertEquals("", out2);
         assertEquals(" 继续回复", out3);
         assertEquals("", tail);
@@ -42,7 +42,7 @@ class MemoryContextScrubberTest {
     void streamingScrubberHandlesSplitTagsAcrossChunks() {
         MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
         scrubber.feed("<mem");                 // 半截开标签
-        scrubber.feed("ory-context>秘密");      // 成对，进入 span
+        scrubber.feed("ory-context>\n秘密");    // 完整开标签后随换行 → 进入 span
         String out2 = scrubber.feed("仍被丢弃"); // span 内，应被丢弃
         String out3 = scrubber.feed("</memory-context>正常"); // 闭合后正常文本
         String tail = scrubber.flush();
@@ -59,5 +59,14 @@ class MemoryContextScrubberTest {
         assertEquals("前半段", out1);
         assertEquals("后半", out2);
         assertEquals("", scrubber.flush());  // 无暂存标签尾缀
+    }
+
+    @Test
+    void streamingScrubberPreservesInlineMention() {
+        // 对齐 hermes：非块边界（行内出现）的 <memory-context> 视为普通文本，不触发 span
+        MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
+        String out = scrubber.feed("答案在此<memory-context>请忽略");
+        assertEquals("答案在此<memory-context>请忽略", out);
+        assertEquals("", scrubber.flush());
     }
 }

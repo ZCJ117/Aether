@@ -52,10 +52,12 @@ public final class MemoryContextScrubber {
         private static final String CLOSE_TAG = "</memory-context>";
 
         private boolean inSpan = false;
+        private boolean atBlockBoundary = true;
         private final StringBuilder buf = new StringBuilder();
 
         public void reset() {
             inSpan = false;
+            atBlockBoundary = true;
             buf.setLength(0);
         }
 
@@ -65,14 +67,15 @@ public final class MemoryContextScrubber {
             }
             String combined = buf.toString() + text;
             buf.setLength(0);
+            String lower = combined.toLowerCase();
             StringBuilder out = new StringBuilder();
             int i = 0;
             int len = combined.length();
             while (i < len) {
                 if (inSpan) {
-                    int close = indexOfIgnoreCase(combined, CLOSE_TAG, i);
+                    int close = lower.indexOf(CLOSE_TAG, i);
                     if (close == -1) {
-                        int hold = maxPartialSuffix(combined, i, CLOSE_TAG);
+                        int hold = maxPartialSuffix(lower, i, CLOSE_TAG);
                         if (hold > 0) {
                             buf.append(combined, len - hold, len);
                         }
@@ -81,25 +84,41 @@ public final class MemoryContextScrubber {
                     i = close + CLOSE_TAG.length();
                     inSpan = false;
                 } else {
-                    int open = indexOfIgnoreCase(combined, OPEN_TAG, i);
+                    int open = lower.indexOf(OPEN_TAG, i);
                     if (open == -1) {
-                        int hold = maxPartialSuffix(combined, i, OPEN_TAG);
-                        if (combined.toLowerCase().endsWith(OPEN_TAG)) {
+                        int hold = maxPartialSuffix(lower, i, OPEN_TAG);
+                        if (isCompleteOpenTagAtBoundary(lower, len)) {
                             hold = Math.max(hold, OPEN_TAG.length());
                         }
                         if (hold > 0) {
-                            out.append(combined, i, len - hold);
+                            if (len - hold > i) {
+                                appendVisible(out, combined, i, len - hold);
+                            }
                             buf.append(combined, len - hold, len);
                         } else {
-                            out.append(combined, i, len);
+                            appendVisible(out, combined, i, len);
                         }
                         return out.toString();
                     }
-                    if (open > i) {
-                        out.append(combined, i, open);
+                    if (isBlockBoundary(lower, open) && isBlockOpenerSuffix(combined, open)) {
+                        // 块边界开标签 + 后随换行 → 进入 span
+                        if (open > i) {
+                            appendVisible(out, combined, i, open);
+                        }
+                        i = open + OPEN_TAG.length();
+                        inSpan = true;
+                    } else if (open + OPEN_TAG.length() >= len && isBlockBoundary(lower, open)) {
+                        // 尾部完整的块边界开标签：暂存，等下一片确认后随字符
+                        if (open > i) {
+                            appendVisible(out, combined, i, open);
+                        }
+                        buf.append(combined, open, len);
+                        return out.toString();
+                    } else {
+                        // 非块边界出现：作为普通文本输出（对齐 hermes 不触发 span）
+                        appendVisible(out, combined, i, open + OPEN_TAG.length());
+                        i = open + OPEN_TAG.length();
                     }
-                    i = open + OPEN_TAG.length();
-                    inSpan = true;
                 }
             }
             if (inSpan) {
@@ -119,21 +138,61 @@ public final class MemoryContextScrubber {
             return tail;
         }
 
-        private static int maxPartialSuffix(String s, int from, String tag) {
-            String tail = s.substring(from);
-            String tagLower = tag.toLowerCase();
-            String tailLower = tail.toLowerCase();
-            int max = Math.min(tailLower.length(), tagLower.length() - 1);
+        // ---- helpers ----
+
+        private void appendVisible(StringBuilder out, String combined, int from, int to) {
+            out.append(combined, from, to);
+            updateBlockBoundary(combined.substring(from, to));
+        }
+
+        /** 开标签所在位置是否为块边界（行首或独立行，对齐 hermes _is_block_boundary） */
+        private boolean isBlockBoundary(String lower, int idx) {
+            if (idx == 0) {
+                return atBlockBoundary;
+            }
+            int lastNewline = lower.lastIndexOf('\n', idx - 1);
+            if (lastNewline == -1) {
+                return atBlockBoundary && lower.substring(0, idx).trim().isEmpty();
+            }
+            return lower.substring(lastNewline + 1, idx).trim().isEmpty();
+        }
+
+        /** 开标签后是否紧跟换行（块级开始，对齐 hermes _has_block_opener_suffix） */
+        private boolean isBlockOpenerSuffix(String combined, int idx) {
+            int after = idx + OPEN_TAG.length();
+            if (after >= combined.length()) {
+                return false;
+            }
+            char c = combined.charAt(after);
+            return c == '\n' || c == '\r';
+        }
+
+        /** combined 是否以完整的、位于块边界的开标签结尾 */
+        private boolean isCompleteOpenTagAtBoundary(String lower, int len) {
+            if (!lower.endsWith(OPEN_TAG)) {
+                return false;
+            }
+            return isBlockBoundary(lower, len - OPEN_TAG.length());
+        }
+
+        private void updateBlockBoundary(String visible) {
+            int lastNewline = visible.lastIndexOf('\n');
+            if (lastNewline == -1) {
+                atBlockBoundary = atBlockBoundary && visible.trim().isEmpty();
+            } else {
+                atBlockBoundary = visible.substring(lastNewline + 1).trim().isEmpty();
+            }
+        }
+
+        private static int maxPartialSuffix(String lower, int from, String tag) {
+            String tail = lower.substring(from);
+            int max = Math.min(tail.length(), tag.length() - 1);
             for (int k = max; k >= 1; k--) {
-                if (tagLower.startsWith(tailLower.substring(tailLower.length() - k))) {
+                if (tag.startsWith(tail.substring(tail.length() - k))) {
                     return k;
                 }
             }
             return 0;
-        }
-
-        private static int indexOfIgnoreCase(String s, String sub, int from) {
-            return s.toLowerCase().indexOf(sub.toLowerCase(), from);
         }
     }
 }
