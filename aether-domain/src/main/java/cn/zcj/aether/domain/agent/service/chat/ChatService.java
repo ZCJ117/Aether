@@ -22,10 +22,9 @@ import cn.zcj.aether.domain.agent.service.session.SessionRepository;
 import cn.zcj.aether.types.exception.StateRestoreException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import cn.zcj.aether.domain.agent.service.executor.GraphExecutor;
-import cn.zcj.aether.domain.agent.service.memory.MemoryFacade;
-import cn.zcj.aether.domain.agent.service.memory.MemoryScope;
-import cn.zcj.aether.domain.agent.service.memory.MemorySearchResult;
 import cn.zcj.aether.domain.agent.service.memory.MemoryStore;
+import cn.zcj.aether.domain.agent.service.memory.core.MemoryContextScrubber;
+import cn.zcj.aether.domain.agent.service.memory.core.MemoryLifecycleHooks;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.types.enums.ResponseCode;
 import cn.zcj.aether.types.exception.AppException;
@@ -60,11 +59,11 @@ public class ChatService implements IChatService {
     private MemoryStore memoryStore;
 
     /**
-     * P1-4 新增：多层记忆门面（优先使用语义搜索，回退文件存储）。
-     * required=false：未配置 EmbeddingModel/向量数据库时不影响启动。
+     * 记忆生命周期门面（prefetch/syncTurn/onSessionEnd）。
+     * required=false：未配置 EmbeddingModel/向量库或 aether.memory.enabled=false 时不影响启动。
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private MemoryFacade memoryFacade;
+    private MemoryLifecycleHooks memoryLifecycleHooks;
 
     @Resource
     private AiAgentAutoConfigProperties aiAgentAutoConfigProperties;
@@ -93,6 +92,9 @@ public class ChatService implements IChatService {
     private cn.zcj.aether.domain.agent.service.retrieval.IdentifierRegistry identifierRegistry;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** 流式路径捕获助手文本的上限（防超长回复写入记忆） */
+    private static final int MAX_SYNC_CAPTURE_CHARS = 8000;
 
 
     @Override
@@ -188,8 +190,29 @@ public class ChatService implements IChatService {
             log.warn("SessionRepository 未配置，无法删除会话: sessionId={}", sessionId);
             return;
         }
+
+        // 记忆生命周期：会话结束 flush（轮次 ≥ flush-min-turns 才真正触发）
+        int turnCount = readSessionTurnCount(sessionId);
+        if (memoryLifecycleHooks != null) {
+            memoryLifecycleHooks.onSessionEnd(sessionId, turnCount);
+        }
+
         sessionRepository.deleteBySessionId(sessionId);
         log.info("会话已删除: sessionId={}", sessionId);
+    }
+
+    /** 从会话 stateJson 读取累计轮次（解析失败视为 0）。 */
+    private int readSessionTurnCount(String sessionId) {
+        try {
+            var opt = sessionRepository.findBySessionId(sessionId);
+            if (opt.isEmpty() || opt.get().getStateJson() == null) return 0;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> state = objectMapper.readValue(opt.get().getStateJson(), Map.class);
+            return ((Number) state.getOrDefault("currentTurn", 0)).intValue();
+        } catch (Exception e) {
+            log.warn("读取会话轮次失败: sessionId={}, error={}", sessionId, e.getMessage());
+            return 0;
+        }
     }
 
     @Override
@@ -231,7 +254,7 @@ public class ChatService implements IChatService {
         }
 
         // P1-4: 记忆注入（优先 MemoryFacade 语义搜索，回退文件存储）
-        String instruction = injectMemory(entry.getInstruction(), message, entry.getName());
+        String instruction = injectMemory(entry.getInstruction(), message, entry.getName(), sessionId);
         log.info("Agent entry resolved: name={}, instructionLen={}, modelRef={}",
                 entry.getName(),
                 instruction != null ? instruction.length() : 0,
@@ -274,6 +297,12 @@ public class ChatService implements IChatService {
                     }
                 });
 
+        // 记忆生命周期：turn 后持久化（异步）
+        if (memoryLifecycleHooks != null && !outputs.isEmpty()) {
+            String assistantText = String.join("", outputs);
+            memoryLifecycleHooks.syncTurn(message, assistantText, sessionId, null);
+        }
+
         return outputs;
     }
 
@@ -301,7 +330,7 @@ public class ChatService implements IChatService {
                     "入口Agent未配置: " + graph.getEntryPoint()));
         }
 
-        String instruction = injectMemory(entry.getInstruction(), message, entry.getName());
+        String instruction = injectMemory(entry.getInstruction(), message, entry.getName(), sessionId);
         log.info("Agent entry resolved (stream): name={}, instructionLen={}, modelRef={}",
                 entry.getName(),
                 instruction != null ? instruction.length() : 0,
@@ -343,7 +372,25 @@ public class ChatService implements IChatService {
 
         RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, metadata, null);
 
-        return agent.execute(ctx);
+        // 记忆生命周期：捕获助手文本（经流式净化防记忆回显递归污染）+ turn 后持久化
+        MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
+        StringBuilder captured = new StringBuilder();
+        return agent.execute(ctx)
+                .doOnNext(event -> {
+                    if (event.getType() == RuntimeEvent.EventType.textDelta
+                            && event.getText() != null) {
+                        String clean = scrubber.feed(event.getText());
+                        if (captured.length() < MAX_SYNC_CAPTURE_CHARS) {
+                            captured.append(clean);
+                        }
+                    }
+                })
+                .doOnComplete(() -> {
+                    captured.append(scrubber.flush());
+                    if (memoryLifecycleHooks != null && captured.length() > 0) {
+                        memoryLifecycleHooks.syncTurn(message, captured.toString(), sessionId, null);
+                    }
+                });
     }
 
     /**
@@ -371,7 +418,7 @@ public class ChatService implements IChatService {
         }
 
         // 恢复之前的 Agent 状态
-        String instruction = injectMemory(entry.getInstruction(), "", entry.getName());
+        String instruction = injectMemory(entry.getInstruction(), "", entry.getName(), sessionId);
 
         AgentConfig agentConfig = AgentConfig.builder()
                 .name(entry.getName())
@@ -564,7 +611,7 @@ public class ChatService implements IChatService {
     /**
      * P1-4: 记忆注入（优先使用 MemoryFacade 语义搜索，回退文件存储关键词匹配）。
      */
-    private String injectMemory(String instruction, String userMessage, String agentId) {
+    private String injectMemory(String instruction, String userMessage, String agentId, String sessionId) {
         // Phase 9: 注入标识符上下文（项目文件结构+文档索引）
         if (identifierRegistry != null) {
             try {
@@ -577,26 +624,15 @@ public class ChatService implements IChatService {
             }
         }
 
-        // P1-4: 优先使用 MemoryFacade 语义搜索
-        if (memoryFacade != null) {
-            MemoryScope scope = MemoryScope.global().subscope("agent").subscope(agentId);
-            List<MemorySearchResult> results = memoryFacade.search(userMessage, scope, 5);
-
-            if (!results.isEmpty()) {
-                StringBuilder memoryBlock = new StringBuilder("\n\n<auto-memory>\n");
-                memoryBlock.append("以下是与当前对话相关的历史记忆，请参考但不强制使用：\n\n");
-                for (int i = 0; i < results.size(); i++) {
-                    MemorySearchResult r = results.get(i);
-                    memoryBlock.append("记忆").append(i + 1).append(": ")
-                        .append(r.getRecord().getContent()).append("\n\n");
-                }
-                memoryBlock.append("</auto-memory>");
-
-                if (instruction == null) return memoryBlock.toString();
-                String enriched = instruction.replace("{memory}", memoryBlock.toString());
+        // 新：MemoryLifecycleHooks prefetch（含 <memory-context> 围栏格式化与 char-limit 截断）
+        if (memoryLifecycleHooks != null) {
+            String memoryBlock = memoryLifecycleHooks.prefetch(userMessage, sessionId);
+            if (memoryBlock != null && !memoryBlock.isEmpty()) {
+                if (instruction == null) return memoryBlock;
+                String enriched = instruction.replace("{memory}", memoryBlock);
                 if (enriched.equals(instruction)) {
                     log.warn("Agent [{}] 的 instruction 缺少 {{memory}} 占位符，记忆内容未被注入。" +
-                             "请在 instruction 中添加 {{memory}} 以启用记忆功能（MemoryFacade 路径）。", agentId);
+                             "请在 instruction 中添加 {{memory}} 以启用记忆功能（MemoryLifecycleHooks 路径）。", agentId);
                 }
                 return enriched;
             }
