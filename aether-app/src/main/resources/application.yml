@@ -15,3 +15,18 @@ aether:
       secret: ${JWT_SECRET:aether-dev-jwt-secret-key-min-32-chars!!}
       access-token-expiration: 900000
       refresh-token-expiration: 604800000
+  # ====== 记忆系统（对齐 hermes cli-config.yaml memory 段）======
+  memory:
+    enabled: true                # 记忆系统总开关（hermes memory.memory_enabled）
+    user-profile-enabled: true   # 用户画像记忆开关（hermes memory.user_profile_enabled）
+    memory-char-limit: 2200      # 注入记忆上下文预算，≈800 token（hermes memory_char_limit）
+    user-char-limit: 1375        # 用户画像上下文预算，≈500 token（hermes user_char_limit）
+    nudge-interval: 10           # nudge 轮次间隔，0=禁用（hermes memory.nudge_interval）
+    flush-min-turns: 6           # flush 最小轮次，0=禁用（hermes memory.flush_min_turns）
+    recall:
+      max-results: 10            # prefetch 检索 Top-K（hermes supermemory max_recall_results）
+      semantic-weight: 0.6       # 语义相似度权重
+      recency-weight: 0.3        # 时间衰减权重
+      importance-weight: 0.1     # 重要性权重
+      consolidation-threshold: 0.85  # 相似度合并阈值
+      vector-dimension: 1280     # 向量维度（pgvector）
