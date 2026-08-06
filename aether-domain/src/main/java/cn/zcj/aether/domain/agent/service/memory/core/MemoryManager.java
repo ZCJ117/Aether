@@ -107,13 +107,19 @@ public final class MemoryManager {
         }
         userTurnCount.incrementAndGet();
         for (MemoryProvider p : providers) {
-            syncExecutor.submit(() -> {
-                try {
-                    p.syncTurn(userMsg, assistantResponse, sessionId, messages);
-                } catch (Exception e) {
-                    log.warn("记忆 provider '{}' syncTurn 失败: {}", p.name(), e.getMessage());
-                }
-            });
+            try {
+                syncExecutor.submit(() -> {
+                    try {
+                        p.syncTurn(userMsg, assistantResponse, sessionId, messages);
+                    } catch (Exception e) {
+                        log.warn("记忆 provider '{}' syncTurn 失败: {}", p.name(), e.getMessage());
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                // drain/shutdown 后提交被拒：降级为告警，不中断调用方（如 ChatService 的 turn 路径）
+                log.warn("记忆 provider '{}' syncTurn 提交被拒（executor 已关闭）: {}",
+                        p.name(), e.getMessage());
+            }
         }
     }
 
