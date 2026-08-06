@@ -3,12 +3,12 @@ package cn.zcj.aether.domain.agent.service.memory.core;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 记忆编排器 —— 对齐 hermes agent/memory_manager.py 的 MemoryManager。
@@ -27,9 +27,8 @@ public final class MemoryManager {
 
     private final MemoryProperties props;
     private final List<MemoryProvider> providers = new ArrayList<>();
-    private final Map<String, MemoryProvider> toolToProvider = new HashMap<>();
     private boolean hasExternal = false;
-    private int userTurnCount = 0;
+    private final AtomicInteger userTurnCount = new AtomicInteger(0);
     private final ExecutorService syncExecutor = Executors.newSingleThreadExecutor();
 
     public MemoryManager(MemoryProperties props) {
@@ -52,12 +51,6 @@ public final class MemoryManager {
             hasExternal = true;
         }
         providers.add(provider);
-        for (Map<String, Object> schema : provider.getToolSchemas()) {
-            Object name = schema != null ? schema.get("name") : null;
-            if (name instanceof String s && !s.isEmpty()) {
-                toolToProvider.put(s, provider);
-            }
-        }
     }
 
     /** 汇总所有 provider 的系统提示块 + nudge 提醒。 */
@@ -80,7 +73,8 @@ public final class MemoryManager {
     /** nudge：累计轮次达到 nudge-interval 倍数时注入保存记忆提醒。 */
     String buildNudge() {
         int interval = props.getNudgeInterval();
-        if (interval <= 0 || userTurnCount <= 0 || userTurnCount % interval != 0) {
+        int turns = userTurnCount.get();
+        if (interval <= 0 || turns <= 0 || turns % interval != 0) {
             return "";
         }
         return "\n[Memory nudge: 请考虑是否将本回合的重要信息保存到记忆。]\n";
@@ -111,7 +105,7 @@ public final class MemoryManager {
         if (!props.isEnabled()) {
             return;
         }
-        userTurnCount++;
+        userTurnCount.incrementAndGet();
         for (MemoryProvider p : providers) {
             syncExecutor.submit(() -> {
                 try {
@@ -139,6 +133,9 @@ public final class MemoryManager {
 
     /** 汇总所有 tool schema。 */
     public List<Map<String, Object>> getAllToolSchemas() {
+        if (!props.isEnabled()) {
+            return List.of();
+        }
         List<Map<String, Object>> schemas = new ArrayList<>();
         for (MemoryProvider p : providers) {
             try {
@@ -166,6 +163,9 @@ public final class MemoryManager {
 
     /** 会话切换回调。 */
     public void onSessionSwitch(String newSessionId, String parentSessionId, boolean reset) {
+        if (!props.isEnabled()) {
+            return;
+        }
         for (MemoryProvider p : providers) {
             try {
                 p.onSessionSwitch(newSessionId, parentSessionId, reset, false, Map.of());
@@ -176,8 +176,8 @@ public final class MemoryManager {
     }
 
     /** 已累计的用户轮次。 */
-    public synchronized int getUserTurnCount() {
-        return userTurnCount;
+    public int getUserTurnCount() {
+        return userTurnCount.get();
     }
 
     /** 等待所有后台写入完成（5 秒超时）。 */

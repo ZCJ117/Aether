@@ -83,6 +83,17 @@ class MemoryManagerTest {
     }
 
     @Test
+    void syncAllPreservesTurnOrderAfterDrain() {
+        RecordingProvider p = new RecordingProvider("builtin");
+        MemoryManager manager = new MemoryManager(props);
+        manager.addProvider(p);
+        manager.syncAll("u1", "a1", "s", null);
+        manager.syncAll("u2", "a2", "s", null);
+        manager.drain();
+        assertEquals(List.of("sync:u1", "sync:u2"), p.calls);
+    }
+
+    @Test
     void prefetchAllDelegatesAndBuildsPrompt() {
         RecordingProvider p = new RecordingProvider("builtin");
         MemoryManager manager = new MemoryManager(props);
