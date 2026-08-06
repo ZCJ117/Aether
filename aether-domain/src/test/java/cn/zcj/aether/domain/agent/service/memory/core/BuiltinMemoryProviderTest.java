@@ -100,6 +100,14 @@ class BuiltinMemoryProviderTest {
     }
 
     @Test
+    void prefetchIncludesUserScopeWhenEnabled() {
+        // 用户文本含画像关键词 → user 作用域；prefetch 应同时召回用户画像记忆
+        provider.syncTurn("我喜欢简洁的回答风格", "好的，已记录", "s1", null);
+        String block = provider.prefetch("回答风格", "s1");
+        assertTrue(block.contains("我喜欢简洁的回答风格"));
+    }
+
+    @Test
     void formatMemoryBlockEmptyForNoResults() {
         assertEquals("", BuiltinMemoryProvider.formatMemoryBlock(List.of(), 100));
         assertEquals("", BuiltinMemoryProvider.formatMemoryBlock(null, 100));

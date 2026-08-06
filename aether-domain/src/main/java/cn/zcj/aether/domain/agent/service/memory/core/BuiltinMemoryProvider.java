@@ -61,11 +61,19 @@ public class BuiltinMemoryProvider implements MemoryProvider {
         if (facade == null || query == null || query.isBlank()) {
             return "";
         }
-        MemoryScope scope = MemoryScope.global().subscope("agent");
         int topK = props.getRecall().getMaxResults();
         try {
-            List<MemorySearchResult> results = facade.search(query, scope, topK);
-            return formatMemoryBlock(results, props.getMemoryCharLimit());
+            // agent 事实/约定（memory-char-limit 预算）
+            String agentBlock = formatMemoryBlock(
+                    facade.search(query, MemoryScope.global().subscope("agent"), topK),
+                    props.getMemoryCharLimit());
+            // 用户画像（user-char-limit 预算，仅启用时；对齐 hermes MEMORY.md + USER.md 双注入）
+            String userBlock = props.isUserProfileEnabled()
+                    ? formatMemoryBlock(
+                            facade.search(query, new MemoryScope("user", true), topK),
+                            props.getUserCharLimit())
+                    : "";
+            return agentBlock + userBlock;
         } catch (Exception e) {
             log.warn("builtin prefetch 失败: query=[{}], error={}", query, e.getMessage());
             return "";
