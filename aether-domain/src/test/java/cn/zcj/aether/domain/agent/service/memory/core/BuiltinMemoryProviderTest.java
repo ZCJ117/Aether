@@ -62,20 +62,24 @@ class BuiltinMemoryProviderTest {
 
     @Test
     void prefetchTruncatesByCharLimit() {
-        props.setMemoryCharLimit(120);
+        // header 固定 ~206 字符；预算容纳第一条、裁掉第二条，验证"部分保留"分支
+        props.setMemoryCharLimit(240);
         provider.syncTurn("用户问", "助手回答关于分布式锁的内容", "s1", null);
+        provider.syncTurn("用户问", "助手回答关于缓存策略的内容", "s1", null);
         String block = provider.prefetch("分布式锁", "s1");
-        // 结构完整：以闭合围栏结束、系统注记保留
         assertTrue(block.endsWith("</memory-context>"));
         assertTrue(block.contains("System note"));
-        // 条目被裁掉 → 出现截断标记
+        // 第一条保留、第二条被裁 → 截断标记出现在闭合围栏之前
+        assertTrue(block.contains("分布式锁"));
         assertTrue(block.contains("记忆已截断"));
+        assertTrue(block.indexOf("记忆已截断") < block.indexOf("</memory-context>"));
     }
 
     @Test
     void truncatedBlockStillRoundTripsThroughSanitize() {
-        props.setMemoryCharLimit(120);
+        props.setMemoryCharLimit(240);
         provider.syncTurn("用户问", "助手回答关于分布式锁的内容", "s1", null);
+        provider.syncTurn("用户问", "助手回答关于缓存策略的内容", "s1", null);
         String block = provider.prefetch("分布式锁", "s1");
         // 截断后的块围栏结构完整，仍可被净化器完整剥除
         assertEquals("", MemoryContextScrubber.sanitize(block).trim());
