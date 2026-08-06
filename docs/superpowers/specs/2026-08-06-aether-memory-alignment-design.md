@@ -244,3 +244,8 @@ public final class MemoryManager {
 - 不改动现有 `MemoryFacade`/`EncodingFlow`/`RecallFlow`/`VectorStore` 实现（含其检索缺陷，仅在本文档审计章节记录）。
 - 不新增前端记忆类型（现有 `LongTermMemoryEntry` 保留）。
 - 不引入 Python 记忆服务（对齐方式已确认走 Java 端重构）。
+
+## 5.1 已知边界（本特性明确范围）
+
+- **builtin `onSessionEnd` 为 no-op**：`flush-min-turns` 门控已接线并测试，但 builtin provider 不覆写 `onSessionEnd` —— 会话结束时的 LLM 事实抽取/总结属未来工作；该钩子为未来外部 provider 预留，会话结束不持久化额外内容。
+- **`recall.vector-dimension` 为预留配置**：当前内置召回不直接消费向量维度，pgvector 后端按需使用。

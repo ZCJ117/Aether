@@ -48,7 +48,7 @@
 **测试命令**（在 `aether/` 根目录执行，`-am` 连带构建依赖模块）：
 
 ```bash
-mvn -pl aether-domain -am test -Dtest=<TestClass> -DfailIfNoTests=false
+mvn -pl aether-domain -am test -Dtest=<TestClass> -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
 ---
@@ -105,7 +105,7 @@ class MemoryPropertiesTest {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryPropertiesTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryPropertiesTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: FAIL — `MemoryPropertiesTest` cannot be resolved / compilation error (class not defined).
 
 - [ ] **Step 3: Write the implementation**
@@ -178,7 +178,7 @@ public class MemoryProperties {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryPropertiesTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryPropertiesTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: PASS (BUILD SUCCESS, 2 tests run).
 
 - [ ] **Step 5: Commit**
@@ -244,7 +244,7 @@ class MemoryProviderTest {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryProviderTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryProviderTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: FAIL — compilation error (classes not defined).
 
 - [ ] **Step 3: Write the implementation**
@@ -375,7 +375,7 @@ public interface MemoryProvider {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryProviderTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryProviderTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -426,11 +426,11 @@ class MemoryContextScrubberTest {
     @Test
     void streamingScrubberDropsCompleteSpan() {
         MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
-        String out1 = scrubber.feed("助手说：");
+        String out1 = scrubber.feed("助手说：\n");  // 结尾换行 → 下一片开标签落在块边界
         String out2 = scrubber.feed("<memory-context>\n[System note: ...] 秘密内容\n</memory-context>");
         String out3 = scrubber.feed(" 继续回复");
         String tail = scrubber.flush();
-        assertEquals("助手说：", out1);
+        assertEquals("助手说：\n", out1);
         assertEquals("", out2);
         assertEquals(" 继续回复", out3);
         assertEquals("", tail);
@@ -440,13 +440,22 @@ class MemoryContextScrubberTest {
     void streamingScrubberHandlesSplitTagsAcrossChunks() {
         MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
         scrubber.feed("<mem");                 // 半截开标签
-        scrubber.feed("ory-context>秘密");      // 成对，进入 span
+        scrubber.feed("ory-context>\n秘密");    // 完整开标签后随换行 → 进入 span
         String out2 = scrubber.feed("仍被丢弃"); // span 内，应被丢弃
         String out3 = scrubber.feed("</memory-context>正常"); // 闭合后正常文本
         String tail = scrubber.flush();
         assertEquals("", out2);
         assertEquals("正常", out3);
         assertEquals("", tail);
+    }
+
+    @Test
+    void streamingScrubberPreservesInlineMention() {
+        // 对齐 hermes：非块边界（行内出现）的 <memory-context> 视为普通文本，不触发 span
+        MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
+        String out = scrubber.feed("答案在此<memory-context>请忽略");
+        assertEquals("答案在此<memory-context>请忽略", out);
+        assertEquals("", scrubber.flush());
     }
 
     @Test
@@ -465,7 +474,7 @@ class MemoryContextScrubberTest {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryContextScrubberTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryContextScrubberTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: FAIL — compilation error (class not defined).
 
 - [ ] **Step 3: Write the implementation**
@@ -524,10 +533,12 @@ public final class MemoryContextScrubber {
         private static final String CLOSE_TAG = "</memory-context>";
 
         private boolean inSpan = false;
+        private boolean atBlockBoundary = true;
         private final StringBuilder buf = new StringBuilder();
 
         public void reset() {
             inSpan = false;
+            atBlockBoundary = true;
             buf.setLength(0);
         }
 
@@ -537,14 +548,15 @@ public final class MemoryContextScrubber {
             }
             String combined = buf.toString() + text;
             buf.setLength(0);
+            String lower = combined.toLowerCase();
             StringBuilder out = new StringBuilder();
             int i = 0;
             int len = combined.length();
             while (i < len) {
                 if (inSpan) {
-                    int close = indexOfIgnoreCase(combined, CLOSE_TAG, i);
+                    int close = lower.indexOf(CLOSE_TAG, i);
                     if (close == -1) {
-                        int hold = maxPartialSuffix(combined, i, CLOSE_TAG);
+                        int hold = maxPartialSuffix(lower, i, CLOSE_TAG);
                         if (hold > 0) {
                             buf.append(combined, len - hold, len);
                         }
@@ -553,25 +565,41 @@ public final class MemoryContextScrubber {
                     i = close + CLOSE_TAG.length();
                     inSpan = false;
                 } else {
-                    int open = indexOfIgnoreCase(combined, OPEN_TAG, i);
+                    int open = lower.indexOf(OPEN_TAG, i);
                     if (open == -1) {
-                        int hold = maxPartialSuffix(combined, i, OPEN_TAG);
-                        if (combined.toLowerCase().endsWith(OPEN_TAG)) {
+                        int hold = maxPartialSuffix(lower, i, OPEN_TAG);
+                        if (isCompleteOpenTagAtBoundary(lower, len)) {
                             hold = Math.max(hold, OPEN_TAG.length());
                         }
                         if (hold > 0) {
-                            out.append(combined, i, len - hold);
+                            if (len - hold > i) {
+                                appendVisible(out, combined, i, len - hold);
+                            }
                             buf.append(combined, len - hold, len);
                         } else {
-                            out.append(combined, i, len);
+                            appendVisible(out, combined, i, len);
                         }
                         return out.toString();
                     }
-                    if (open > i) {
-                        out.append(combined, i, open);
+                    if (isBlockBoundary(lower, open) && isBlockOpenerSuffix(combined, open)) {
+                        // 块边界开标签 + 后随换行 → 进入 span
+                        if (open > i) {
+                            appendVisible(out, combined, i, open);
+                        }
+                        i = open + OPEN_TAG.length();
+                        inSpan = true;
+                    } else if (open + OPEN_TAG.length() >= len && isBlockBoundary(lower, open)) {
+                        // 尾部完整的块边界开标签：暂存，等下一片确认后随字符
+                        if (open > i) {
+                            appendVisible(out, combined, i, open);
+                        }
+                        buf.append(combined, open, len);
+                        return out.toString();
+                    } else {
+                        // 非块边界出现：作为普通文本输出（对齐 hermes 不触发 span）
+                        appendVisible(out, combined, i, open + OPEN_TAG.length());
+                        i = open + OPEN_TAG.length();
                     }
-                    i = open + OPEN_TAG.length();
-                    inSpan = true;
                 }
             }
             if (inSpan) {
@@ -591,21 +619,61 @@ public final class MemoryContextScrubber {
             return tail;
         }
 
-        private static int maxPartialSuffix(String s, int from, String tag) {
-            String tail = s.substring(from);
-            String tagLower = tag.toLowerCase();
-            String tailLower = tail.toLowerCase();
-            int max = Math.min(tailLower.length(), tagLower.length() - 1);
+        // ---- helpers ----
+
+        private void appendVisible(StringBuilder out, String combined, int from, int to) {
+            out.append(combined, from, to);
+            updateBlockBoundary(combined.substring(from, to));
+        }
+
+        /** 开标签所在位置是否为块边界（行首或独立行，对齐 hermes _is_block_boundary） */
+        private boolean isBlockBoundary(String lower, int idx) {
+            if (idx == 0) {
+                return atBlockBoundary;
+            }
+            int lastNewline = lower.lastIndexOf('\n', idx - 1);
+            if (lastNewline == -1) {
+                return atBlockBoundary && lower.substring(0, idx).trim().isEmpty();
+            }
+            return lower.substring(lastNewline + 1, idx).trim().isEmpty();
+        }
+
+        /** 开标签后是否紧跟换行（块级开始，对齐 hermes _has_block_opener_suffix） */
+        private boolean isBlockOpenerSuffix(String combined, int idx) {
+            int after = idx + OPEN_TAG.length();
+            if (after >= combined.length()) {
+                return false;
+            }
+            char c = combined.charAt(after);
+            return c == '\n' || c == '\r';
+        }
+
+        /** combined 是否以完整的、位于块边界的开标签结尾 */
+        private boolean isCompleteOpenTagAtBoundary(String lower, int len) {
+            if (!lower.endsWith(OPEN_TAG)) {
+                return false;
+            }
+            return isBlockBoundary(lower, len - OPEN_TAG.length());
+        }
+
+        private void updateBlockBoundary(String visible) {
+            int lastNewline = visible.lastIndexOf('\n');
+            if (lastNewline == -1) {
+                atBlockBoundary = atBlockBoundary && visible.trim().isEmpty();
+            } else {
+                atBlockBoundary = visible.substring(lastNewline + 1).trim().isEmpty();
+            }
+        }
+
+        private static int maxPartialSuffix(String lower, int from, String tag) {
+            String tail = lower.substring(from);
+            int max = Math.min(tail.length(), tag.length() - 1);
             for (int k = max; k >= 1; k--) {
-                if (tagLower.startsWith(tailLower.substring(tailLower.length() - k))) {
+                if (tag.startsWith(tail.substring(tail.length() - k))) {
                     return k;
                 }
             }
             return 0;
-        }
-
-        private static int indexOfIgnoreCase(String s, String sub, int from) {
-            return s.toLowerCase().indexOf(sub.toLowerCase(), from);
         }
     }
 }
@@ -613,7 +681,7 @@ public final class MemoryContextScrubber {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryContextScrubberTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryContextScrubberTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: PASS (5 tests).
 
 > 若 `streamingScrubberDropsCompleteSpan` 断言 `out1 == "助手说："` 失败：完整围栏出现在同一片时被完整剥除，不影响其后的 `" 继续回复"`；请核对 feed 内循环对 `open == -1` 分支（该分片既有前文又有围栏时先走完整搜索）的处理。
@@ -724,6 +792,17 @@ class MemoryManagerTest {
     }
 
     @Test
+    void syncAllPreservesTurnOrderAfterDrain() {
+        RecordingProvider p = new RecordingProvider("builtin");
+        MemoryManager manager = new MemoryManager(props);
+        manager.addProvider(p);
+        manager.syncAll("u1", "a1", "s", null);
+        manager.syncAll("u2", "a2", "s", null);
+        manager.drain();
+        assertEquals(List.of("sync:u1", "sync:u2"), p.calls);
+    }
+
+    @Test
     void prefetchAllDelegatesAndBuildsPrompt() {
         RecordingProvider p = new RecordingProvider("builtin");
         MemoryManager manager = new MemoryManager(props);
@@ -760,7 +839,7 @@ class MemoryManagerTest {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryManagerTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryManagerTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: FAIL — compilation error (`MemoryManager` not defined).
 
 - [ ] **Step 3: Write the implementation**
@@ -771,12 +850,12 @@ package cn.zcj.aether.domain.agent.service.memory.core;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 记忆编排器 —— 对齐 hermes agent/memory_manager.py 的 MemoryManager。
@@ -795,9 +874,8 @@ public final class MemoryManager {
 
     private final MemoryProperties props;
     private final List<MemoryProvider> providers = new ArrayList<>();
-    private final Map<String, MemoryProvider> toolToProvider = new HashMap<>();
     private boolean hasExternal = false;
-    private int userTurnCount = 0;
+    private final AtomicInteger userTurnCount = new AtomicInteger(0);
     private final ExecutorService syncExecutor = Executors.newSingleThreadExecutor();
 
     public MemoryManager(MemoryProperties props) {
@@ -820,12 +898,6 @@ public final class MemoryManager {
             hasExternal = true;
         }
         providers.add(provider);
-        for (Map<String, Object> schema : provider.getToolSchemas()) {
-            Object name = schema != null ? schema.get("name") : null;
-            if (name instanceof String s && !s.isEmpty()) {
-                toolToProvider.put(s, provider);
-            }
-        }
     }
 
     /** 汇总所有 provider 的系统提示块 + nudge 提醒。 */
@@ -848,7 +920,8 @@ public final class MemoryManager {
     /** nudge：累计轮次达到 nudge-interval 倍数时注入保存记忆提醒。 */
     String buildNudge() {
         int interval = props.getNudgeInterval();
-        if (interval <= 0 || userTurnCount <= 0 || userTurnCount % interval != 0) {
+        int turns = userTurnCount.get();
+        if (interval <= 0 || turns <= 0 || turns % interval != 0) {
             return "";
         }
         return "\n[Memory nudge: 请考虑是否将本回合的重要信息保存到记忆。]\n";
@@ -879,15 +952,21 @@ public final class MemoryManager {
         if (!props.isEnabled()) {
             return;
         }
-        userTurnCount++;
+        userTurnCount.incrementAndGet();
         for (MemoryProvider p : providers) {
-            syncExecutor.submit(() -> {
-                try {
-                    p.syncTurn(userMsg, assistantResponse, sessionId, messages);
-                } catch (Exception e) {
-                    log.warn("记忆 provider '{}' syncTurn 失败: {}", p.name(), e.getMessage());
-                }
-            });
+            try {
+                syncExecutor.submit(() -> {
+                    try {
+                        p.syncTurn(userMsg, assistantResponse, sessionId, messages);
+                    } catch (Exception e) {
+                        log.warn("记忆 provider '{}' syncTurn 失败: {}", p.name(), e.getMessage());
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                // drain/shutdown 后提交被拒：降级为告警，不中断调用方（如 ChatService 的 turn 路径）
+                log.warn("记忆 provider '{}' syncTurn 提交被拒（executor 已关闭）: {}",
+                        p.name(), e.getMessage());
+            }
         }
     }
 
@@ -907,6 +986,9 @@ public final class MemoryManager {
 
     /** 汇总所有 tool schema。 */
     public List<Map<String, Object>> getAllToolSchemas() {
+        if (!props.isEnabled()) {
+            return List.of();
+        }
         List<Map<String, Object>> schemas = new ArrayList<>();
         for (MemoryProvider p : providers) {
             try {
@@ -934,6 +1016,9 @@ public final class MemoryManager {
 
     /** 会话切换回调。 */
     public void onSessionSwitch(String newSessionId, String parentSessionId, boolean reset) {
+        if (!props.isEnabled()) {
+            return;
+        }
         for (MemoryProvider p : providers) {
             try {
                 p.onSessionSwitch(newSessionId, parentSessionId, reset, false, Map.of());
@@ -944,8 +1029,8 @@ public final class MemoryManager {
     }
 
     /** 已累计的用户轮次。 */
-    public synchronized int getUserTurnCount() {
-        return userTurnCount;
+    public int getUserTurnCount() {
+        return userTurnCount.get();
     }
 
     /** 等待所有后台写入完成（5 秒超时）。 */
@@ -985,7 +1070,7 @@ public final class MemoryManager {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryManagerTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryManagerTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: PASS.
 
 > `RecordingProvider` 继承 `MemoryProviderTest.StubProvider`（同包），其 `handleToolCall` 等默认行为来自 SPI。若 `disabledManagerDoesNothing` 因 `props.setEnabled(false)` 后 `syncAll` 直接 return 而未计数，属预期。
@@ -1127,6 +1212,7 @@ class FakeMemoryFacade implements MemoryFacade {
 ```java
 package cn.zcj.aether.domain.agent.service.memory.core;
 
+import cn.zcj.aether.domain.agent.service.memory.MemoryRecord;
 import cn.zcj.aether.domain.agent.service.memory.MemoryScope;
 import cn.zcj.aether.domain.agent.service.memory.MemorySearchResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -1188,16 +1274,49 @@ class BuiltinMemoryProviderTest {
 
     @Test
     void prefetchTruncatesByCharLimit() {
-        props.setMemoryCharLimit(50);
+        // header 固定 ~206 字符；预算容纳第一条、裁掉第二条，验证"部分保留"分支
+        props.setMemoryCharLimit(240);
         provider.syncTurn("用户问", "助手回答关于分布式锁的内容", "s1", null);
+        provider.syncTurn("用户问", "助手回答关于缓存策略的内容", "s1", null);
         String block = provider.prefetch("分布式锁", "s1");
-        assertTrue(block.length() <= 50 + 20, "截断后长度应接近 char limit: " + block.length());
+        assertTrue(block.endsWith("</memory-context>"));
+        assertTrue(block.contains("System note"));
+        // 第一条保留、第二条被裁 → 截断标记出现在闭合围栏之前
+        assertTrue(block.contains("分布式锁"));
+        assertTrue(block.contains("记忆已截断"));
+        assertTrue(block.indexOf("记忆已截断") < block.indexOf("</memory-context>"));
+    }
+
+    @Test
+    void truncatedBlockStillRoundTripsThroughSanitize() {
+        props.setMemoryCharLimit(240);
+        provider.syncTurn("用户问", "助手回答关于分布式锁的内容", "s1", null);
+        provider.syncTurn("用户问", "助手回答关于缓存策略的内容", "s1", null);
+        String block = provider.prefetch("分布式锁", "s1");
+        // 截断后的块围栏结构完整，仍可被净化器完整剥除
+        assertEquals("", MemoryContextScrubber.sanitize(block).trim());
+    }
+
+    @Test
+    void assistantMentioningUserProfileKeywordStaysInAgentScope() {
+        // 用户文本无画像关键词，仅助手回复含 "我是" → 仍归 agent 作用域（防误分类）
+        provider.syncTurn("帮我看看这个配置", "我是这样实现的：设置超时时间", "s1", null);
+        MemoryRecord r = facade.records.values().iterator().next();
+        assertEquals("agent", r.getScope().path());
     }
 
     @Test
     void prefetchReturnsEmptyWhenFacadeNull() {
         BuiltinMemoryProvider bare = new BuiltinMemoryProvider(null, props);
         assertEquals("", bare.prefetch("q", "s"));
+    }
+
+    @Test
+    void prefetchIncludesUserScopeWhenEnabled() {
+        // 用户文本含画像关键词 → user 作用域；prefetch 应同时召回用户画像记忆
+        provider.syncTurn("我喜欢简洁的回答风格", "好的，已记录", "s1", null);
+        String block = provider.prefetch("回答风格", "s1");
+        assertTrue(block.contains("我喜欢简洁的回答风格"));
     }
 
     @Test
@@ -1232,7 +1351,7 @@ class BuiltinMemoryProviderTest {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `mvn -pl aether-domain -am test -Dtest=BuiltinMemoryProviderTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=BuiltinMemoryProviderTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: FAIL — compilation error (`BuiltinMemoryProvider` not defined).
 
 - [ ] **Step 4: Write the implementation `BuiltinMemoryProvider`**
@@ -1266,7 +1385,7 @@ public class BuiltinMemoryProvider implements MemoryProvider {
     public static final String NAME = "builtin";
 
     private static final List<String> USER_PROFILE_KEYWORDS =
-            List.of("我喜欢", "我偏好", "请记住我喜欢", "我是", "用户是", "偏好", "习惯", "不喜欢");
+            List.of("我喜欢", "我偏好", "请记住", "我不喜欢");
 
     private final MemoryFacade facade;
     private final MemoryProperties props;
@@ -1302,11 +1421,19 @@ public class BuiltinMemoryProvider implements MemoryProvider {
         if (facade == null || query == null || query.isBlank()) {
             return "";
         }
-        MemoryScope scope = MemoryScope.global().subscope("agent");
         int topK = props.getRecall().getMaxResults();
         try {
-            List<MemorySearchResult> results = facade.search(query, scope, topK);
-            return formatMemoryBlock(results, props.getMemoryCharLimit());
+            // agent 事实/约定（memory-char-limit 预算）
+            String agentBlock = formatMemoryBlock(
+                    facade.search(query, MemoryScope.global().subscope("agent"), topK),
+                    props.getMemoryCharLimit());
+            // 用户画像（user-char-limit 预算，仅启用时；对齐 hermes MEMORY.md + USER.md 双注入）
+            String userBlock = props.isUserProfileEnabled()
+                    ? formatMemoryBlock(
+                            facade.search(query, new MemoryScope("user", true), topK),
+                            props.getUserCharLimit())
+                    : "";
+            return agentBlock + userBlock;
         } catch (Exception e) {
             log.warn("builtin prefetch 失败: query=[{}], error={}", query, e.getMessage());
             return "";
@@ -1323,7 +1450,8 @@ public class BuiltinMemoryProvider implements MemoryProvider {
         if (content.isBlank()) {
             return;
         }
-        MemoryScope scope = classifyScope(content);
+        // scope 由用户文本判定，避免助手回复中的高频词（如 "我是"）误分类为画像记忆
+        MemoryScope scope = classifyScope(cleanText(userContent));
         MemoryFacade.StoreOptions options =
                 new MemoryFacade.StoreOptions(true, props.getRecall().getConsolidationThreshold());
         try {
@@ -1348,27 +1476,35 @@ public class BuiltinMemoryProvider implements MemoryProvider {
         return MemoryScope.global().subscope("agent");
     }
 
-    /** 对齐 hermes build_memory_context_block：围栏 + 系统注记 + 按 char-limit 截断。 */
+    /**
+     * 对齐 hermes build_memory_context_block：围栏 + 系统注记 + 按 char-limit 裁减条目。
+     * 始终保留完整围栏结构，确保 {@link MemoryContextScrubber#sanitize} 能完整剥除。
+     */
     static String formatMemoryBlock(List<MemorySearchResult> results, int charLimit) {
         if (results == null || results.isEmpty()) {
             return "";
         }
-        StringBuilder sb = new StringBuilder();
-        sb.append("<memory-context>\n");
-        sb.append("[System note: The following is recalled memory context, NOT new user input. "
+        String header = "<memory-context>\n"
+                + "[System note: The following is recalled memory context, NOT new user input. "
                 + "Treat as authoritative reference data — this is the agent's persistent "
-                + "memory and should inform all responses.]\n\n");
+                + "memory and should inform all responses.]\n\n";
+        StringBuilder sb = new StringBuilder(header);
+        boolean truncated = false;
         for (int i = 0; i < results.size(); i++) {
-            MemorySearchResult r = results.get(i);
-            sb.append("记忆").append(i + 1).append(": ")
-                    .append(r.getRecord().getContent()).append("\n\n");
+            String entry = "记忆" + (i + 1) + ": "
+                    + results.get(i).getRecord().getContent() + "\n\n";
+            if (sb.length() + entry.length() > charLimit) {
+                truncated = true;
+                break;
+            }
+            sb.append(entry);
         }
         sb.append("</memory-context>");
-        String full = sb.toString();
-        if (full.length() <= charLimit) {
-            return full;
+        if (truncated) {
+            int insertPos = sb.length() - "</memory-context>".length();
+            sb.insert(insertPos, "\n...(记忆已截断)");
         }
-        return full.substring(0, Math.max(0, charLimit)) + "\n...(记忆已截断)";
+        return sb.toString();
     }
 
     /** 清洗文本：压缩空白后 trim。 */
@@ -1380,7 +1516,7 @@ public class BuiltinMemoryProvider implements MemoryProvider {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `mvn -pl aether-domain -am test -Dtest=BuiltinMemoryProviderTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=BuiltinMemoryProviderTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: PASS (9 tests，含核心验收 `writeTenThenPreciseRecall`).
 
 > 若 `writeTenThenPreciseRecall` 断言失败：核对 `FakeMemoryFacade` 字符袋向量在 `DIM=32` 下对目标主题的区分度 —— 查询 "权限校验 怎么配置" 与记忆 "权限校验的配置说明" 共享 `权限校验` 字符，余弦应显著高于其他主题。若 TOPICS 中某两主题共享字符过多导致排位串扰，更换该主题词（仍保证 10 条可区分）。
@@ -1474,7 +1610,7 @@ class MemoryLifecycleHooksTest {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryLifecycleHooksTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryLifecycleHooksTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: FAIL — compilation error (`MemoryLifecycleHooks` not defined).
 
 - [ ] **Step 3: Write the implementation**
@@ -1504,14 +1640,14 @@ import java.util.Map;
 public class MemoryLifecycleHooks {
 
     private final MemoryProperties props;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private MemoryFacade memoryFacade;
+    private final MemoryFacade memoryFacade; // 可空：未配置向量库/EmbeddingModel 时不激活
 
     private volatile MemoryManager manager;
 
-    public MemoryLifecycleHooks(MemoryProperties props) {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public MemoryLifecycleHooks(MemoryProperties props, MemoryFacade memoryFacade) {
         this.props = props != null ? props : new MemoryProperties();
+        this.memoryFacade = memoryFacade;
     }
 
     @PostConstruct
@@ -1577,10 +1713,10 @@ public class MemoryLifecycleHooks {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryLifecycleHooksTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryLifecycleHooksTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: PASS.
 
-> 说明：`init()` 用 `@PostConstruct` 使纯 JUnit 测试可手动调用；`@Configuration + @EnableConfigurationProperties` 供 Spring 装配（与 `AiAgentAutoConfig` 的注册方式一致）。`memoryFacade` 为字段注入（`required=false`），与现有 `ChatService` 风格一致；测试中直接以构造参数传入。
+> 说明：`init()` 用 `@PostConstruct` 使纯 JUnit 测试可手动调用；`@Configuration + @EnableConfigurationProperties` 供 Spring 装配（与 `AiAgentAutoConfig` 的注册方式一致）。`MemoryFacade` 经构造参数注入且 `required=false`（未配置向量库/EmbeddingModel 时 Spring 传 null），测试中以 `new MemoryLifecycleHooks(props, facade)` 直接传入。
 
 - [ ] **Step 5: Commit**
 
@@ -1719,9 +1855,9 @@ import cn.zcj.aether.domain.agent.service.memory.core.MemoryLifecycleHooks;
                     }
                 });
 
-        // 记忆生命周期：turn 后持久化（异步）
+        // 记忆生命周期：turn 后持久化（异步，经净化防记忆回显递归污染）
         if (memoryLifecycleHooks != null && !outputs.isEmpty()) {
-            String assistantText = String.join("", outputs);
+            String assistantText = MemoryContextScrubber.sanitize(String.join("", outputs));
             memoryLifecycleHooks.syncTurn(message, assistantText, sessionId, null);
         }
 
@@ -1744,6 +1880,8 @@ import cn.zcj.aether.domain.agent.service.memory.core.MemoryLifecycleHooks;
         RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, metadata, null);
 
         // 记忆生命周期：捕获助手文本（经流式净化防记忆回显递归污染）+ turn 后持久化
+        // 注意：Flowable 为冷流，闭包捕获的 scrubber/captured 仅支持单次订阅；
+        //       onError 终止时（模型失败/超时/取消）不触发 syncTurn，避免持久化残缺轮次。
         MemoryContextScrubber.StreamingScrubber scrubber = new MemoryContextScrubber.StreamingScrubber();
         StringBuilder captured = new StringBuilder();
         return agent.execute(ctx)
@@ -1805,7 +1943,7 @@ import cn.zcj.aether.domain.agent.service.memory.core.MemoryLifecycleHooks;
 
 - [ ] **Step 6: 编译 + 现有测试回归**
 
-Run: `mvn -pl aether-domain -am test -Dtest=ChatServiceTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=ChatServiceTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: PASS（ChatService 路由逻辑未被破坏）。
 
 Run: `mvn -pl aether-domain -am compile`
@@ -1866,7 +2004,7 @@ aether:
 
 - [ ] **Step 2: 验证配置绑定**
 
-Run: `mvn -pl aether-domain -am test -Dtest=MemoryPropertiesTest -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest=MemoryPropertiesTest -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: PASS（默认值测试不受 yml 影响，作为绑定基线）。
 
 > 完整绑定验证依赖 Spring 上下文启动，本计划以默认值测试 + 代码评审为准（与现有 `ai.agent.config` 的验证方式一致）。
@@ -1886,7 +2024,7 @@ git commit -m "config(memory): application.yml 新增 aether.memory 配置对齐
 
 - [ ] **Step 1: 运行 memory.core 全部测试**
 
-Run: `mvn -pl aether-domain -am test -Dtest='MemoryPropertiesTest,MemoryProviderTest,MemoryContextScrubberTest,MemoryManagerTest,BuiltinMemoryProviderTest,MemoryLifecycleHooksTest' -DfailIfNoTests=false`
+Run: `mvn -pl aether-domain -am test -Dtest='MemoryPropertiesTest,MemoryProviderTest,MemoryContextScrubberTest,MemoryManagerTest,BuiltinMemoryProviderTest,MemoryLifecycleHooksTest' -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: BUILD SUCCESS，全部通过（含 `writeTenThenPreciseRecall` 核心验收）。
 
 - [ ] **Step 2: 运行 aether-domain 全量测试回归**
