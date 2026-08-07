@@ -2,6 +2,7 @@ package cn.zcj.aether.domain.agent.service.memory;
 
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -26,6 +27,10 @@ public class DefaultMemoryFacade implements MemoryFacade {
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private AgentEventPublisher eventPublisher;
+
+    /** 可选：无 EmbeddingModel 时写入 null 向量，检索端降级 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private EmbeddingModel embeddingModel;
 
     public DefaultMemoryFacade(EncodingFlow encodingFlow, RecallFlow recallFlow, VectorStore vectorStore) {
         this.encodingFlow = encodingFlow;
@@ -55,19 +60,23 @@ public class DefaultMemoryFacade implements MemoryFacade {
                 }
 
                 // 2. 如果应合并，搜索相似记忆
+                // 2.5 生成真实向量（未配置 EmbeddingModel → null，检索端降级）
+                float[] vector = embedOrNull(content);
                 if (encoded.shouldConsolidate() && options.consolidationThreshold() > 0) {
                     List<MemorySearchResult> similar = vectorStore.search(
-                        /* queryVector */ null, 3,
+                        vector, 3,
                         List.of(scope)).join();
                     for (var sim : similar) {
                         if (sim.getScore() >= options.consolidationThreshold()) {
                             log.debug("记忆合并: 相似度={}, targetId={}", sim.getScore(), sim.getRecord().getId());
-                            // 更新已有记忆的重要性（加权平均）
+                            // 更新已有记忆的重要性（加权平均）+ 合并内容重嵌
+                            String mergedContent = sim.getRecord().getContent() + "\n\n" + content;
+                            float[] mergedVector = embedOrNull(mergedContent);
                             float mergedImportance = (sim.getRecord().getImportance() + encoded.importance()) / 2;
                             MemoryRecord merged = MemoryRecord.builder()
                                 .id(sim.getRecord().getId())
-                                .content(sim.getRecord().getContent() + "\n\n" + content)
-                                .embedding(sim.getRecord().getEmbedding())
+                                .content(mergedContent)
+                                .embedding(mergedVector)
                                 .scope(sim.getRecord().getScope())
                                 .categories(mergeCategories(sim.getRecord().getCategories(), encoded.categories()))
                                 .importance(mergedImportance)
@@ -77,7 +86,7 @@ public class DefaultMemoryFacade implements MemoryFacade {
                                 .isPrivate(sim.getRecord().isPrivate())
                                 .source(sim.getRecord().getSource())
                                 .build();
-                            vectorStore.upsert(merged.getId(), merged.getEmbedding(), merged).join();
+                            vectorStore.upsert(merged.getId(), mergedVector, merged).join();
                             return merged;
                         }
                     }
@@ -88,7 +97,7 @@ public class DefaultMemoryFacade implements MemoryFacade {
                 MemoryRecord record = MemoryRecord.builder()
                     .id(id)
                     .content(content)
-                    .embedding(null) // embedding 由 VectorStore 实现按需生成
+                    .embedding(vector)
                     .scope(scope)
                     .categories(encoded.categories())
                     .importance(encoded.importance())
@@ -99,7 +108,7 @@ public class DefaultMemoryFacade implements MemoryFacade {
                     .source("agent_extracted")
                     .build();
 
-                vectorStore.upsert(id, null, record).join();
+                vectorStore.upsert(id, vector, record).join();
                 return record;
             } catch (Exception e) {
                 log.warn("存储记忆失败: scope={}, error={}", scope.path(), e.getMessage());
@@ -189,5 +198,16 @@ public class DefaultMemoryFacade implements MemoryFacade {
         if (existing != null) merged.addAll(existing);
         if (incoming != null) merged.addAll(incoming);
         return new ArrayList<>(merged);
+    }
+
+    /** 生成记忆向量；EmbeddingModel 缺失或调用失败返回 null（检索端降级） */
+    private float[] embedOrNull(String text) {
+        if (embeddingModel == null) return null;
+        try {
+            return embeddingModel.embed(text);
+        } catch (Exception e) {
+            log.warn("记忆向量生成失败，存入 null: {}", e.getMessage());
+            return null;
+        }
     }
 }
