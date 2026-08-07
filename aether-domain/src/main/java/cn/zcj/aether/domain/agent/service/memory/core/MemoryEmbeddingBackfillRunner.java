@@ -67,15 +67,22 @@ public class MemoryEmbeddingBackfillRunner {
                 log.info("记忆回填完成，共 {} 条", total);
                 return;
             }
+            int batchSuccess = 0;
             for (MemoryRecord rec : missing) {
                 try {
                     float[] vec = model.embed(rec.getContent());
                     vectorStore.updateEmbedding(rec.getId(), vec).join();
                     total++;
+                    batchSuccess++;
                 } catch (Exception e) {
                     log.warn("回填单条失败，跳过: id={}, error={}", rec.getId(), e.getMessage());
                 }
                 if (total >= maxPerRun) break;
+            }
+            // 整批全失败 → 说明 embedding 不可用或记录无法处理，停止避免空转
+            if (batchSuccess == 0) {
+                log.warn("本批回填全部失败（{} 条），停止回填避免空转", missing.size());
+                return;
             }
         }
         log.warn("记忆回填达到单次上限 {}，剩余未回填", maxPerRun);

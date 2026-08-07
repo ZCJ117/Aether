@@ -5,6 +5,7 @@ import cn.zcj.aether.domain.agent.service.memory.MemoryScope;
 import cn.zcj.aether.domain.agent.service.memory.MemorySearchResult;
 import cn.zcj.aether.domain.agent.service.memory.VectorStore;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -94,6 +95,27 @@ class MemoryEmbeddingBackfillRunnerTest {
         MemoryProperties props = new MemoryProperties();
         props.getBackfill().setMaxPerRun(10);
         StubVectorStore store = new StubVectorStore(List.of(rec("x"), rec("y")));
+        EmbeddingModel model = mock(EmbeddingModel.class);
+        when(model.embed(anyString())).thenThrow(new RuntimeException("boom"));
+
+        new MemoryEmbeddingBackfillRunner(store, providerStub(model), props).runBackfill(model);
+
+        assertTrue(store.updatedIds.isEmpty());
+    }
+
+    @Test
+    @Timeout(5)
+    void stopsWhenEntireBatchFailsToAvoidSpin() {
+        MemoryProperties props = new MemoryProperties();
+        props.getBackfill().setBatchSize(2);
+        props.getBackfill().setMaxPerRun(100);
+        // 模拟真实存储：findMissingEmbeddings 始终返回同一批未成功记录（永不清空）
+        StubVectorStore store = new StubVectorStore(List.of(rec("x"), rec("y"))) {
+            @Override
+            public CompletableFuture<List<MemoryRecord>> findMissingEmbeddings(int limit) {
+                return CompletableFuture.completedFuture(List.of(rec("x"), rec("y")));
+            }
+        };
         EmbeddingModel model = mock(EmbeddingModel.class);
         when(model.embed(anyString())).thenThrow(new RuntimeException("boom"));
 
