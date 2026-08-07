@@ -1454,6 +1454,24 @@ git commit -m "chore(memory): 真实召回改造回归修复"
 
 ---
 
+## 执行修正记录（2026-08-07 实施时发现并已修正的计划偏差）
+
+以下为 subagent 实施过程中发现并修正的问题，**以代码为准**：
+
+| # | 计划原文 | 实际修正 | 提交 |
+|---|---|---|---|
+| 1 | Task 3 `findMissingEmbeddings` 用 `this::mapRow`（返回 `List<MemorySearchResult>`） | 接口需返回 `List<MemoryRecord>`；抽出 `extractRecord(ResultSet)` 供 `mapRow` 与回填 ResultSetExtractor 共用 | `e15224b` |
+| 2 | Task 3 测试 `sql.chars()...length()` | `IntStream` 无 `length()`，改 `.count()` | `e15224b` |
+| 3 | Task 6 `OpenAiEmbeddingOptions.builder().withModel(model)` | 真实 spring-ai 1.1.0-M3 API 为 `.model(String)` | `77c37b9f` |
+| 4 | Task 6 测试构造真实 `OpenAiApi` | wrench fat-jar 遮蔽 `Jackson2ObjectMapperBuilder.yaml()` → NoSuchMethodError；改 mock `OpenAiApi` | `77c37b9f` |
+| 5 | Task 7 `runBackfill` 无失败保护 | embedding 持续失败会无限空转（maxPerRun 只计成功）；加 `batchSuccess==0` 整批失败即停守卫 | `c47dc237` |
+| 6 | Task 2/3 之外：`aether-infrastructure/pom.xml` 需补测试依赖与 surefire 排除 | 新增 `spring-boot-starter-test`（测试编译）+ `classpathDependencyExcludes` 排除 wrench fat-jar 捆绑的旧 logback-classic（否则 infra 测试 AbstractMethodError） | `e15224b`、`20fd194` |
+| 7 | Task 6 类级缺 `@ConditionalOnProperty(aether.memory.enabled)` | 按设计 §3.1 补类级条件 | `994277d` |
+
+环境注记：构建实际使用 Maven 本地仓库 `D:\apache-maven-3.9.9\mvn_repo`（非 `~/.m2`）；`xfg-wrench-starter-design-framework-3.0.0.jar` 为 fat-jar，捆绑旧版 logback-classic(1.2.x) 与缺失 `yaml()` 的 `Jackson2ObjectMapperBuilder`，在测试类路径上造成两次遮蔽——均已在相关模块的 surefire 配置或测试中规避。
+
+---
+
 ## Self-Review 记录（写计划时已对照设计文档）
 
 **Spec coverage:**
