@@ -9,6 +9,7 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Condition;
 import org.springframework.context.annotation.ConditionContext;
@@ -25,6 +26,7 @@ import org.springframework.lang.Nullable;
  */
 @Slf4j
 @Configuration
+@ConditionalOnProperty(prefix = "aether.memory", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class MemoryEmbeddingConfig {
 
     @Bean(name = "memoryEmbeddingModel")
