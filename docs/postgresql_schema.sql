@@ -48,11 +48,11 @@ COMMENT ON COLUMN aether_session.updated_at IS '更新时间';
 -- ----------------------------------------------------------------------------
 -- 表: aether_memories — Agent 记忆向量存储表
 -- 对应: PgvectorVectorStore (INSERT ... ON CONFLICT (id) DO UPDATE)
--- 说明: embedding 列使用 TEXT 类型存储 '[x1,x2,...,x1280]' 格式向量，兼容未安装
+-- 说明: embedding 列使用 TEXT 类型存储 '[x1,x2,...,x1024]' 格式向量，兼容未安装
 --       pgvector 的 PostgreSQL 实例。安装 pgvector 后执行:
---         ALTER TABLE aether_memories ALTER COLUMN embedding TYPE vector(1280)
+--         ALTER TABLE aether_memories ALTER COLUMN embedding TYPE vector(1024)
 --           USING embedding::vector;
---       然后取消下方 ivfflat 索引注释并执行。
+--       然后取消下方 HNSW 索引注释并执行。
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aether_memories (
     id               VARCHAR(64)  NOT NULL,
@@ -76,14 +76,15 @@ CREATE INDEX IF NOT EXISTS idx_memories_source        ON aether_memories (source
 CREATE INDEX IF NOT EXISTS idx_memories_importance    ON aether_memories (importance);
 CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON aether_memories (last_accessed_at);
 
--- [需 pgvector] ivfflat 向量索引 — 安装 pgvector 后取消注释:
--- CREATE INDEX IF NOT EXISTS idx_memories_embedding ON aether_memories
---     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- [需 pgvector] HNSW 向量索引 — 安装 pgvector 且 embedding 列已 ALTER 为 vector(1024) 后取消注释:
+-- CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw ON aether_memories
+--     USING hnsw (embedding vector_cosine_ops);
+-- 应用启动时也会幂等尝试创建该索引（失败仅告警）。
 
 COMMENT ON TABLE  aether_memories                  IS 'Agent 记忆向量存储表';
 COMMENT ON COLUMN aether_memories.id               IS '记忆唯一标识';
 COMMENT ON COLUMN aether_memories.content          IS '记忆文本内容';
-COMMENT ON COLUMN aether_memories.embedding        IS 'Embedding 向量（TEXT 格式，安装 pgvector 后可 ALTER 为 vector(1280)）';
+COMMENT ON COLUMN aether_memories.embedding        IS 'Embedding 向量（TEXT 格式，安装 pgvector 后可 ALTER 为 vector(1024)）';
 COMMENT ON COLUMN aether_memories.scope_path       IS '作用域路径（层级命名空间）';
 COMMENT ON COLUMN aether_memories.scope_private    IS '是否私密记忆';
 COMMENT ON COLUMN aether_memories.categories       IS '分类标签（JSONB 数组）';

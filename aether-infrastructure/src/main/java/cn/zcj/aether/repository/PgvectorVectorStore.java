@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit;
  *    CREATE TABLE IF NOT EXISTS aether_memories (
  *        id VARCHAR(64) PRIMARY KEY,
  *        content TEXT NOT NULL,
- *        embedding vector(1280),
+ *        embedding vector(1024),
  *        scope_path VARCHAR(512),
  *        scope_private BOOLEAN DEFAULT false,
  *        categories JSONB DEFAULT '[]',
@@ -49,8 +49,8 @@ import java.util.concurrent.TimeUnit;
  *        last_accessed_at TIMESTAMP DEFAULT NOW(),
  *        access_count INTEGER DEFAULT 0
  *    );
- *    CREATE INDEX IF NOT EXISTS idx_memories_embedding ON aether_memories
- *        USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+ *    CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw ON aether_memories
+ *        USING hnsw (embedding vector_cosine_ops);
  *
  * 配置：
  *   spring.datasource.url=jdbc:postgresql://localhost:5432/aether
