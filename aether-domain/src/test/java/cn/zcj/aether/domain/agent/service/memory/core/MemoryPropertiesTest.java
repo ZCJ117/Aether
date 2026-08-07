@@ -19,7 +19,15 @@ class MemoryPropertiesTest {
         assertEquals(0.3f, p.getRecall().getRecencyWeight());
         assertEquals(0.1f, p.getRecall().getImportanceWeight());
         assertEquals(0.85f, p.getRecall().getConsolidationThreshold());
-        assertEquals(1280, p.getRecall().getVectorDimension());
+        assertEquals(1024, p.getRecall().getVectorDimension());          // 1280 → 1024
+        // 新增：embedding 段
+        assertEquals("", p.getEmbedding().getBaseUrl());
+        assertEquals("v1/embeddings", p.getEmbedding().getPath());
+        assertEquals(1024, p.getEmbedding().getDimension());
+        // 新增：backfill 段
+        assertTrue(p.getBackfill().isEnabled());
+        assertEquals(50, p.getBackfill().getBatchSize());
+        assertEquals(500, p.getBackfill().getMaxPerRun());
     }
 
     @Test
@@ -35,5 +43,12 @@ class MemoryPropertiesTest {
         assertEquals(500, p.getMemoryCharLimit());
         assertEquals(5, p.getRecall().getMaxResults());
         assertEquals(0.9f, p.getRecall().getConsolidationThreshold());
+        // 新增：embedding/backfill setter
+        p.getEmbedding().setBaseUrl("http://localhost:11434");
+        p.getBackfill().setEnabled(false);
+        p.getBackfill().setBatchSize(10);
+        assertEquals("http://localhost:11434", p.getEmbedding().getBaseUrl());
+        assertFalse(p.getBackfill().isEnabled());
+        assertEquals(10, p.getBackfill().getBatchSize());
     }
 }

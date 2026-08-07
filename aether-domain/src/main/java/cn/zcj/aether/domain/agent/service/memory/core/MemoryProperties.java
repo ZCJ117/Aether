@@ -42,6 +42,12 @@ public class MemoryProperties {
     /** 检索参数 */
     private Recall recall = new Recall();
 
+    /** Embedding 模型配置（记忆向量生成） */
+    private Embedding embedding = new Embedding();
+
+    /** 存量向量回填 */
+    private Backfill backfill = new Backfill();
+
     /** 检索参数子配置 */
     @Data
     public static class Recall {
@@ -55,7 +61,33 @@ public class MemoryProperties {
         private float importanceWeight = 0.1f;
         /** 相似度合并阈值 */
         private float consolidationThreshold = 0.85f;
-        /** 向量维度（pgvector） */
-        private int vectorDimension = 1280;
+        /** 向量维度（pgvector，需与 embedding 模型一致） */
+        private int vectorDimension = 1024;
+    }
+
+    /** Embedding 模型配置子段 */
+    @Data
+    public static class Embedding {
+        /** API Base URL；空则不装配 EmbeddingModel，语义检索降级 */
+        private String baseUrl = "";
+        /** API Key */
+        private String apiKey = "";
+        /** Embeddings 路径 */
+        private String path = "v1/embeddings";
+        /** 模型名（v1/embeddings 接受的 model 参数） */
+        private String model = "";
+        /** 向量维度 */
+        private int dimension = 1024;
+    }
+
+    /** 存量回填配置子段 */
+    @Data
+    public static class Backfill {
+        /** 回填开关 */
+        private boolean enabled = true;
+        /** 每批扫描量 */
+        private int batchSize = 50;
+        /** 单次启动回填上限 */
+        private int maxPerRun = 500;
     }
 }
