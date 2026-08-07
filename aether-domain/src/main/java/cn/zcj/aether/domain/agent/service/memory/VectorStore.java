@@ -27,4 +27,10 @@ public interface VectorStore {
 
     /** 向量维度 */
     int dimension();
+
+    /** 查找 embedding 缺失的记录（回填用），最多 limit 条 */
+    CompletableFuture<List<MemoryRecord>> findMissingEmbeddings(int limit);
+
+    /** 回填更新单条向量 */
+    CompletableFuture<Void> updateEmbedding(String id, float[] vector);
 }

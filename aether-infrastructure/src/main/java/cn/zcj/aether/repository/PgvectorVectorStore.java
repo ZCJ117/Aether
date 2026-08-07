@@ -181,6 +181,16 @@ public class PgvectorVectorStore implements VectorStore {
         return DEFAULT_DIMENSION;
     }
 
+    @Override
+    public CompletableFuture<List<MemoryRecord>> findMissingEmbeddings(int limit) {
+        return CompletableFuture.completedFuture(List.of());
+    }
+
+    @Override
+    public CompletableFuture<Void> updateEmbedding(String id, float[] vector) {
+        return CompletableFuture.completedFuture(null);
+    }
+
     // =========================================================
     // 内部方法
     // =========================================================

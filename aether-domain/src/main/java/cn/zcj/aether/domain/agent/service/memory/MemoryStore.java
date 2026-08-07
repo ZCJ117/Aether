@@ -33,6 +33,10 @@ public class MemoryStore implements VectorStore {
     @Value("${ai.agent.config.memory-dir:}")
     private String configuredMemoryDir;
 
+    /** 向量维度（pgvector 对齐；文件后端仅用于一致性） */
+    @Value("${aether.memory.recall.vector-dimension:1024}")
+    private int vectorDimension = 1024;
+
     // 参考项目B memdir/memdir.ts:34-35
     private static final int MAX_ENTRYPOINT_LINES = 200;
     private static final int MAX_ENTRYPOINT_BYTES = 25_000;
@@ -262,10 +266,25 @@ public class MemoryStore implements VectorStore {
                 return results;
             }
 
-            // C3: 基于文件内容的关键词匹配 + 时间衰减加权
-            File[] files = memoryDir.toFile().listFiles((dir, name) ->
-                    name.endsWith(".json") || name.endsWith(".md"));
+            File[] files = memoryDir.toFile().listFiles((dir, name) -> name.endsWith(".json"));
             if (files == null) return results;
+
+            // 无效查询向量（未配置 EmbeddingModel / 全零）→ 回退按文件修改时间排序
+            if (isInvalidQueryVector(queryVector)) {
+                List<MemorySearchResult> fallback = new ArrayList<>();
+                for (File file : files) {
+                    try {
+                        MemoryRecord record = parseMemoryRecord(file, Files.readString(file.toPath()));
+                        if (record != null) {
+                            fallback.add(MemorySearchResult.of(record, recencyScore(file.lastModified())));
+                        }
+                    } catch (IOException ignored) {
+                        // 单文件读取失败跳过
+                    }
+                }
+                fallback.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
+                return fallback.subList(0, Math.min(fallback.size(), maxResults));
+            }
 
             for (File file : files) {
                 try {
@@ -273,27 +292,66 @@ public class MemoryStore implements VectorStore {
                     MemoryRecord record = parseMemoryRecord(file, content);
                     if (record == null) continue;
 
-                    double score = computeRelevance(content);
-                    MemorySearchResult result = MemorySearchResult.of(record, score);
-                    results.add(result);
+                    float[] stored = parseStoredEmbedding(content);
+                    if (stored == null) continue; // "null" 或缺失 → 跳过
+
+                    double similarity = cosineSimilarity(queryVector, stored);
+                    results.add(MemorySearchResult.of(record, similarity));
                 } catch (Exception e) {
                     log.debug("读取记忆文件失败: {}", file.getName());
                 }
             }
 
-            // 按分数降序排列，取 top-K
             results.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
             return results.subList(0, Math.min(results.size(), maxResults));
         });
     }
 
-    /**
-     * C3: 基于文件修改时间的简单相关性评分（时间衰减）。
-     * 最近修改的文件获得更高分。
-     */
-    private double computeRelevance(String content) {
-        // 简单策略：基于内容长度的基础分 + 随机扰动避免同分
-        return 0.3 + Math.min(0.5, content.length() / 10000.0) + Math.random() * 0.2;
+    /** 判断查询向量是否无效（null/空/全零） */
+    private boolean isInvalidQueryVector(float[] v) {
+        if (v == null || v.length == 0) return true;
+        for (float f : v) {
+            if (f != 0f) return false;
+        }
+        return true;
+    }
+
+    /** 从 JSON 内容解析存储的 Base64 向量；缺失或 "null" 返回 null */
+    private float[] parseStoredEmbedding(String jsonContent) {
+        try {
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            var node = mapper.readTree(jsonContent);
+            if (!node.has("embedding")) return null;
+            String enc = node.get("embedding").asText();
+            if (enc == null || enc.isEmpty() || "null".equals(enc)) return null;
+            return bytesToFloatArray(Base64.getDecoder().decode(enc));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 余弦相似度（0.0~1.0；零向量返回 0.0） */
+    private double cosineSimilarity(float[] a, float[] b) {
+        int n = Math.min(a.length, b.length);
+        if (n == 0) return 0.0;
+        double dot = 0, na = 0, nb = 0;
+        for (int i = 0; i < n; i++) {
+            dot += a[i] * b[i];
+            na += a[i] * a[i];
+            nb += b[i] * b[i];
+        }
+        if (na == 0 || nb == 0) return 0.0;
+        return dot / (Math.sqrt(na) * Math.sqrt(nb));
+    }
+
+    /** 文件修改时间衰减分（降级排序用） */
+    private double recencyScore(long lastModifiedMillis) {
+        long daysAgo = java.time.Duration.between(
+                java.time.Instant.ofEpochMilli(lastModifiedMillis), java.time.Instant.now()).toDays();
+        if (daysAgo <= 1) return 1.0;
+        if (daysAgo <= 7) return 0.8;
+        if (daysAgo <= 30) return 0.5;
+        return 0.2;
     }
 
     private MemoryRecord parseMemoryRecord(File file, String content) {
@@ -316,7 +374,7 @@ public class MemoryStore implements VectorStore {
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             var node = mapper.readTree(content);
             return MemoryRecord.builder()
-                    .id(file.getName().replace(".json", ""))
+                    .id(node.has("id") ? node.get("id").asText() : file.getName().replace(".json", ""))
                     .content(node.has("content") ? node.get("content").asText() : content)
                     .scope(MemoryScope.global())
                     .importance(node.has("importance") ? (float) node.get("importance").asDouble() : 0.5f)
@@ -379,8 +437,64 @@ public class MemoryStore implements VectorStore {
     }
 
     @Override
+    public CompletableFuture<List<MemoryRecord>> findMissingEmbeddings(int limit) {
+        return CompletableFuture.supplyAsync(() -> {
+            List<MemoryRecord> missing = new ArrayList<>();
+            Path memoryDir = resolveMemoryDir();
+            if (memoryDir == null || !Files.exists(memoryDir)) return missing;
+
+            File[] files = memoryDir.toFile().listFiles((dir, name) -> name.endsWith(".json"));
+            if (files == null) return missing;
+
+            for (File file : files) {
+                if (missing.size() >= limit) break;
+                try {
+                    String content = Files.readString(file.toPath());
+                    if (parseStoredEmbedding(content) == null) {
+                        MemoryRecord record = parseMemoryRecord(file, content);
+                        if (record != null) missing.add(record);
+                    }
+                } catch (Exception e) {
+                    log.debug("回填扫描读取失败: {}", file.getName());
+                }
+            }
+            return missing;
+        });
+    }
+
+    @Override
+    public CompletableFuture<Void> updateEmbedding(String id, float[] vector) {
+        return CompletableFuture.runAsync(() -> {
+            Path memoryDir = resolveMemoryDir();
+            if (memoryDir == null || !Files.exists(memoryDir)) return;
+            try {
+                var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                File[] files = memoryDir.toFile().listFiles((dir, name) -> name.endsWith(".json"));
+                if (files == null) return;
+                for (File file : files) {
+                    String content = Files.readString(file.toPath());
+                    var node = mapper.readTree(content);
+                    String fileId = file.getName().replace(".json", "");
+                    String jsonId = node.has("id") ? node.get("id").asText() : fileId;
+                    if (!jsonId.equals(id)) continue;
+
+                    String embeddingStr = vector != null
+                        ? Base64.getEncoder().encodeToString(floatArrayToBytes(vector)) : "null";
+                    ((com.fasterxml.jackson.databind.node.ObjectNode) node).put("embedding", embeddingStr);
+                    Files.writeString(file.toPath(), mapper.writeValueAsString(node));
+                    log.debug("回填向量更新: id={}", id);
+                    return;
+                }
+                log.warn("回填更新未找到记录: id={}", id);
+            } catch (Exception e) {
+                log.warn("回填向量更新失败: id={}", id, e);
+            }
+        });
+    }
+
+    @Override
     public int dimension() {
-        return 1280; // 默认 1280 维（如 text-embedding-3-small）
+        return vectorDimension;
     }
 
     private byte[] floatArrayToBytes(float[] floats) {
@@ -389,5 +503,15 @@ public class MemoryStore implements VectorStore {
             buffer.putFloat(f);
         }
         return buffer.array();
+    }
+
+    private float[] bytesToFloatArray(byte[] bytes) {
+        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.wrap(bytes);
+        int n = bytes.length / 4;
+        float[] floats = new float[n];
+        for (int i = 0; i < n; i++) {
+            floats[i] = buffer.getFloat();
+        }
+        return floats;
     }
 }
