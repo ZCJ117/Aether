@@ -32,6 +32,10 @@ public class RecallFlow {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ChatModel chatModel;
 
+    /** 向量维度（无 EmbeddingModel 时零向量兜底的维度，来自配置） */
+    @org.springframework.beans.factory.annotation.Value("${aether.memory.recall.vector-dimension:1024}")
+    private int vectorDimension = 1024;
+
     private final ExecutorService searchExecutor = Executors.newFixedThreadPool(8);
 
     /**
@@ -98,14 +102,12 @@ public class RecallFlow {
 
     private float[] embed(String text) {
         if (embeddingModel == null) {
-            // 无 EmbeddingModel 时回退：返回伪向量用于关键词匹配
+            // 无 EmbeddingModel 时回退：返回零向量（检索端会降级为时间排序）
             log.debug("EmbeddingModel 未配置，使用回退向量");
-            return new float[DEFAULT_DIM];
+            return new float[vectorDimension];
         }
         return embeddingModel.embed(text);
     }
-
-    private static final int DEFAULT_DIM = 1280;
 
     private List<String> decomposeQuery(String query) {
         // 简化实现：按句号分割 + 原始查询
