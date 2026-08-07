@@ -70,16 +70,20 @@ class DefaultMemoryFacadeMergeTest {
         CapturingVectorStore store = new CapturingVectorStore(MemorySearchResult.of(old, 0.9f));
         DefaultMemoryFacade facade = new DefaultMemoryFacade(encodingFlow, new RecallFlow(), store);
 
+        // 向量由输入字符串派生，用于区分“查询向量”与“合并后内容向量”
         EmbeddingModel embeddingModel = mock(EmbeddingModel.class);
-        when(embeddingModel.embed(any(String.class))).thenReturn(new float[]{1f, 0f, 0f});
+        when(embeddingModel.embed(any(String.class))).thenAnswer(inv -> {
+            String s = inv.getArgument(0);
+            return new float[]{s.length(), s.charAt(0), 0f};
+        });
         ReflectionTestUtils.setField(facade, "embeddingModel", embeddingModel);
 
         MemoryRecord merged = facade.remember("新内容", MemoryScope.global(),
             new MemoryFacade.StoreOptions(true, 0.85f)).join();
 
-        // 修复点：合并检测收到真实查询向量（非 null）
+        // 修复点：合并检测收到真实查询向量（非 null），且来自原始内容 "新内容"
         assertNotNull(store.lastQueryVector);
-        assertEquals(1f, store.lastQueryVector[0]);
+        assertEquals("新内容".length(), store.lastQueryVector[0], 0.001f);
 
         // 合并结果 upsert 一次，内容拼接、重要性加权平均、向量重嵌
         assertEquals(1, store.upserted.size());
@@ -89,5 +93,9 @@ class DefaultMemoryFacadeMergeTest {
         assertTrue(saved.getContent().contains("新内容"));
         assertEquals(0.6f, saved.getImportance(), 0.001f); // (0.4+0.8)/2
         assertNotNull(saved.getEmbedding());
+        // 合并后记录向量来自合并内容（旧内容 + \n\n + 新内容）——证明合并后确实重嵌
+        String mergedContent = "旧内容\n\n新内容";
+        assertEquals(mergedContent.length(), saved.getEmbedding()[0], 0.001f);
+        assertNotEquals(store.lastQueryVector[0], saved.getEmbedding()[0]);
     }
 }
