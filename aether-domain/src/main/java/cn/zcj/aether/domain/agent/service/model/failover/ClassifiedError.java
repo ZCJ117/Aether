@@ -4,7 +4,7 @@ package cn.zcj.aether.domain.agent.service.model.failover;
  * 结构化错误分类结果 — 包含恢复动作提示。
  *
  * 对齐 hermes-agent error_classifier.py L77-94 的 ClassifiedError dataclass：
- * 分类器输出一次分类，后续重试循环按四个布尔字段决定恢复动作，
+ * 分类器输出一次分类，后续重试循环按五个布尔字段决定恢复动作，
  * 无需在每个重试点重复分类。
  */
 public record ClassifiedError(
@@ -32,12 +32,18 @@ public record ClassifiedError(
         boolean shouldCompress,
 
         /** 是否应切换 fallback 模型 */
-        boolean shouldFallback
+        boolean shouldFallback,
+
+        /** 是否应轮换凭据（AUTH_TRANSIENT / BILLING） */
+        boolean shouldRotateCredential,
+
+        /** 是否应剥离 thinking 签名后重试（Anthropic thinking 格式错，预留） */
+        boolean shouldStripThinking
 ) {
 
     /**
      * 创建带默认动作提示的分类结果。
-     * 根据 reason 自动填充 retryable/shouldCompress/shouldFallback。
+     * 根据 reason 自动填充 retryable/shouldCompress/shouldFallback/shouldRotateCredential。
      */
     public static ClassifiedError of(FailoverReason reason, Integer statusCode,
                                      String provider, String model, String detail) {
@@ -52,8 +58,10 @@ public record ClassifiedError(
                 || reason == FailoverReason.UPSTREAM_RATE_LIMIT
                 || reason == FailoverReason.BILLING
                 || reason == FailoverReason.AUTH_TRANSIENT;
+        boolean shouldRotateCredential = reason == FailoverReason.AUTH_TRANSIENT
+                || reason == FailoverReason.BILLING;
         return new ClassifiedError(reason, statusCode, provider, model, detail,
-                retryable, shouldCompress, shouldFallback);
+                retryable, shouldCompress, shouldFallback, shouldRotateCredential, false);
     }
 
     /**
@@ -61,7 +69,7 @@ public record ClassifiedError(
      */
     public static ClassifiedError unknown(String provider, String model, String detail) {
         return new ClassifiedError(FailoverReason.UNKNOWN, null, provider, model, detail,
-                true, false, false);
+                true, false, false, false, false);
     }
 
     /** 是否属于认证类错误 */
