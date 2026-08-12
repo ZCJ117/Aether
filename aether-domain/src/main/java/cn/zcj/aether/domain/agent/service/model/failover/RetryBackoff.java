@@ -34,7 +34,8 @@ public final class RetryBackoff {
     }
 
     /**
-     * 自适应限流退避表：{1:30s, 2:60s, 3:90s, >=4:120s} — 对齐 hermes retry_utils.py L108。
+     * 自适应限流退避表：{1:30s, 2:60s, 3:90s, >=4:120s} — 对齐 hermes retry_utils.py
+     * _ZAI_CODING_OVERLOAD_LONG_BACKOFF（约 L25）。
      * 用于 RATE_LIMIT / OVERLOADED，比通用指数退避更陡峭。
      */
     public static double adaptiveRateLimitBackoff(int attempt) {
