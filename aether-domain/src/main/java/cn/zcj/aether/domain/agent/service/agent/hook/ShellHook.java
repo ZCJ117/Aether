@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
  * Shell 命令式生命周期钩子 — 对齐 hermes shell_hooks.py _spawn（L433）。
  * <p>invoke 时 spawn 外部进程：无 shell（防注入）、stdin 传 HookContext JSON、
  * 超时强杀、输出入日志。异常一律吞掉不抛穿（对齐 _spawn 的 error 字段语义）。</p>
+ * <p>限制：stdout/stderr 在 {@code waitFor} 之后才排空，子进程大输出（超过 OS 管道缓冲）
+ * 可能阻塞至超时强杀——面向通知类短生命命令，接受为已知限制。</p>
  */
 @Slf4j
 public class ShellHook implements LifecycleHook {

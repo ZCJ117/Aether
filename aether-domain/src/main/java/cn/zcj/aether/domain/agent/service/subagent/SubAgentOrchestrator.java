@@ -45,6 +45,13 @@ public class SubAgentOrchestrator {
         this.hookRegistry = registry;
     }
 
+    /** 触发子代理生命周期钩子（空安全，对齐 GraphExecutor.notifyGraphHook 防御模式） */
+    private void notifyHook(HookPoint point, HookContext ctx) {
+        if (hookRegistry != null) {
+            hookRegistry.invokeAll(point, ctx);
+        }
+    }
+
     public SubAgentOrchestrator(DefaultAgentFactory agentFactory,
             SubAgentBoundary boundary, ResultRefiner refiner) {
         this.agentFactory = agentFactory;
@@ -91,7 +98,7 @@ public class SubAgentOrchestrator {
             subMetadata.put("taskId", taskId);
 
             // D3: SUBAGENT_START（对齐 hermes subagent_start）
-            hookRegistry.invokeAll(HookPoint.SUBAGENT_START, HookContext.builder()
+            notifyHook(HookPoint.SUBAGENT_START, HookContext.builder()
                     .agentId(config.getName()).sessionId(parentSessionId).request(task).build());
 
             RuntimeContext ctx = new RuntimeContext(userId, config.getName(),
@@ -125,7 +132,7 @@ public class SubAgentOrchestrator {
             return result;
         } finally {
             // D3: SUBAGENT_STOP（对齐 hermes subagent_stop）
-            hookRegistry.invokeAll(HookPoint.SUBAGENT_STOP, HookContext.builder()
+            notifyHook(HookPoint.SUBAGENT_STOP, HookContext.builder()
                     .agentId(config != null ? config.getName() : "unknown")
                     .sessionId(parentSessionId)
                     .request(task)
