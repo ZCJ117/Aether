@@ -66,6 +66,19 @@ public class AiAgentConfigTableVO {
         /** P1-#9: 工具安全配置 */
         private ToolSecurity toolSecurity;
 
+        /** D3: 配置驱动生命周期 Hook 段（对齐 hermes shell_hooks register_from_config 的 hooks:） */
+        private List<HookConfigVO> hooks;
+
+        @Data
+        public static class HookConfigVO {
+            /** HookPoint 枚举名（如 SUBAGENT_START） */
+            private String point;
+            /** 外部命令（无 shell，按空白拆分） */
+            private String command;
+            /** 超时毫秒（默认 60000，上限 300000） */
+            private Integer timeoutMs;
+        }
+
         @Data
         public static class AiApi {
             //NOTE: 这里的 AiApi 是为了适配 DeepSeek 兼容 OpenAI 协议的 API 配置，

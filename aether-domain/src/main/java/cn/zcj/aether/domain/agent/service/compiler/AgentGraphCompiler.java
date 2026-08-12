@@ -8,6 +8,7 @@ import cn.zcj.aether.domain.agent.model.valobj.AiAgentConfigTableVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.Resource;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.stream.Collectors;
@@ -33,8 +34,16 @@ public class AgentGraphCompiler {
     // 运行时模板占位符（非 outputKey），不需校验
     private static final Set<String> RUNTIME_PLACEHOLDERS = Set.of("memory");
 
+    @Resource
+    private HookConfigLoader hookConfigLoader;
+
     public AgentGraph compile(AiAgentConfigTableVO config) {
         validateConfigSchema(config);
+
+        // D3: 配置驱动 Hook 注册（对齐 hermes shell_hooks register_from_config）
+        if (hookConfigLoader != null && config.getModule() != null) {
+            hookConfigLoader.load(config.getModule().getHooks());
+        }
 
         String appName = config.getAppName();
         AiAgentConfigTableVO.Agent agent = config.getAgent();
