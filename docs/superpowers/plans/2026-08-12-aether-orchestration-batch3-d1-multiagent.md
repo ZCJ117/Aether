@@ -1507,14 +1507,16 @@ class PgAsyncDelegationStoreTest {
     @Test
     void markQueuedForRetryIncrementsAttempt() {
         store.markQueuedForRetry("ad-1", 2);
-        verify(jdbc).update(anyString(), eq("QUEUED"), eq(2), any(Timestamp.class), eq("ad-1"));
+        // MARK_QUEUED_SQL 中 'QUEUED' 内联于 SQL，绑定参数仅 attempt_count/updated_at/id 3 个
+        verify(jdbc).update(anyString(), eq(2), any(Timestamp.class), eq("ad-1"));
     }
 
     @Test
     void updateHeartbeatBindsTimestamp() {
         Instant at = Instant.ofEpochMilli(1_700_000_000_000L);
         store.updateHeartbeat("ad-1", at);
-        verify(jdbc).update(anyString(), any(Timestamp.class), eq("ad-1"));
+        // UPDATE_HEARTBEAT_SQL 绑定 last_heartbeat_at + updated_at 两个时间戳 + id
+        verify(jdbc).update(anyString(), any(Timestamp.class), any(Timestamp.class), eq("ad-1"));
     }
 
     @Test
