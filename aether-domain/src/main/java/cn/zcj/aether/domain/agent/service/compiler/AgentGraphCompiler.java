@@ -41,7 +41,8 @@ public class AgentGraphCompiler {
         validateConfigSchema(config);
 
         // D3: 配置驱动 Hook 注册（对齐 hermes shell_hooks register_from_config）
-        if (hookConfigLoader != null && config.getModule() != null) {
+        // validateConfigSchema 已保证 module 非空
+        if (hookConfigLoader != null) {
             hookConfigLoader.load(config.getModule().getHooks());
         }
 

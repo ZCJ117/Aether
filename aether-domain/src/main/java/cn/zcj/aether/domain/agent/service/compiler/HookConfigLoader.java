@@ -9,9 +9,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 配置驱动 Hook 注册器 — 对齐 hermes shell_hooks.py register_from_config（L204）。
@@ -25,8 +25,8 @@ public class HookConfigLoader {
 
     private final HookRegistry hookRegistry;
 
-    /** 已注册 spec 去重 key（对齐 hermes _registered 集合） */
-    private final Set<String> registered = new HashSet<>();
+    /** 已注册 spec 去重 key（对齐 hermes _registered 集合）；并发安全，防并发 compile() 竞态 */
+    private final Set<String> registered = ConcurrentHashMap.newKeySet();
 
     public HookConfigLoader(HookRegistry hookRegistry) {
         this.hookRegistry = hookRegistry;
