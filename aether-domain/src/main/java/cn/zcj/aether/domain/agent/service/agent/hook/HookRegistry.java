@@ -59,4 +59,41 @@ public class HookRegistry {
         globalHooks.sort(Comparator.comparingInt(AgentHook::priority));
         log.info("注册 Hook: {} (priority={})", hook.getClass().getSimpleName(), hook.priority());
     }
+
+    // ── D3 全局生命周期钩子（对齐 hermes plugins.py _hooks: Dict[str, List[Callable]]）──
+    /** 按 HookPoint 分组的生命周期钩子 */
+    private final Map<HookPoint, List<LifecycleHook>> lifecycleHooks = new EnumMap<>(HookPoint.class);
+
+    /** 注册生命周期钩子：按 hook.points() 分发到各挂点列表，并按 order 排序。 */
+    public void registerLifecycle(LifecycleHook hook) {
+        for (HookPoint point : hook.points()) {
+            lifecycleHooks.computeIfAbsent(point, k -> new ArrayList<>()).add(hook);
+            lifecycleHooks.get(point).sort(Comparator.comparingInt(LifecycleHook::order));
+        }
+        log.info("注册生命周期 Hook: {} → {}", hook.getClass().getSimpleName(), hook.points());
+    }
+
+    /** 获取某挂点的全部生命周期钩子（不可变、已按 order 排序） */
+    public List<LifecycleHook> hooksFor(HookPoint point) {
+        return Collections.unmodifiableList(lifecycleHooks.getOrDefault(point, List.of()));
+    }
+
+    /**
+     * 触发某挂点的全部生命周期钩子。
+     * 空列表短路；单钩子异常仅记日志不阻断后续（对齐 hermes invoke_hook L1911-1946 异常隔离）。
+     */
+    public void invokeAll(HookPoint point, HookContext ctx) {
+        List<LifecycleHook> hooks = lifecycleHooks.get(point);
+        if (hooks == null || hooks.isEmpty()) {
+            return;
+        }
+        for (LifecycleHook hook : hooks) {
+            try {
+                hook.onHook(point, ctx);
+            } catch (Exception e) {
+                log.warn("生命周期 Hook 执行异常（已隔离，不阻断主流程）: point={} hook={} err={}",
+                        point, hook.getClass().getSimpleName(), e.getMessage());
+            }
+        }
+    }
 }
