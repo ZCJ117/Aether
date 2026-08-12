@@ -1,7 +1,6 @@
 package cn.zcj.aether.domain.agent.service.model.failover;
 
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 退避计算工具 — 对齐 hermes retry_utils.py。
@@ -14,9 +13,6 @@ public final class RetryBackoff {
     private static final double MAX_DELAY_SEC = 30.0;
     private static final double JITTER_RATIO = 0.5;
 
-    /** 线程安全计数器（对齐 hermes retry_utils.py _jitter_counter） */
-    private static final AtomicInteger jitterCounter = new AtomicInteger(0);
-
     private RetryBackoff() {
     }
 
@@ -24,7 +20,6 @@ public final class RetryBackoff {
      * 抖动指数退避：delay = min(base * 2^(attempt-1), max) + [0, 0.5*delay]。
      */
     public static double jitteredBackoff(int attempt) {
-        int tick = jitterCounter.incrementAndGet();
         int exponent = Math.max(0, attempt - 1);
 
         double delay;
