@@ -1,6 +1,8 @@
 package cn.zcj.aether.domain.agent.service.subagent;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
@@ -20,7 +22,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * （attemptCount++，上限 8，对齐 hermes _MAX_DELIVERY_ATTEMPTS=8）。
  * recoverAbandoned 为启动一次性（one-shot）：容量跳过或落库失败的记录在下次重启时重新扫描恢复。
  * store 为 null 时内存降级（aether.delegation.persistence=false）。不持有线程池：
- * 子Agent执行由 SubagentLifecycleService 内部固定池承担。</p>
+ * 子Agent执行由 SubagentLifecycleService 内部固定池承担。
+ * <p>注：detectStale 心跳冻结检测目前无生产定时触发（Batch 4 D4 引入调度后接线）；
+ * 挂起子Agent 会占用租约与池线程，为已知运行时局限（与同步 SubAgentOrchestrator 同源）。</p>
  */
 @Slf4j
 @Service
@@ -37,11 +41,24 @@ public class AsyncDelegationService {
     private final AsyncDelegationStore store;
     private final AtomicBoolean recoveryDone = new AtomicBoolean(false);
 
+    /**
+     * Spring 构造：store 可选（持久化未启用时 getIfAvailable() 返回 null → 内存降级）。
+     */
+    @Autowired
     public AsyncDelegationService(SubagentLifecycleService lifecycle,
                                   CompletionBus completionBus,
                                   LeaseManager leaseManager,
                                   SpawnGate spawnGate,
-                                  AsyncDelegationStore store) {
+                                  ObjectProvider<AsyncDelegationStore> storeProvider) {
+        this(lifecycle, completionBus, leaseManager, spawnGate, storeProvider.getIfAvailable());
+    }
+
+    /** 测试/直连构造：store 可为 null（持久化未启用时内存降级）。 */
+    AsyncDelegationService(SubagentLifecycleService lifecycle,
+                           CompletionBus completionBus,
+                           LeaseManager leaseManager,
+                           SpawnGate spawnGate,
+                           AsyncDelegationStore store) {
         this.lifecycle = lifecycle;
         this.completionBus = completionBus;
         this.leaseManager = leaseManager;

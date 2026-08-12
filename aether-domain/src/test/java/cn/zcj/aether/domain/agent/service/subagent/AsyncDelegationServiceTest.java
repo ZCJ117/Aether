@@ -167,4 +167,20 @@ class AsyncDelegationServiceTest {
         verify(leaseManager).releaseLease("s1");
         verify(store, never()).markTerminal(any(), any(), any());
     }
+
+    @Test
+    void memoryDegradationWhenStoreAbsent() {
+        AsyncDelegationService memoryService = new AsyncDelegationService(
+                lifecycle, completionBus, leaseManager, spawnGate, (AsyncDelegationStore) null);
+        when(lifecycle.launch(any(), any())).thenReturn(new CompletableFuture<>());
+
+        String id = memoryService.dispatch(task());
+
+        assertNotNull(id);
+        verify(lifecycle).launch(any(), any());
+        verify(store, never()).save(any());           // 无 store 不落库
+        assertEquals(0, memoryService.recoverAbandoned());  // 无 store 恢复为 0
+        assertEquals(0, memoryService.restoreUndelivered()); // 无 store 回灌为 0
+        assertTrue(memoryService.listBySession("s1").isEmpty());
+    }
 }
