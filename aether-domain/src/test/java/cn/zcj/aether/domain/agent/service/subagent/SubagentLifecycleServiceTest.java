@@ -61,7 +61,8 @@ class SubagentLifecycleServiceTest {
         when(refiner.refine(any(), any())).thenReturn(
                 new ResultRefiner.SubAgentResult("成功", "[结论]", Map.of("code", 1)));
 
-        String id = service.launch("ad-1", task());
+        String id = "ad-1";
+        service.launch(id, task()); // launch 返回 CompletableFuture，此处忽略
         assertTrue(service.wait(id, 5000), "wait 应在超时前完成");
 
         assertEquals(SubagentState.COMPLETED, service.status(id).orElseThrow());
@@ -79,7 +80,8 @@ class SubagentLifecycleServiceTest {
         when(refiner.refine(any(), any())).thenReturn(
                 new ResultRefiner.SubAgentResult("未完成", "[无文本结论]", Map.of()));
 
-        String id = service.launch("ad-2", task());
+        String id = "ad-2";
+        service.launch(id, task()); // launch 返回 CompletableFuture，此处忽略
         assertTrue(service.cancel(id), "cancel 应被接受");
 
         // cancel token 已取消 → takeUntil 终止 → worker 收尾
@@ -96,7 +98,8 @@ class SubagentLifecycleServiceTest {
         when(refiner.refine(any(), any())).thenReturn(
                 new ResultRefiner.SubAgentResult("成功", "[结论]", Map.of()));
 
-        String id = service.launch("ad-3", task());
+        String id = "ad-3";
+        service.launch(id, task()); // launch 返回 CompletableFuture，此处忽略
         assertTrue(service.wait(id, 5000));
         assertFalse(service.cancel(id), "终态后 cancel 应拒绝（对齐 hermes L291 already_terminal）");
     }
@@ -109,7 +112,8 @@ class SubagentLifecycleServiceTest {
         when(refiner.refine(any(), any())).thenReturn(
                 new ResultRefiner.SubAgentResult("未完成", "[无文本结论]", Map.of()));
 
-        String id = service.launch("ad-4", task());
+        String id = "ad-4";
+        service.launch(id, task()); // launch 返回 CompletableFuture，此处忽略
         // 等 worker 进入 RUNNING
         Thread.sleep(200);
         assertEquals(SubagentState.RUNNING, service.status(id).orElseThrow());
@@ -126,7 +130,8 @@ class SubagentLifecycleServiceTest {
         when(agentFactory.create(config)).thenReturn(agent);
         when(agent.execute(any(RuntimeContext.class))).thenReturn(Flowable.never());
 
-        String id = service.launch("ad-5", task());
+        String id = "ad-5";
+        service.launch(id, task()); // launch 返回 CompletableFuture，此处忽略
         assertFalse(service.wait(id, 100), "超时应返回 false（对齐 hermes timed_out 标志）");
         service.cancel(id); // 清理
     }

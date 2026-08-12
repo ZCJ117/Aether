@@ -58,12 +58,12 @@ public class SubagentLifecycleService {
     }
 
     /**
-     * 启动异步子Agent：登记 QUEUED → 线程池执行（RUNNING）→ 终态。返回本次委派 id。
+     * 启动异步子Agent：登记 QUEUED → 线程池执行（RUNNING）→ 终态。返回完成 future。
      * @param id 由调用方生成的持久化委派 id（如 ad-xxx）
      * @param task 委派输入
-     * @return 本次委派 id（终态经 status(id)/result(id) 读取）
+     * @return 完成 future（completed 后经 status(id) 读取终态）
      */
-    public String launch(String id, DelegationTask task) {
+    public CompletableFuture<ResultRefiner.SubAgentResult> launch(String id, DelegationTask task) {
         String taskId = "t" + Integer.toHexString(Math.abs(task.task().hashCode())).substring(0, 6);
         AgentConfig config = boundary.createIsolatedConfig(
                 task.parentSessionId(), task.task(), task.toolNames(), task.modelRef(), taskId, null);
@@ -79,7 +79,7 @@ public class SubagentLifecycleService {
                 log.error("SubagentLifecycleService: 子Agent执行异常 id={}", id, ex);
             }
         });
-        return id;
+        return future;
     }
 
     private ResultRefiner.SubAgentResult runAgent(SubagentRuntime rt) {
@@ -186,6 +186,9 @@ public class SubagentLifecycleService {
             if (rt.state() == SubagentState.RUNNING && rt.lastHeartbeatAt().isBefore(cutoff)) {
                 if (rt.tryTerminal(SubagentState.TIMED_OUT)) {
                     rt.cancelToken().cancel();
+                    if (rt.future() != null) {
+                        rt.future().complete(rt.result());
+                    }
                     stale.add(rt.id());
                 }
             }

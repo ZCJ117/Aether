@@ -60,14 +60,18 @@ final class SubagentRuntime {
         return state.compareAndSet(SubagentState.QUEUED, SubagentState.RUNNING);
     }
 
-    /** 非终态 → CANCELLED（对齐 hermes cancel L291 + _run L402 的守卫）。 */
+    /** 非终态 → CANCELLED（对齐 hermes cancel L291 + _run L402 的守卫，CAS 原子转换）。 */
     boolean toCancelled() {
-        if (isTerminal(state.get())) {
-            return false;
+        while (true) {
+            SubagentState cur = state.get();
+            if (isTerminal(cur)) {
+                return false;
+            }
+            if (state.compareAndSet(cur, SubagentState.CANCELLED)) {
+                cancelToken.cancel();
+                return true;
+            }
         }
-        state.set(SubagentState.CANCELLED);
-        cancelToken.cancel();
-        return true;
     }
 
     /** 仅 RUNNING → 指定终态（终态竞争：已 CANCELLED/TIMED_OUT 则 CAS 失败，不覆盖）。 */
