@@ -42,6 +42,9 @@ spring:
 aether:
   session:
     persistence: true
+  # ====== D1: 异步委派持久化（PostgreSQL，激活 PgAsyncDelegationStore）======
+  delegation:
+    persistence: true
   memory:
     pgvector:
       enabled: true

@@ -40,3 +40,25 @@ CREATE TABLE IF NOT EXISTS t_audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_user_time ON t_audit_log(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_action ON t_audit_log(action);
+
+-- ============================================================
+-- D1: 异步委派表（hermes async_delegations 对齐）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS t_async_delegation (
+    id                   VARCHAR(64)  PRIMARY KEY,
+    parent_session_id    VARCHAR(128) NOT NULL,
+    parent_agent_id      VARCHAR(128),
+    task_payload         TEXT         NOT NULL,
+    tool_names           TEXT,
+    state                VARCHAR(32)  NOT NULL,
+    attempt_count        INTEGER      NOT NULL DEFAULT 1,
+    result_summary       TEXT,
+    created_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
+    last_heartbeat_at    TIMESTAMP,
+    completion_delivered BOOLEAN      NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_async_deleg_state
+    ON t_async_delegation(state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_async_deleg_session
+    ON t_async_delegation(parent_session_id);
