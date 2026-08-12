@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Hook 注册与发现中心。
@@ -67,8 +68,9 @@ public class HookRegistry {
     /** 注册生命周期钩子：按 hook.points() 分发到各挂点列表，并按 order 排序。 */
     public void registerLifecycle(LifecycleHook hook) {
         for (HookPoint point : hook.points()) {
-            lifecycleHooks.computeIfAbsent(point, k -> new ArrayList<>()).add(hook);
-            lifecycleHooks.get(point).sort(Comparator.comparingInt(LifecycleHook::order));
+            List<LifecycleHook> list = lifecycleHooks.computeIfAbsent(point, k -> new CopyOnWriteArrayList<>());
+            list.add(hook);
+            list.sort(Comparator.comparingInt(LifecycleHook::order));
         }
         log.info("注册生命周期 Hook: {} → {}", hook.getClass().getSimpleName(), hook.points());
     }
