@@ -11,6 +11,7 @@ import cn.zcj.aether.domain.agent.service.armory.matter.skills.ToolSkillsCreateS
 import cn.zcj.aether.domain.agent.service.model.ModelConfig;
 import cn.zcj.aether.domain.agent.service.model.ModelProvider;
 import cn.zcj.aether.domain.agent.service.model.ModelProviderRegistry;
+import cn.zcj.aether.domain.agent.service.model.failover.CredentialPool;
 import cn.zcj.aether.domain.agent.service.model.failover.ModelErrorClassifier;
 import cn.zcj.aether.domain.agent.service.model.failover.ModelRoute;
 import cn.zcj.aether.domain.agent.service.model.failover.ResilientChatModelExecutor;
@@ -67,6 +68,9 @@ public class ChatModelNode extends AbstractArmorySupport {
 
     @Resource
     private ModelErrorClassifier modelErrorClassifier;  // P1 容错：错误分类器
+
+    @Resource
+    private CredentialPool credentialPool;  // P1 容错：凭据轮换池（当前池未播种时退化为 fallback）
 
     @Resource
     private cn.zcj.aether.domain.agent.service.agent.permission.PermissionEngine permissionEngine;  // P1-#9
@@ -461,6 +465,8 @@ public class ChatModelNode extends AbstractArmorySupport {
         ResilientChatModelExecutor executor = new ResilientChatModelExecutor(
                 rawModel, modelConfig, provider,
                 modelProviderRegistry, modelErrorClassifier, fallbackChain);
+
+        executor.setCredentialPool(credentialPool);
 
         if (!fallbackChain.isEmpty()) {
             log.info("ChatModel 已包装为容错执行器: model={}, fallbackChain={}",

@@ -123,4 +123,16 @@ public class TurnRetryState {
     public void reset() {
         attemptCount.clear();
     }
+
+    /**
+     * 清空 per-model 账本（fallback 切换成功后调用）——
+     * 保留 PROVIDER_FALLBACK 链位置，因为链消费是全局的、不随模型切换重置。
+     */
+    public void resetPerModel() {
+        attemptCount.remove(RecoveryBranch.JITTERED_BACKOFF);
+        attemptCount.remove(RecoveryBranch.ADAPTIVE_RATE_LIMIT_BACKOFF);
+        attemptCount.remove(RecoveryBranch.CONTEXT_COMPRESSION);
+        attemptCount.remove(RecoveryBranch.CREDENTIAL_ROTATION);
+        attemptCount.remove(RecoveryBranch.TIMEOUT_RECONNECT);
+    }
 }

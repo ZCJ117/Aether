@@ -74,4 +74,17 @@ class TurnRetryStateTest {
         st.reset();
         assertEquals(RecoveryBranch.CREDENTIAL_ROTATION, st.nextDirective(AUTH_401).branch());
     }
+
+    @Test
+    void resetPerModelKeepsFallbackChainPosition() {
+        TurnRetryState st = new TurnRetryState(3, 2);
+        st.markAttempted(RecoveryBranch.PROVIDER_FALLBACK);
+        st.markAttempted(RecoveryBranch.JITTERED_BACKOFF);
+        st.markAttempted(RecoveryBranch.CREDENTIAL_ROTATION);
+        st.resetPerModel();
+        // per-model 分支计数被清，但 PROVIDER_FALLBACK 链位置保留
+        assertEquals(0, st.count(RecoveryBranch.JITTERED_BACKOFF));
+        assertEquals(0, st.count(RecoveryBranch.CREDENTIAL_ROTATION));
+        assertEquals(1, st.count(RecoveryBranch.PROVIDER_FALLBACK));
+    }
 }

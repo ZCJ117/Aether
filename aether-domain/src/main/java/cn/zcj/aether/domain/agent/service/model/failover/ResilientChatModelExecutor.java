@@ -175,7 +175,7 @@ public class ResilientChatModelExecutor implements ChatModel {
                     case PROVIDER_FALLBACK -> {
                         turnRetry.markAttempted(RecoveryBranch.PROVIDER_FALLBACK);
                         if (tryActivateFallback(classified.reason())) {
-                            turnRetry.reset(); // fallback 切换成功，重置本轮账本
+                            turnRetry.resetPerModel(); // 新模型重新计退避，但保留 fallback 链位置
                         } else if (fallbackIndex >= fallbackChain.size()) {
                             // fallback 链已实际耗尽：把账本同步为已用尽，避免后续空转重试
                             turnRetry.markExhausted(RecoveryBranch.PROVIDER_FALLBACK, fallbackChain.size());
