@@ -120,8 +120,9 @@ public class SubAgentOrchestrator {
             return result;
         } catch (Exception e) {
             log.error("SubAgentOrchestrator 派遣失败: task={}", task, e);
-            return new ResultRefiner.SubAgentResult("失败",
+            result = new ResultRefiner.SubAgentResult("失败",
                     "[子任务异常: " + e.getMessage() + "]", Map.of());
+            return result;
         } finally {
             // D3: SUBAGENT_STOP（对齐 hermes subagent_stop）
             hookRegistry.invokeAll(HookPoint.SUBAGENT_STOP, HookContext.builder()
