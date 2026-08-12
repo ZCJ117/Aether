@@ -7,6 +7,8 @@ import cn.zcj.aether.domain.agent.service.armory.AbstractArmorySupport;
 import cn.zcj.aether.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import cn.zcj.aether.domain.agent.service.armory.matter.mcp.client.TooMcpCreateService;
 import cn.zcj.aether.domain.agent.service.armory.matter.mcp.client.factory.DefaultMcpClientFactory;
+import cn.zcj.aether.domain.agent.service.armory.matter.mcp.registry.McpToolRegistry;
+import cn.zcj.aether.domain.agent.service.armory.matter.mcp.registry.ToolSpec;
 import cn.zcj.aether.domain.agent.service.armory.matter.skills.ToolSkillsCreateService;
 import cn.zcj.aether.domain.agent.service.model.ModelConfig;
 import cn.zcj.aether.domain.agent.service.model.ModelProvider;
@@ -94,6 +96,10 @@ public class ChatModelNode extends AbstractArmorySupport {
     /** M4: MCP 连接缓存 —— 按 name@baseUri 去重，避免重复创建 SSE/Stdio 连接 */
     private final Map<String, ToolCallback[]> mcpCallbackCache = new ConcurrentHashMap<>();
 
+    // D3: MCP 工具运行时注册表（对齐 hermes _parallel_safe_servers / _mcp_tool_server_names）
+    @Resource
+    private McpToolRegistry mcpToolRegistry;
+
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         log.info("Ai Agent 装配操作 - ChatModelNode");
@@ -121,6 +127,23 @@ public class ChatModelNode extends AbstractArmorySupport {
                     }
                 });
                 toolCallbackList.addAll(List.of(toolCallbacks));
+
+                // D3: 登记 MCP 工具元数据到运行时注册表（供 isToolParallelSafe / refreshTools 使用）
+                if (mcpToolRegistry != null) {
+                    String serverId = extractMcpName(toolMcp);
+                    boolean parallelSafe = Boolean.TRUE.equals(toolMcp.getParallelSafe());
+                    List<ToolSpec> specs = new ArrayList<>();
+                    for (ToolCallback tc : toolCallbacks) {
+                        String toolName = tc.getToolDefinition() != null ? tc.getToolDefinition().name() : null;
+                        String desc = tc.getToolDefinition() != null && tc.getToolDefinition().description() != null
+                                ? tc.getToolDefinition().description() : "";
+                        if (toolName != null) {
+                            specs.add(new ToolSpec(toolName, desc, parallelSafe));
+                        }
+                    }
+                    mcpToolRegistry.register(serverId, specs);
+                    log.info("MCP 工具已登记到运行时注册表: server={} tools={}", serverId, specs.size());
+                }
             }
         }
 

@@ -147,6 +147,9 @@ public class AiAgentConfigTableVO {
 
                 private LocalParameters local;
 
+                /** D3: MCP 服务器是否支持并行工具调用（对齐 hermes supports_parallel_tool_calls） */
+                private Boolean parallelSafe;
+
                 // NOTE SSE server的方式连接，适合远程的 MCP 服务器，MCP 服务器需要实现 SSE 协议，智能体通过 SSE 连接 MCP 服务器获取工具调用结果。
                 @Data
                 public static class SSEServerParameters { // MCP 服务器参数配置
