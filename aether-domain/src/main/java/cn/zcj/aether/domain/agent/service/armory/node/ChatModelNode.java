@@ -93,6 +93,11 @@ public class ChatModelNode extends AbstractArmorySupport {
     @Resource
     private cn.zcj.aether.domain.agent.service.subagent.SubAgentOrchestrator subAgentOrchestrator;
 
+    @Resource
+    private cn.zcj.aether.domain.agent.service.subagent.AsyncDelegationService asyncDelegationService;
+    @Resource
+    private cn.zcj.aether.domain.agent.service.subagent.SpawnGate spawnGate;
+
     /** M4: MCP 连接缓存 —— 按 name@baseUri 去重，避免重复创建 SSE/Stdio 连接 */
     private final Map<String, ToolCallback[]> mcpCallbackCache = new ConcurrentHashMap<>();
 
@@ -338,7 +343,7 @@ public class ChatModelNode extends AbstractArmorySupport {
         // LLM 可通过 tool_use 自然发起子Agent派遣，自动继承 P0 校验/重试/审批链路
         try {
             var delegationTool = new cn.zcj.aether.domain.agent.service.subagent
-                    .SubAgentDelegationTool(subAgentOrchestrator);
+                    .SubAgentDelegationTool(subAgentOrchestrator, spawnGate, asyncDelegationService);
             toolRegistry.register(delegationTool);
             log.info("委派工具已注册: {} (delegate_to_subagent)", delegationTool.name());
         } catch (Exception e) {

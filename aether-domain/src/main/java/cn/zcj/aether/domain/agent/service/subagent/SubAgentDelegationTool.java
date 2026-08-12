@@ -39,9 +39,17 @@ public class SubAgentDelegationTool implements Tool {
             注意：子Agent有60秒超时限制，不适合超长任务。""";
 
     private final SubAgentOrchestrator orchestrator;
+    private final SpawnGate spawnGate;                 // 可空（未接线时仅同步路径）
+    private final AsyncDelegationService asyncService; // 可空（未接线时仅同步路径）
 
     public SubAgentDelegationTool(SubAgentOrchestrator orchestrator) {
+        this(orchestrator, null, null);
+    }
+
+    public SubAgentDelegationTool(SubAgentOrchestrator orchestrator, SpawnGate spawnGate, AsyncDelegationService asyncService) {
         this.orchestrator = orchestrator;
+        this.spawnGate = spawnGate;
+        this.asyncService = asyncService;
     }
 
     @Override
@@ -68,7 +76,10 @@ public class SubAgentDelegationTool implements Tool {
                                 "description", "允许子Agent使用的工具名称列表。为空或省略则子Agent无工具可用。"),
                         "model_ref", Map.of(
                                 "type", "string",
-                                "description", "可选，模型引用。省略则复用父Agent的模型。")
+                                "description", "可选，模型引用。省略则复用父Agent的模型。"),
+                        "async", Map.of(
+                                "type", "boolean",
+                                "description", "可选。true 时异步委派（立即返回 delegationId+QUEUED，不等待子Agent完成）；默认 false 同步等待。")
                 ),
                 "required", List.of("task")
         );
@@ -97,29 +108,55 @@ public class SubAgentDelegationTool implements Tool {
         String userId = context.userId() != null ? context.userId() : "system";
         String parentSessionId = context.sessionId() != null ? context.sessionId() : "delegation";
 
-        log.info("SubAgentDelegationTool: 发起委派 task='{}' tools={} model={} session={}",
-                task.length() > 80 ? task.substring(0, 77) + "..." : task,
-                toolNames, modelRef, parentSessionId);
-
-        // 父Agent的 TokenBudget 不可用于子Agent（隔离上下文），传 null
-        ResultRefiner.SubAgentResult result = orchestrator.dispatch(
-                task, toolNames, null, modelRef, userId, parentSessionId);
-
-        String output = result.summary();
-        boolean success = "成功".equals(result.status())
-                || "超时".equals(result.status());
-
-        if (success) {
-            log.info("SubAgentDelegationTool: 委派完成 status={} toolsUsed={}",
-                    result.status(), result.toolStats());
-            return ToolResult.success(context.toolCallId(), name(), output);
-        } else {
-            log.warn("SubAgentDelegationTool: 委派失败 status={} summary={}",
-                    result.status(),
-                    result.summary().length() > 200 ? result.summary().substring(0, 197) + "..." : result.summary());
+        // D1: SpawnGate 闸门（暂停/深度上限 → 拒绝，对齐 hermes delegate_tool.py L2775）
+        if (spawnGate != null && !spawnGate.enter()) {
             return ToolResult.error(context.toolCallId(), name(),
-                    "[委派失败: " + result.status() + "] " + output,
+                    "[委派被拒绝: spawn 已暂停或达到深度上限]",
                     ToolResult.ErrorType.EXECUTION);
+        }
+        try {
+            // D1: 异步委派模式（方案 a：平行新能力，同步路径保留）
+            if (asyncService != null && Boolean.TRUE.equals(input.get("async"))) {
+                String delegationId = asyncService.dispatch(new DelegationTask(
+                        task, toolNames, modelRef, userId, parentSessionId, null));
+                if (delegationId == null) {
+                    return ToolResult.error(context.toolCallId(), name(),
+                            "[委派被拒绝: session 并发委派达上限]",
+                            ToolResult.ErrorType.EXECUTION);
+                }
+                log.info("SubAgentDelegationTool: 异步委派已提交 id={}", delegationId);
+                return ToolResult.success(context.toolCallId(), name(),
+                        "[委派已异步提交] delegationId=" + delegationId + " state=QUEUED");
+            }
+
+            log.info("SubAgentDelegationTool: 发起委派 task='{}' tools={} model={} session={}",
+                    task.length() > 80 ? task.substring(0, 77) + "..." : task,
+                    toolNames, modelRef, parentSessionId);
+
+            // 父Agent的 TokenBudget 不可用于子Agent（隔离上下文），传 null
+            ResultRefiner.SubAgentResult result = orchestrator.dispatch(
+                    task, toolNames, null, modelRef, userId, parentSessionId);
+
+            String output = result.summary();
+            boolean success = "成功".equals(result.status())
+                    || "超时".equals(result.status());
+
+            if (success) {
+                log.info("SubAgentDelegationTool: 委派完成 status={} toolsUsed={}",
+                        result.status(), result.toolStats());
+                return ToolResult.success(context.toolCallId(), name(), output);
+            } else {
+                log.warn("SubAgentDelegationTool: 委派失败 status={} summary={}",
+                        result.status(),
+                        result.summary().length() > 200 ? result.summary().substring(0, 197) + "..." : result.summary());
+                return ToolResult.error(context.toolCallId(), name(),
+                        "[委派失败: " + result.status() + "] " + output,
+                        ToolResult.ErrorType.EXECUTION);
+            }
+        } finally {
+            if (spawnGate != null) {
+                spawnGate.exit();
+            }
         }
     }
 
