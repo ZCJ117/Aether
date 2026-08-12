@@ -43,7 +43,7 @@ Aether 编排协调（GraphExecutor 图执行 + SubAgentOrchestrator 委派 + Re
 ┌─ aether-domain ───────────────────────────┐   ┌─ aether-infrastructure ────────┐
 │ model/failover/                           │   │ classifier/  增强分类器         │
 │   + RecoveryBranch 枚举                   │   │ credential/  + RotatingCredentialPool
-│   + TurnRetryState 恢复分支账本           │──▶│ deleg/       + SqliteAsyncDelegationStore
+│   + TurnRetryState 恢复分支账本           │──▶│ deleg/       + PgAsyncDelegationStore
 │   + RecoveryDirective                     │   │ observability/ + FileDelegationLiveLog
 │   + RetryBackoff（自适应限流表）          │   └────────────────────────────────┘
 │   + CredentialPool（domain 端口）         │
@@ -272,7 +272,7 @@ QUEUED / PENDING / RUNNING / COMPLETED / FAILED / CANCELLED / TIMED_OUT / INTERR
 
 **④ 异步委派持久化层（对齐 `async_delegation.py`）**
 - domain 端口 `AsyncDelegationStore`：`save / findPendingStale / findBySession / markCompleted / markFailed / markInterrupted / updateHeartbeat / listBySession`
-- infrastructure 实现 `SqliteAsyncDelegationStore`：**SQLite WAL**（对齐 hermes SQLite 语义），表 `async_delegations`
+- infrastructure 实现 `PgAsyncDelegationStore`：**PostgreSQL**（复用现有 spring-jdbc，零新依赖），表 `t_async_delegation`，跟随 `PgSessionRepository` 的 `JdbcTemplate`+`RowMapper` 模式 + `@ConditionalOnClass(Postgres Driver)` + `@ConditionalOnProperty(aether.delegation.persistence=true)`；DDL `CREATE TABLE IF NOT EXISTS` 加入 `schema.sql`
 - `AsyncDelegationService`（domain）：
   - `dispatch(task)` → 落库 QUEUED → 提交线程池 → RUNNING → 完成 `markCompleted` + 推 completion 事件
   - `dispatchBatch(tasks)`；`recoverAbandoned()` → 启动扫描 QUEUED/PENDING stale → 重新入队（`attemptCount++`，幂等防重复）
@@ -294,7 +294,7 @@ QUEUED / PENDING / RUNNING / COMPLETED / FAILED / CANCELLED / TIMED_OUT / INTERR
 
 ### 6.5 测试
 - `SubagentLifecycleServiceTest`：状态机转换、并发 cancel+complete 守卫
-- `SqliteAsyncDelegationStoreTest`：CRUD + WAL；写入 PENDING 重建 store 后 `recoverAbandoned` 重入队且 `attemptCount++`
+- `PgAsyncDelegationStoreTest`：CRUD + 状态查询；写入 PENDING 重建 store 后 `recoverAbandoned` 重入队且 `attemptCount++`。测试**无真实 DB**：Mockito mock `JdbcTemplate` 校验 SQL+参数绑定 + SQL 字符串断言，跟随 `PgvectorVectorStoreSqlTest` 基建
 - `AsyncDelegationServiceTest`：dispatch 落库→执行→completion；dispatchBatch；interruptForSession；restoreUndelivered 回灌
 - `CompletionBusTest`：发布订阅 + 启动回灌去重
 - `LeaseManagerTest`：排他租约 + 并发上限
@@ -361,13 +361,13 @@ GET  /api/orchestration/delegations?sessionId=    → listAsyncDelegations(sessi
 |---|---|---|---|
 | 批1 | D2 异常重试 | `RecoveryBranch` / `TurnRetryState` / `RecoveryDirective` / `RetryBackoff` / `CredentialPool`+impl / `ClassifiedError` 扩展 / `ResilientChatModelExecutor` 改造 | 无 |
 | 批2 | D3 可扩展配置 | `HookPoint` / `HookContext` / `LifecycleHook` / `HookRegistry.invokeAll` / `HookConfigLoader` / `ShellHook` / MCP 刷新 | 无 |
-| 批3 | D1 多Agent协作 | `SubagentState` / `SubagentLifecycleService` / `AsyncDelegationStore`+SQLite / `AsyncDelegationService` / `CompletionBus` / `LeaseManager` / `DelegationBudget` / `SpawnGate` | sqlite-jdbc 依赖 |
+| 批3 | D1 多Agent协作 | `SubagentState` / `SubagentLifecycleService` / `AsyncDelegationStore`+PostgreSQL / `AsyncDelegationService` / `CompletionBus` / `LeaseManager` / `DelegationBudget` / `SpawnGate` | 无（复用现有 PostgreSQL） |
 | 批4 | D4 可视化调试 | `DelegationLiveLog` / `GraphExecutionRecorder` / `ExecutionControlService`+HTTP / `AgentTracer` 增强 | 批3 的 lifecycle |
 
 ## 10. 风险与注意事项
 
 1. **热路径侵入**（D2/D3）：`ResilientChatModelExecutor`、`GraphExecutor`、`ModelInvoker` 是高频路径 → 挂点/决策逻辑必须低开销（空列表短路、无锁账本）。
-2. **新增依赖**（D1）：`org.xerial:sqlite-jdbc` → 根 pom + aether-infrastructure pom；SQLite WAL 文件路径需配置化。
+2. **持久化**（D1）：`t_async_delegation` 表加入 `schema.sql`（`CREATE TABLE IF NOT EXISTS`，随 `spring.sql.init.mode: always` 启动幂等加载）；`aether.delegation.persistence` 属性控制仓储激活，未激活时 `AsyncDelegationService` 内存降级。
 3. **恢复幂等**（D1）：`recoverAbandoned` 需按 `attemptCount` 上限 + 状态 CAS 防重复执行；`restoreUndelivered` 回灌需去重。
 4. **状态并发**（D1）：同一 `DelegationRecord` 的 cancel/complete/heartbeat 需原子转换。
 5. **MCP 事件通道**（D3）：需先调研现有 SSE/stdio 客户端是否暴露 notification；不可行则降级手动刷新。
