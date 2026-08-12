@@ -139,6 +139,9 @@ public class SubagentLifecycleService {
     }
 
     /** 取消：非终态 → CANCELLED + cancel token。返回是否接受（对齐 hermes cancel L291）。 */
+    // 注：cancel 后 worker 可能仍在收尾（event 流上的 takeUntil 需下一次 emission 才触发），
+    // 已完成的 future 携带"取消"合成结果；result(id) 可能返回 null 或 worker 最终提炼的部分结果
+    // （对齐 hermes：cancel → terminal，丢弃最终结果）。
     public boolean cancel(String id) {
         SubagentRuntime rt = runtimes.get(id);
         if (rt == null || !rt.toCancelled()) {
@@ -148,7 +151,8 @@ public class SubagentLifecycleService {
         // worker 不会自行退出，故主动完成 future 使 wait(id) 解除阻塞（对齐 hermes cancel 置态语义）。
         CompletableFuture<ResultRefiner.SubAgentResult> future = rt.future();
         if (future != null) {
-            future.complete(rt.result());
+            future.complete(rt.result() != null ? rt.result()
+                    : new ResultRefiner.SubAgentResult("取消", "[子任务已取消]", Map.of()));
         }
         return true;
     }
@@ -160,6 +164,9 @@ public class SubagentLifecycleService {
     }
 
     /** 查询结果；未就绪/未知返回 empty。 */
+    // 注：cancel 后 worker 可能仍在收尾（event 流上的 takeUntil 需下一次 emission 才触发），
+    // 已完成的 future 携带"取消"合成结果；result(id) 可能返回 null 或 worker 最终提炼的部分结果
+    // （对齐 hermes：cancel → terminal，丢弃最终结果）。
     public Optional<ResultRefiner.SubAgentResult> result(String id) {
         SubagentRuntime rt = runtimes.get(id);
         if (rt == null || rt.result() == null) {
@@ -187,7 +194,8 @@ public class SubagentLifecycleService {
                 if (rt.tryTerminal(SubagentState.TIMED_OUT)) {
                     rt.cancelToken().cancel();
                     if (rt.future() != null) {
-                        rt.future().complete(rt.result());
+                        rt.future().complete(rt.result() != null ? rt.result()
+                                : new ResultRefiner.SubAgentResult("超时", "[子任务超时]", Map.of()));
                     }
                     stale.add(rt.id());
                 }
