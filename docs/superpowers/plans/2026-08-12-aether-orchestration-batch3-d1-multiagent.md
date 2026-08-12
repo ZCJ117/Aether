@@ -1804,8 +1804,6 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -1819,7 +1817,6 @@ class AsyncDelegationServiceTest {
     private LeaseManager leaseManager;
     private SpawnGate spawnGate;
     private AsyncDelegationStore store;
-    private ExecutorService executor;
     private AsyncDelegationService service;
 
     @BeforeEach
@@ -1829,9 +1826,8 @@ class AsyncDelegationServiceTest {
         leaseManager = mock(LeaseManager.class);
         spawnGate = mock(SpawnGate.class);
         store = mock(AsyncDelegationStore.class);
-        executor = Executors.newCachedThreadPool();
-        service = new AsyncDelegationService(lifecycle, completionBus, leaseManager, spawnGate, store, executor);
-        when(spawnGate.enter()).thenReturn(true);
+        // AsyncDelegationService 不自建线程池：执行由 SubagentLifecycleService 内部池承担（code-review M1）
+        service = new AsyncDelegationService(lifecycle, completionBus, leaseManager, spawnGate, store);
         when(leaseManager.acquireLease(any())).thenReturn(true);
     }
 
@@ -1968,8 +1964,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -1993,31 +1987,19 @@ public class AsyncDelegationService {
     private final LeaseManager leaseManager;
     private final SpawnGate spawnGate;
     private final AsyncDelegationStore store;
-    private final ExecutorService executor;
     private final AtomicBoolean recoveryDone = new AtomicBoolean(false);
 
+    // 注：不持有线程池 — 子Agent执行由 SubagentLifecycleService 内部固定池承担（code-review M1）
     public AsyncDelegationService(SubagentLifecycleService lifecycle,
                                   CompletionBus completionBus,
                                   LeaseManager leaseManager,
                                   SpawnGate spawnGate,
                                   AsyncDelegationStore store) {
-        this(lifecycle, completionBus, leaseManager, spawnGate, store,
-                Executors.newCachedThreadPool());
-    }
-
-    /** 测试注入线程池。 */
-    AsyncDelegationService(SubagentLifecycleService lifecycle,
-                           CompletionBus completionBus,
-                           LeaseManager leaseManager,
-                           SpawnGate spawnGate,
-                           AsyncDelegationStore store,
-                           ExecutorService executor) {
         this.lifecycle = lifecycle;
         this.completionBus = completionBus;
         this.leaseManager = leaseManager;
         this.spawnGate = spawnGate;
         this.store = store;
-        this.executor = executor;
     }
 
     @PostConstruct
