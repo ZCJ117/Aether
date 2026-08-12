@@ -60,9 +60,14 @@ public class SpawnGate {
         return true;
     }
 
-    /** 退出当前委派深度（与 enter 成对，finally 中调用）。 */
+    /** 退出当前委派深度（与 enter 成对，finally 中调用）。归零后清除 ThreadLocal，防止池线程滞留值。 */
     public void exit() {
-        depth.set(Math.max(0, depth.get() - 1));
+        int d = depth.get();
+        if (d <= 1) {
+            depth.remove(); // 0 或 1 → 归零并清除，防止 ThreadLocal 值滞留池线程
+        } else {
+            depth.set(d - 1);
+        }
     }
 
     public int currentDepth() {
