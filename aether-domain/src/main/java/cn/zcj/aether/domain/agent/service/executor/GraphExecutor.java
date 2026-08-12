@@ -866,20 +866,22 @@ public class GraphExecutor {
         // 收集输出用于 onResponse 回调
         StringBuilder collectedOutput = new StringBuilder();
 
-        agent.execute(ctx)
-                .blockingForEach(event -> {
-                    if (event.getType() == RuntimeEvent.EventType.textDelta
-                            && event.getText() != null) {
-                        state.appendOutput(def.getOutputKey(), event.getText());
-                        collectedOutput.append(event.getText());
-                    }
-                    emitter.onNext(event);
-                });
-
-        // D3: ON_GRAPH_NODE_END
-        notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
-                .agentId(nodeId).sessionId(sessionId).graphNodeId(def.getOutputKey())
-                .response(collectedOutput.toString()).build());
+        try {
+            agent.execute(ctx)
+                    .blockingForEach(event -> {
+                        if (event.getType() == RuntimeEvent.EventType.textDelta
+                                && event.getText() != null) {
+                            state.appendOutput(def.getOutputKey(), event.getText());
+                            collectedOutput.append(event.getText());
+                        }
+                        emitter.onNext(event);
+                    });
+        } finally {
+            // D3: ON_GRAPH_NODE_END（try/finally 保证异常路径也触发，对齐 parallel/graphflow 变体）
+            notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
+                    .agentId(nodeId).sessionId(sessionId).graphNodeId(def.getOutputKey())
+                    .response(collectedOutput.toString()).build());
+        }
 
         // H4-步骤7: 执行完成后触发 onResponse 拦截
         if (interventionHandler != null && collectedOutput.length() > 0) {
