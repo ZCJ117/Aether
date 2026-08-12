@@ -127,4 +127,24 @@ class ResilientChatModelExecutorTest {
         assertThrows(ResilientChatModelExecutor.ResilientCallException.class,
                 () -> executor.call(new Prompt("hi")));
     }
+
+    @Test
+    void contextOverflowCompressesThenSuccess() {
+        when(chatModel.call(any(Prompt.class)))
+                .thenThrow(new RuntimeException("context too long"))
+                .thenReturn(ok());
+        when(classifier.classify(any(), any(), any())).thenReturn(
+                ClassifiedError.of(FailoverReason.CONTEXT_OVERFLOW, null, "anthropic", "claude-sonnet", "context"));
+        ModelConfig cfg = ModelConfig.builder().modelId("claude-sonnet").apiKey("key1").build();
+
+        ResilientChatModelExecutor executor = build(cfg, List.of());
+        // compressCallback 返回 true：压缩后重试
+        executor.setCompressCallback((state, reason) -> true);
+        executor.setBackoffWaiter(sec -> { });
+
+        ChatResponse resp = executor.call(new Prompt("hi"));
+
+        assertEquals("ok", resp.getResult().getOutput().getText());
+        verify(chatModel, times(2)).call(any(Prompt.class));
+    }
 }

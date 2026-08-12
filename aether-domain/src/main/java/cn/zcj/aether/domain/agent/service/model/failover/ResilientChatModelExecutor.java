@@ -176,6 +176,9 @@ public class ResilientChatModelExecutor implements ChatModel {
                         turnRetry.markAttempted(RecoveryBranch.PROVIDER_FALLBACK);
                         if (tryActivateFallback(classified.reason())) {
                             turnRetry.reset(); // fallback 切换成功，重置本轮账本
+                        } else if (fallbackIndex >= fallbackChain.size()) {
+                            // fallback 链已实际耗尽：把账本同步为已用尽，避免后续空转重试
+                            turnRetry.markExhausted(RecoveryBranch.PROVIDER_FALLBACK, fallbackChain.size());
                         }
                     }
                     case TIMEOUT_RECONNECT -> {
@@ -242,6 +245,11 @@ public class ResilientChatModelExecutor implements ChatModel {
 
     /**
      * 执行凭据轮换。未注入池或池中无备选时，跳过（下一轮指令退化为 fallback）。
+     *
+     * <p>注意：{@code createChatModel} 重建 {@code currentChatModel} 时不会释放上一个实例
+     * （资源释放不在本类职责内）。同时，凭据轮换仅在注入 {@link CredentialPool}
+     * 且其已 seed 后才生效，未满足前该分支处于 dormant 状态——此作为后续跟进项追踪。
+     * 本方法不做资源管理重构。</p>
      */
     private void tryRotateCredential(ClassifiedError classified) {
         if (credentialPool == null) {

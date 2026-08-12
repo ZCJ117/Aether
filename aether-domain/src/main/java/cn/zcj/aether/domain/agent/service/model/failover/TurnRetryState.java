@@ -106,6 +106,14 @@ public class TurnRetryState {
         attemptCount.merge(branch, 1, Integer::sum);
     }
 
+    /**
+     * 将某分支直接标记为已尝试 N 次（用于把账本与实际外部状态同步，
+     * 如 fallback 链已耗尽但未逐次 markAttempted 的场景）。
+     */
+    public void markExhausted(RecoveryBranch branch, int count) {
+        attemptCount.put(branch, count);
+    }
+
     /** 查询某分支已尝试次数 */
     public int count(RecoveryBranch branch) {
         return attemptCount.getOrDefault(branch, 0);
