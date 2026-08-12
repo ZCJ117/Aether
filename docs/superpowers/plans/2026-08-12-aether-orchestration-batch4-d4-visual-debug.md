@@ -593,9 +593,23 @@ Expected: FAIL（编译错误：5-arg 构造函数不存在；mock 校验不通�
         }
 ```
 
-- [ ] **Step 5: 在 runAgent 事件循环 append + 终态 close**
+- [ ] **Step 5: 在 runAgent 事件循环 append + 终态 close + subagentId MDC**
 
-在 `runAgent` 的 `blockingForEach` lambda 内，现有两个 `if` 块中分别加 append：
+① `runAgent` 顶部加 `subagentId` MDC（try/finally remove，worker 线程内设置——不在 launch 线程）：
+
+```java
+    private ResultRefiner.SubAgentResult runAgent(SubagentRuntime rt) {
+        MDC.put("subagentId", rt.id());
+        try {
+            ...（现有方法体不变，仅把 catch 块末尾补 finally）
+        } finally {
+            MDC.remove("subagentId");
+        }
+    }
+```
+实现时在 `runAgent` 方法第一行加 `MDC.put("subagentId", rt.id());`，并在方法末尾加 `finally { MDC.remove("subagentId"); }`（现有结构是 `try { } catch (Exception e) { }`，直接追加 finally 块）。顶部 import 增加 `import org.slf4j.MDC;`。
+
+② 在 `blockingForEach` lambda 内，现有两个 `if` 块中分别加 append：
 
 ```java
                         if (event.getType() == RuntimeEvent.EventType.textDelta && event.getText() != null) {
@@ -1051,17 +1065,18 @@ import org.slf4j.MDC;
 
 - [ ] **Step 4: execute() 注入 begin/end + MDC**
 
-将 `execute` 的 Flowable.create lambda 开头与异常分支修改如下（在 `try {` 之后第一行插入，并把 `catch` 块补充 recorder 收尾 + 末尾加 `finally` 清理 MDC）：
+将 `execute` 的 Flowable.create lambda 整体替换如下。**注意：`graphExecutionId`/`prevGraphId`/`prevSessionId` 必须声明在 lambda 开头（`try` 之外）——try 块内声明的变量在 catch/finally 中不可见（Java 作用域）。** 末尾 `finally` 用 `graphExecutionId != null` 判断清理（因为我们只在 recorder 非空时才写入 MDC）：
 
 ```java
+        return Flowable.create(emitter -> {
+            String graphExecutionId = null;
+            String prevGraphId = MDC.get("graphExecutionId");
+            String prevSessionId = MDC.get("sessionId");
             try {
                 ExecutionState state = new ExecutionState();
                 List<AgentEdge> edges = graph.getEdges();
                 Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
 
-                String graphExecutionId = null;
-                String prevGraphId = MDC.get("graphExecutionId");
-                String prevSessionId = MDC.get("sessionId");
                 if (graphExecutionRecorder != null) {
                     graphExecutionId = graphExecutionRecorder.beginExecution(sessionId);
                     MDC.put("graphExecutionId", graphExecutionId);
@@ -1103,6 +1118,9 @@ import org.slf4j.MDC;
                 emitter.onComplete();
             } catch (Exception e) {
                 log.error("GraphExecutor error", e);
+                if (graphExecutionRecorder != null && graphExecutionId != null) {
+                    graphExecutionRecorder.endExecution(graphExecutionId, e);
+                }
                 if (!emitter.isCancelled()) {
                     emitter.onNext(RuntimeEvent.error(e.getMessage()));
                     // D3: ON_GRAPH_FINALIZE（异常分支）
@@ -1110,8 +1128,7 @@ import org.slf4j.MDC;
                     emitter.onComplete();
                 }
             } finally {
-                String gid = MDC.get("graphExecutionId");
-                if (gid != null) {
+                if (graphExecutionId != null) {
                     if (prevGraphId != null) {
                         MDC.put("graphExecutionId", prevGraphId);
                     } else {
