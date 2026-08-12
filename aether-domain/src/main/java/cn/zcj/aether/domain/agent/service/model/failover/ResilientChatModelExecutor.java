@@ -13,8 +13,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Optional;
 
 /**
  * 容错 ChatModel 装饰器 — 实现 {@link ChatModel} 接口，透明包装底层模型调用。
@@ -36,16 +35,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ResilientChatModelExecutor implements ChatModel {
 
     // ── 退避配置（对齐 hermes retry_utils.py: base=2s, max=30s, jitter_ratio=0.5）──
-    private static final double BASE_DELAY_SEC = 2.0;
-    private static final double MAX_DELAY_SEC = 30.0;
-    private static final double JITTER_RATIO = 0.5;
     private static final int DEFAULT_MAX_ATTEMPTS = 3;
-    private static final int MAX_COMPRESSION_ATTEMPTS = 2;
     static final long FALLBACK_COOLDOWN_SEC = 60;
     private static final long EXHAUSTED_COOLDOWN_SEC = 30;
-
-    // ── 线程安全计数器（对齐 hermes retry_utils.py _jitter_counter）──
-    private static final AtomicInteger jitterCounter = new AtomicInteger(0);
 
     // ── 依赖 ──
     private final ModelProviderRegistry providerRegistry;
@@ -101,6 +93,29 @@ public class ResilientChatModelExecutor implements ChatModel {
         this.compressCallback = callback;
     }
 
+    // ── 凭据轮换池（可选，未注入则不轮换）──
+    /** 凭据轮换池（对齐 hermes recover_with_credential_pool） */
+    private CredentialPool credentialPool;
+
+    /**
+     * 注入凭据轮换池。未注入时 AUTH_TRANSIENT/BILLING 走 fallback 而非轮换。
+     */
+    public void setCredentialPool(CredentialPool pool) {
+        this.credentialPool = pool;
+    }
+
+    // ── 退避等待器（默认真实 sleep；测试可替换为 no-op 以跳过退避等待）──
+    /** 退避等待器：输入退避秒数并阻塞等待。默认真实 sleep，测试可替换。 */
+    private java.util.function.Consumer<Double> backoffWaiter =
+            sec -> sleepMs((long) (sec * 1000));
+
+    /**
+     * 替换退避等待器（仅测试用，避免真实 sleep 拖慢用例）。
+     */
+    void setBackoffWaiter(java.util.function.Consumer<Double> waiter) {
+        this.backoffWaiter = waiter;
+    }
+
     /**
      * 设置 Agent 状态引用（供 call/stream 时读取 fallback 冷却信息）。
      */
@@ -120,8 +135,8 @@ public class ResilientChatModelExecutor implements ChatModel {
     public ChatResponse call(Prompt prompt) {
         int maxAttempts = currentModelConfig.getMaxAttempts() != null
                 ? currentModelConfig.getMaxAttempts() : DEFAULT_MAX_ATTEMPTS;
-        int retryCount = 0;
-        int compressionAttempts = 0;
+        // 每次调用 = 一个 turn，持有一个恢复分支账本
+        TurnRetryState turnRetry = new TurnRetryState(maxAttempts, fallbackChain.size());
 
         while (true) {
             try {
@@ -137,64 +152,39 @@ public class ResilientChatModelExecutor implements ChatModel {
             } catch (Exception e) {
                 ClassifiedError classified = classifyError(e);
 
-                log.warn("模型调用失败 [attempt={}/{}] provider={} model={} reason={} status={}",
-                        retryCount + 1, maxAttempts,
+                log.warn("模型调用失败 provider={} model={} reason={} status={}",
                         currentProvider.providerName(), currentModelConfig.getModelId(),
                         classified.reason(), classified.statusCode());
 
-                // ── 上下文溢出 → 压缩 ──
-                if (classified.shouldCompress() && compressCallback != null
-                        && compressionAttempts < MAX_COMPRESSION_ATTEMPTS) {
-                    compressionAttempts++;
-                    log.info("触发上下文压缩 (attempt {}/{}) — reason={}",
-                            compressionAttempts, MAX_COMPRESSION_ATTEMPTS, classified.reason());
-                    try {
-                        if (compressCallback.compress(agentState, classified.reason())) {
-                            log.info("上下文压缩完成，重试模型调用");
-                            continue;
-                        }
-                    } catch (Exception ce) {
-                        log.warn("上下文压缩失败: {}", ce.getMessage());
+                RecoveryDirective d = turnRetry.nextDirective(classified);
+                log.info("恢复指令: branch={} reason={}", d.branch(), d.reason());
+
+                switch (d.branch()) {
+                    case JITTERED_BACKOFF, ADAPTIVE_RATE_LIMIT_BACKOFF -> {
+                        turnRetry.markAttempted(d.branch());
+                        backoffWaiter.accept(d.backoffSec());
                     }
+                    case CONTEXT_COMPRESSION -> {
+                        turnRetry.markAttempted(RecoveryBranch.CONTEXT_COMPRESSION);
+                        tryCompress(classified);
+                    }
+                    case CREDENTIAL_ROTATION -> {
+                        turnRetry.markAttempted(RecoveryBranch.CREDENTIAL_ROTATION);
+                        tryRotateCredential(classified);
+                    }
+                    case PROVIDER_FALLBACK -> {
+                        turnRetry.markAttempted(RecoveryBranch.PROVIDER_FALLBACK);
+                        if (tryActivateFallback(classified.reason())) {
+                            turnRetry.reset(); // fallback 切换成功，重置本轮账本
+                        }
+                    }
+                    case TIMEOUT_RECONNECT -> {
+                        turnRetry.markAttempted(RecoveryBranch.TIMEOUT_RECONNECT);
+                        backoffWaiter.accept(1.0); // 固定 1s 重建连接等待
+                    }
+                    case TERMINATE -> throw new ResilientCallException(
+                            "所有恢复策略耗尽: " + classified.reason(), classified, e);
                 }
-
-                // ── 不可恢复 → 立即上抛 ──
-                if (classified.reason() == FailoverReason.AUTH_PERMANENT
-                        || classified.reason() == FailoverReason.CONTENT_POLICY_BLOCKED) {
-                    log.error("不可恢复的错误，终止请求: reason={}", classified.reason());
-                    throw new ResilientCallException(
-                            "不可恢复的模型调用错误: " + classified.reason(), classified, e);
-                }
-
-                // ── 可重试 → 抖动退避 ──
-                if (classified.retryable() && retryCount < maxAttempts) {
-                    retryCount++;
-                    double waitSec = jitteredBackoff(retryCount);
-                    log.info("退避重试 — 等待 {:.1f}s (attempt {}/{})",
-                            waitSec, retryCount, maxAttempts);
-                    sleepMs((long) (waitSec * 1000));
-                    continue;
-                }
-
-                // ── 重试耗尽 → fallback ──
-                boolean shouldTryFallback = classified.shouldFallback()
-                        || retryCount >= maxAttempts
-                        || !classified.retryable();
-
-                if (shouldTryFallback && tryActivateFallback(classified.reason())) {
-                    retryCount = 0;
-                    compressionAttempts = 0;
-                    log.info("Fallback 模型已激活: provider={} model={}",
-                            currentProvider.providerName(), currentModelConfig.getModelId());
-                    continue;
-                }
-
-                // ── 所有策略耗尽 → 上抛 ──
-                log.error("所有容错策略耗尽: provider={} model={} reason={} retries={}",
-                        currentProvider.providerName(), currentModelConfig.getModelId(),
-                        classified.reason(), retryCount);
-                throw new ResilientCallException(
-                        "模型调用最终失败: " + classified.reason(), classified, e);
             }
         }
     }
@@ -231,22 +221,48 @@ public class ResilientChatModelExecutor implements ChatModel {
                 currentProvider.providerName(), currentModelConfig.getModelId());
     }
 
-    // ── 退避计算 ──
+    // ── 恢复动作执行 ──
 
-    static double jitteredBackoff(int attempt) {
-        int tick = jitterCounter.incrementAndGet();
-        int exponent = Math.max(0, attempt - 1);
-
-        double delay;
-        if (exponent >= 63 || BASE_DELAY_SEC <= 0) {
-            delay = MAX_DELAY_SEC;
-        } else {
-            delay = Math.min(BASE_DELAY_SEC * Math.pow(2, exponent), MAX_DELAY_SEC);
+    /**
+     * 执行上下文压缩。失败仅记录，不阻断（下一轮指令会退化到 fallback/终止）。
+     */
+    private void tryCompress(ClassifiedError classified) {
+        if (compressCallback == null) {
+            log.debug("无压缩回调，跳过压缩");
+            return;
         }
+        try {
+            if (compressCallback.compress(agentState, classified.reason())) {
+                log.info("上下文压缩完成，重试模型调用");
+            }
+        } catch (Exception ce) {
+            log.warn("上下文压缩失败: {}", ce.getMessage());
+        }
+    }
 
-        // 简化实现：在 [0, jitterRatio * delay] 范围内均匀随机
-        double jitter = ThreadLocalRandom.current().nextDouble(0, JITTER_RATIO * delay);
-        return delay + jitter;
+    /**
+     * 执行凭据轮换。未注入池或池中无备选时，跳过（下一轮指令退化为 fallback）。
+     */
+    private void tryRotateCredential(ClassifiedError classified) {
+        if (credentialPool == null) {
+            log.debug("未注入凭据池，跳过轮换");
+            return;
+        }
+        try {
+            Optional<ModelConfig> rotated =
+                    credentialPool.rotate(currentModelConfig, currentProvider.providerName());
+            if (rotated.isEmpty()) {
+                log.warn("凭据池无可用备选，跳过轮换");
+                return;
+            }
+            this.currentChatModel = currentProvider.createChatModel(rotated.get());
+            this.currentModelConfig = rotated.get();
+            setStateAttr("resilient:credentialRotated", Boolean.TRUE);
+            log.info("凭据已轮换: provider={} model={}",
+                    currentProvider.providerName(), currentModelConfig.getModelId());
+        } catch (Exception e) {
+            log.warn("凭据轮换失败: {}", e.getMessage());
+        }
     }
 
     private static void sleepMs(long ms) {
