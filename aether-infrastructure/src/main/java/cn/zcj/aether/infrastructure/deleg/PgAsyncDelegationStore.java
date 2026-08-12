@@ -51,7 +51,7 @@ public class PgAsyncDelegationStore implements AsyncDelegationStore {
 
     private static final String MARK_TERMINAL_SQL = """
         UPDATE t_async_delegation
-        SET state = ?, result_summary = ?, updated_at = ?, last_heartbeat_at = ?
+        SET state = ?, result_summary = ?, updated_at = ?
         WHERE id = ?
         """;
 
@@ -124,10 +124,9 @@ public class PgAsyncDelegationStore implements AsyncDelegationStore {
 
     @Override
     public void markTerminal(String id, SubagentState terminal, String resultSummary) {
-        Instant now = Instant.now();
         jdbcTemplate.update(MARK_TERMINAL_SQL,
                 terminal != null ? terminal.name() : "FAILED",
-                resultSummary, toTs(now), toTs(now), id);
+                resultSummary, toTs(Instant.now()), id);
     }
 
     @Override
@@ -154,6 +153,19 @@ public class PgAsyncDelegationStore implements AsyncDelegationStore {
         return instant == null ? null : Timestamp.from(instant);
     }
 
+    /** 宽松映射：未知 state 返回 null（防止恢复扫描被异常击垮）。 */
+    private static SubagentState safeState(String s) {
+        if (s == null || s.isBlank()) {
+            return null;
+        }
+        try {
+            return SubagentState.valueOf(s);
+        } catch (IllegalArgumentException e) {
+            log.warn("PgAsyncDelegationStore: 未知 state '{}'，映射为 null", s);
+            return null;
+        }
+    }
+
     /** 测试暴露 RowMapper。 */
     RowMapper<DelegationRecord> rowMapperForTest() {
         return DelegationRowMapper.INSTANCE;
@@ -173,8 +185,7 @@ public class PgAsyncDelegationStore implements AsyncDelegationStore {
                     .toolNames(toolNames == null || toolNames.isBlank()
                             ? List.of()
                             : Arrays.asList(toolNames.split(",")))
-                    .state(rs.getString("state") != null
-                            ? SubagentState.valueOf(rs.getString("state")) : null)
+                    .state(safeState(rs.getString("state")))
                     .attemptCount(rs.getInt("attempt_count"))
                     .resultSummary(rs.getString("result_summary"))
                     .createdAt(rs.getTimestamp("created_at") != null

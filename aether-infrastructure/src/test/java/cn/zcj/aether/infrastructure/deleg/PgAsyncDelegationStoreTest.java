@@ -3,6 +3,7 @@ package cn.zcj.aether.infrastructure.deleg;
 import cn.zcj.aether.domain.agent.service.subagent.DelegationRecord;
 import cn.zcj.aether.domain.agent.service.subagent.SubagentState;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
@@ -43,7 +44,7 @@ class PgAsyncDelegationStoreTest {
     @Test
     void markTerminalUpdatesStateAndSummary() {
         store.markTerminal("ad-1", SubagentState.COMPLETED, "[结论]");
-        verify(jdbc).update(anyString(), eq("COMPLETED"), eq("[结论]"), any(Timestamp.class), any(Timestamp.class), eq("ad-1"));
+        verify(jdbc).update(anyString(), eq("COMPLETED"), eq("[结论]"), any(Timestamp.class), eq("ad-1"));
     }
 
     @Test
@@ -83,6 +84,29 @@ class PgAsyncDelegationStoreTest {
         assertTrue(store.findPendingStale(Instant.now().minusSeconds(60), 50).isEmpty());
         when(jdbc.query(anyString(), any(RowMapper.class), eq(100))).thenReturn(List.of());
         assertTrue(store.findUndeliveredTerminal(100).isEmpty());
+    }
+
+    @Test
+    void findPendingStaleSqlPinsActiveStatesAndStaleFilter() {
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Timestamp.class), eq(50)))
+                .thenReturn(List.of());
+        store.findPendingStale(Instant.now().minusSeconds(60), 50);
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(sqlCaptor.capture(), any(RowMapper.class), any(Timestamp.class), eq(50));
+        String sql = sqlCaptor.getValue();
+        assertTrue(sql.contains("'QUEUED','PENDING','RUNNING'"));
+        assertTrue(sql.contains("updated_at < ?"));
+    }
+
+    @Test
+    void findUndeliveredSqlPinsTerminalExclusionAndDeliveryFlag() {
+        when(jdbc.query(anyString(), any(RowMapper.class), eq(100))).thenReturn(List.of());
+        store.findUndeliveredTerminal(100);
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(sqlCaptor.capture(), any(RowMapper.class), eq(100));
+        String sql = sqlCaptor.getValue();
+        assertTrue(sql.contains("NOT IN ('QUEUED','PENDING','RUNNING')"));
+        assertTrue(sql.contains("completion_delivered = FALSE"));
     }
 
     @Test
