@@ -143,4 +143,28 @@ class AsyncDelegationServiceTest {
         assertEquals(1, service.listBySession("s1").size());
         verify(store).listBySession("s1");
     }
+
+    @Test
+    void recoverAbandonedReleasesLeaseWhenStoreThrows() {
+        DelegationRecord stale = DelegationRecord.builder()
+                .id("ad-7").parentSessionId("s1").parentAgentId("a1").taskPayload("task")
+                .toolNames(List.of()).state(SubagentState.RUNNING).attemptCount(1).build();
+        when(store.findPendingStale(any(), eq(100))).thenReturn(List.of(stale));
+        when(leaseManager.acquireLease("s1")).thenReturn(true);
+        doThrow(new RuntimeException("db down")).when(store).markQueuedForRetry("ad-7", 2);
+
+        int recovered = service.recoverAbandoned();
+
+        assertEquals(0, recovered);
+        verify(leaseManager).releaseLease("s1");
+        verify(store).markTerminal("ad-7", SubagentState.FAILED, "[恢复重入队失败: db down]");
+    }
+
+    @Test
+    void dispatchReleasesLeaseAndSkipsMarkTerminalWhenSaveThrows() {
+        doThrow(new RuntimeException("db down")).when(store).save(any());
+        assertNull(service.dispatch(task()));
+        verify(leaseManager).releaseLease("s1");
+        verify(store, never()).markTerminal(any(), any(), any());
+    }
 }

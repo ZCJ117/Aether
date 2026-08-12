@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 完成时 markTerminal + 推 completion 到 CompletionBus + markCompletionDelivered。
  * 启动恢复：restoreUndelivered 回灌终态未投递 completion；recoverAbandoned 重入队 stale
  * （attemptCount++，上限 8，对齐 hermes _MAX_DELIVERY_ATTEMPTS=8）。
+ * recoverAbandoned 为启动一次性（one-shot）：容量跳过或落库失败的记录在下次重启时重新扫描恢复。
  * store 为 null 时内存降级（aether.delegation.persistence=false）。不持有线程池：
  * 子Agent执行由 SubagentLifecycleService 内部固定池承担。</p>
  */
@@ -66,6 +67,7 @@ public class AsyncDelegationService {
             return null;
         }
         String id = "ad-" + UUID.randomUUID().toString().substring(0, 8);
+        boolean saved = false;
         try {
             DelegationRecord rec = DelegationRecord.builder()
                     .id(id)
@@ -80,12 +82,13 @@ public class AsyncDelegationService {
                     .build();
             if (store != null) {
                 store.save(rec);
+                saved = true;
             }
             runDelegation(id, task);
             return id;
         } catch (Exception e) {
             leaseManager.releaseLease(task.parentSessionId());
-            if (store != null) {
+            if (saved && store != null) {
                 store.markTerminal(id, SubagentState.FAILED, "[启动失败: " + e.getMessage() + "]");
             }
             log.error("AsyncDelegationService: dispatch 启动失败 id={}", id, e);
@@ -150,14 +153,22 @@ public class AsyncDelegationService {
                 continue;
             }
             if (!leaseManager.acquireLease(rec.getParentSessionId())) {
-                continue; // 容量不足，留给后续恢复
+                continue; // 容量不足，跳过（recoverAbandoned 为 one-shot：下次重启再恢复）
             }
-            store.markQueuedForRetry(rec.getId(), rec.getAttemptCount() + 1);
-            DelegationTask task = new DelegationTask(
-                    rec.getTaskPayload(), rec.getToolNames(), null,
-                    "system", rec.getParentSessionId(), rec.getParentAgentId());
-            runDelegation(rec.getId(), task);
-            recovered++;
+            try {
+                store.markQueuedForRetry(rec.getId(), rec.getAttemptCount() + 1);
+                DelegationTask task = new DelegationTask(
+                        rec.getTaskPayload(), rec.getToolNames(), null,
+                        "system", rec.getParentSessionId(), rec.getParentAgentId());
+                runDelegation(rec.getId(), task);
+                recovered++;
+            } catch (Exception e) {
+                // markQueuedForRetry 落库失败 → 释放租约防泄漏（releaseLease 幂等，双释放无害）
+                leaseManager.releaseLease(rec.getParentSessionId());
+                store.markTerminal(rec.getId(), SubagentState.FAILED,
+                        "[恢复重入队失败: " + e.getMessage() + "]");
+                log.error("AsyncDelegationService: recover 重入队失败 id={}", rec.getId(), e);
+            }
         }
         log.info("AsyncDelegationService: recoverAbandoned 恢复 {} 条", recovered);
         return recovered;
