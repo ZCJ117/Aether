@@ -68,6 +68,16 @@ public class GraphExecutor {
 
     private final ExecutorService parallelPool = Executors.newCachedThreadPool();
 
+    /**
+     * 触发图生命周期钩子（空安全）。GraphExecutor 由 Spring 装配时 hookRegistry 非空；
+     * 此处防御非 Spring 直接构造的测试/未来 D4 场景（对齐 interventionHandler 的可空模式）。
+     */
+    private void notifyGraphHook(HookPoint point, HookContext ctx) {
+        if (hookRegistry != null) {
+            hookRegistry.invokeAll(point, ctx);
+        }
+    }
+
     // ========== 主入口 ==========
 
     public Flowable<RuntimeEvent> execute(
@@ -88,8 +98,7 @@ public class GraphExecutor {
                         executeSingle(entry, userId, sessionId,
                                 initialMessage, state, emitter, "entry");
                     }
-                    // D3: ON_GRAPH_FINALIZE
-                    hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
+                    notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
                     emitter.onComplete();
                     return;
                 }
@@ -114,14 +123,14 @@ public class GraphExecutor {
                 }
 
                 // D3: ON_GRAPH_FINALIZE
-                hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
+                notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
                 emitter.onComplete();
             } catch (Exception e) {
                 log.error("GraphExecutor error", e);
                 if (!emitter.isCancelled()) {
                     emitter.onNext(RuntimeEvent.error(e.getMessage()));
                     // D3: ON_GRAPH_FINALIZE（异常分支）
-                    hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
+                    notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
                     emitter.onComplete();
                 }
             }
@@ -232,7 +241,7 @@ public class GraphExecutor {
                             sessionId + "-" + agentName, null, null, "", null, null);
 
                     // D3: ON_GRAPH_NODE_START（PARALLEL 线程）
-                    hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
+                    notifyGraphHook(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
                             .agentId(agentName).sessionId(sessionId).graphNodeId(resolved.getOutputKey()).build());
 
                     List<RuntimeEvent> agentEvents = new ArrayList<>();
@@ -253,7 +262,7 @@ public class GraphExecutor {
                     localState.markComplete(def.getOutputKey(), localState.getText(def.getOutputKey()));
                     subStates.add(localState);
                     // D3: ON_GRAPH_NODE_END（PARALLEL 线程）
-                    hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
+                    notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
                             .agentId(agentName).sessionId(sessionId).graphNodeId(resolved.getOutputKey())
                             .response(localState.getText(def.getOutputKey())).build());
                     log.info("并行Agent完成: {} events={}", agentName, agentEvents.size());
@@ -583,6 +592,8 @@ public class GraphExecutor {
         }
         if (entryNodes.isEmpty()) {
             emitter.onNext(RuntimeEvent.error("GraphFlow DAG 没有入口节点（可能存在循环依赖）"));
+            // D3: ON_GRAPH_FINALIZE（循环依赖/无入口的错误完成路径）
+            notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
             emitter.onComplete();
             return;
         }
@@ -647,7 +658,7 @@ public class GraphExecutor {
                             sessionId + "-" + name, null, null, input, null, null);
 
                         // D3: ON_GRAPH_NODE_START（GRAPHFLOW 线程）
-                        hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
+                        notifyGraphHook(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
                                 .agentId(name).sessionId(sessionId).graphNodeId(def.getOutputKey()).build());
 
                         agent.execute(ctx)
@@ -666,7 +677,7 @@ public class GraphExecutor {
                         flowState.setStatus(GraphFlowState.NodeStatus.COMPLETED);
 
                         // D3: ON_GRAPH_NODE_END（GRAPHFLOW 线程）
-                        hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
+                        notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
                                 .agentId(name).sessionId(sessionId).graphNodeId(def.getOutputKey())
                                 .response(output).build());
 
@@ -730,7 +741,7 @@ public class GraphExecutor {
 
         emitter.onNext(RuntimeEvent.done());
         // D3: ON_GRAPH_FINALIZE
-        hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
+        notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
         emitter.onComplete();
     }
 
@@ -849,7 +860,7 @@ public class GraphExecutor {
 
         String nodeId = agentName != null ? agentName : def.getName();
         // D3: ON_GRAPH_NODE_START
-        hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
+        notifyGraphHook(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
                 .agentId(nodeId).sessionId(sessionId).graphNodeId(def.getOutputKey()).request(input).build());
 
         // 收集输出用于 onResponse 回调
@@ -866,7 +877,7 @@ public class GraphExecutor {
                 });
 
         // D3: ON_GRAPH_NODE_END
-        hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
+        notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
                 .agentId(nodeId).sessionId(sessionId).graphNodeId(def.getOutputKey())
                 .response(collectedOutput.toString()).build());
 
