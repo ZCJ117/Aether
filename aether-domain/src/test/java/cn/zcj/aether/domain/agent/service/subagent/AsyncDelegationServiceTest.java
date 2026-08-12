@@ -169,6 +169,17 @@ class AsyncDelegationServiceTest {
     }
 
     @Test
+    void dispatchReturnsNullWhenLaunchThrowsSynchronously() {
+        when(lifecycle.launch(any(), any())).thenThrow(new RuntimeException("boom"));
+        when(lifecycle.status(any())).thenReturn(java.util.Optional.of(SubagentState.FAILED));
+
+        assertNull(service.dispatch(task()));
+
+        verify(leaseManager).releaseLease("s1");
+        verify(store).markTerminal(argThat(id -> id.startsWith("ad-")), eq(SubagentState.FAILED), any());
+    }
+
+    @Test
     void memoryDegradationWhenStoreAbsent() {
         AsyncDelegationService memoryService = new AsyncDelegationService(
                 lifecycle, completionBus, leaseManager, spawnGate, (AsyncDelegationStore) null);

@@ -4,7 +4,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
@@ -19,12 +18,10 @@ import java.util.function.Consumer;
 @Component
 public class CompletionBus {
 
-    private final ConcurrentLinkedQueue<DelegationCompletion> queue = new ConcurrentLinkedQueue<>();
     private final List<Consumer<DelegationCompletion>> subscribers = new CopyOnWriteArrayList<>();
 
-    /** 发布 completion：入队 + 通知当前订阅者（订阅者异常隔离，不阻断）。 */
+    /** 发布 completion：通知当前订阅者（订阅者异常隔离，不阻断）。 */
     public void publish(DelegationCompletion completion) {
-        queue.offer(completion);
         for (Consumer<DelegationCompletion> sub : subscribers) {
             try {
                 sub.accept(completion);
@@ -57,10 +54,5 @@ public class CompletionBus {
             replayed++;
         }
         return replayed;
-    }
-
-    /** 未消费 completion 数（含已通知订阅者的，仅作统计）。 */
-    public int pendingCount() {
-        return queue.size();
     }
 }

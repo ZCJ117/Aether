@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class AsyncDelegationService {
 
-    /** 对齐 hermes async_delegation.py _MAX_DELIVERY_ATTEMPTS=8（L85）。 */
+    /** 重执行上限：Aether 借用 hermes _MAX_DELIVERY_ATTEMPTS=8（投递预算）作为启动恢复重入队上限。 */
     static final int MAX_ATTEMPTS = 8;
     static final Duration STALE_TIMEOUT = Duration.ofMinutes(30);
 
@@ -101,7 +101,9 @@ public class AsyncDelegationService {
                 store.save(rec);
                 saved = true;
             }
-            runDelegation(id, task);
+            if (!runDelegation(id, task)) {
+                return null; // 同步启动失败：finalizeDelegation 已 markTerminal+publish+releaseLease
+            }
             return id;
         } catch (Exception e) {
             leaseManager.releaseLease(task.parentSessionId());
@@ -113,13 +115,15 @@ public class AsyncDelegationService {
         }
     }
 
-    private void runDelegation(String id, DelegationTask task) {
+    private boolean runDelegation(String id, DelegationTask task) {
         try {
             CompletableFuture<ResultRefiner.SubAgentResult> future = lifecycle.launch(id, task);
             future.whenComplete((result, err) -> finalizeDelegation(id, task, err));
+            return true;
         } catch (Exception e) {
             log.error("AsyncDelegationService: 启动委派执行失败 id={}", id, e);
             finalizeDelegation(id, task, e);
+            return false;
         }
     }
 
@@ -150,7 +154,9 @@ public class AsyncDelegationService {
 
     /**
      * 启动恢复 abandoned：扫描非终态 stale 记录 → 重入队（attemptCount++，幂等仅一次）。
-     * 超出 MAX_ATTEMPTS 则置 FAILED（对齐 hermes delivery_attempts>=8 → dropped 终态，L426）。
+     * 超出 MAX_ATTEMPTS 则置 FAILED。
+     * 注：hermes recover_abandoned_delegations 将 stale 标记为 terminal-unknown 且不重跑（防多进程
+     * 存活 owner 双执行）；Aether 为单进程且恢复仅启动一次性（前一 JVM 已死），重入队 at-most-once 成立。
      * @return 重入队条数
      */
     public int recoverAbandoned() {

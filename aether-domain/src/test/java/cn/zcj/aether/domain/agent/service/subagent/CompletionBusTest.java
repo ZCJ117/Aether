@@ -21,7 +21,6 @@ class CompletionBusTest {
         bus.subscribe(received::set);
         bus.publish(COMPLETION);
         assertEquals("ad-1", received.get().delegationId());
-        assertEquals(1, bus.pendingCount());
     }
 
     @Test
