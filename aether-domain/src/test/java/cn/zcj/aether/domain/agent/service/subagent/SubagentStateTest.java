@@ -34,11 +34,12 @@ class SubagentStateTest {
     }
 
     @Test
-    void delegationRecordBuilderDefaultsStateToQueued() {
+    void delegationRecordBuilderLeavesStateNullByDefault() {
         DelegationRecord rec = DelegationRecord.builder()
                 .id("ad-1").parentSessionId("s1").taskPayload("t").build();
         assertEquals("ad-1", rec.getId());
         assertEquals("s1", rec.getParentSessionId());
+        assertNull(rec.getState(), "builder 不默认 state，须显式设置");
         assertFalse(rec.isCompletionDelivered(), "completionDelivered 默认 false");
     }
 }
