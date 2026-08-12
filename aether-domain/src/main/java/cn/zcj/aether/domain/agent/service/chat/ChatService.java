@@ -13,6 +13,9 @@ import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointData;
 import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentState;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookContext;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookPoint;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.core.CancelToken;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
@@ -73,6 +76,12 @@ public class ChatService implements IChatService {
      */
     @Resource
     private DefaultAgentFactory agentFactory;
+
+    /**
+     * D3 新增：会话生命周期钩子（对齐 hermes on_session_start / on_session_end）。
+     */
+    @Resource
+    private HookRegistry hookRegistry;
 
     /**
      * P0-4 新增：会话持久化仓储（用于会话恢复）。
@@ -140,6 +149,10 @@ public class ChatService implements IChatService {
                     });
         }
 
+        // D3: ON_SESSION_START（对齐 hermes on_session_start）
+        hookRegistry.invokeAll(HookPoint.ON_SESSION_START, HookContext.builder()
+                .agentId(agentId).sessionId(sessionId).build());
+
         return sessionId;
     }
 
@@ -196,6 +209,10 @@ public class ChatService implements IChatService {
         if (memoryLifecycleHooks != null) {
             memoryLifecycleHooks.onSessionEnd(sessionId, turnCount);
         }
+
+        // D3: ON_SESSION_END（对齐 hermes on_session_end）
+        hookRegistry.invokeAll(HookPoint.ON_SESSION_END, HookContext.builder()
+                .sessionId(sessionId).build());
 
         sessionRepository.deleteBySessionId(sessionId);
         log.info("会话已删除: sessionId={}", sessionId);

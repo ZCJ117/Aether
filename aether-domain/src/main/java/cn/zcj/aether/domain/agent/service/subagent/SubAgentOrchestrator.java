@@ -4,6 +4,9 @@ import cn.zcj.aether.domain.agent.service.agent.DefaultAgentFactory;
 import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookContext;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookPoint;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.context.TokenBudget;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
@@ -32,6 +35,15 @@ public class SubAgentOrchestrator {
 
     @Resource
     private ToolRegistry toolRegistry;
+
+    // ── D3 子代理生命周期钩子（对齐 hermes subagent_start / subagent_stop）──
+    @Resource
+    private HookRegistry hookRegistry;
+
+    /** 测试注入点：绕过 Spring 上下文直接设置 HookRegistry */
+    void setHookRegistryForTest(HookRegistry registry) {
+        this.hookRegistry = registry;
+    }
 
     public SubAgentOrchestrator(DefaultAgentFactory agentFactory,
             SubAgentBoundary boundary, ResultRefiner refiner) {
@@ -62,11 +74,13 @@ public class SubAgentOrchestrator {
             Thread.currentThread().interrupt();
             return new ResultRefiner.SubAgentResult("失败", "[子任务被中断]", Map.of());
         }
+        AgentConfig config = null;
+        ResultRefiner.SubAgentResult result = null;
         try {
             // M3: 生成任务ID（基于任务哈希的前8位作为命名空间标识）
             String taskId = "t" + Integer.toHexString(Math.abs(task.hashCode())).substring(0, 6);
 
-            AgentConfig config = boundary.createIsolatedConfig(parentSessionId,
+            config = boundary.createIsolatedConfig(parentSessionId,
                     task, toolNames, modelRef, taskId, null);
             Agent subAgent = agentFactory.create(config);
 
@@ -76,13 +90,19 @@ public class SubAgentOrchestrator {
             subMetadata.put("subAgentContext", Boolean.TRUE);
             subMetadata.put("taskId", taskId);
 
+            // D3: SUBAGENT_START（对齐 hermes subagent_start）
+            hookRegistry.invokeAll(HookPoint.SUBAGENT_START, HookContext.builder()
+                    .agentId(config.getName()).sessionId(parentSessionId).request(task).build());
+
             RuntimeContext ctx = new RuntimeContext(userId, config.getName(),
                     null, null, task, subMetadata, null);
             List<TurnMessage> collected = new ArrayList<>();
             long start = System.currentTimeMillis();
+            // 局部最终引用：供 lambda 捕获（config 字段为可变，用于 finally 访问）
+            final AgentConfig execConfig = config;
             subAgent.execute(ctx)
                     .takeUntil((io.reactivex.rxjava3.functions.Predicate<RuntimeEvent>) event ->
-                            config.getCancelToken().isCancelled())
+                            execConfig.getCancelToken().isCancelled())
                     .blockingForEach(event -> {
                 if (event.getType() == RuntimeEvent.EventType.textDelta
                         && event.getText() != null) {
@@ -94,7 +114,7 @@ public class SubAgentOrchestrator {
                 }
             });
             long duration = System.currentTimeMillis() - start;
-            ResultRefiner.SubAgentResult result = refiner.refine(task, collected);
+            result = refiner.refine(task, collected);
             log.info("SubAgentOrchestrator: task={} status={} durationMs={}",
                     task, result.status(), duration);
             return result;
@@ -103,6 +123,13 @@ public class SubAgentOrchestrator {
             return new ResultRefiner.SubAgentResult("失败",
                     "[子任务异常: " + e.getMessage() + "]", Map.of());
         } finally {
+            // D3: SUBAGENT_STOP（对齐 hermes subagent_stop）
+            hookRegistry.invokeAll(HookPoint.SUBAGENT_STOP, HookContext.builder()
+                    .agentId(config != null ? config.getName() : "unknown")
+                    .sessionId(parentSessionId)
+                    .request(task)
+                    .response(result != null ? result.summary() : null)
+                    .build());
             semaphore.release();
         }
     }
