@@ -4,6 +4,7 @@ import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointCollector;
 import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.impl.PlanActAgent;
 import cn.zcj.aether.domain.agent.service.agent.impl.ReActAgent;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
@@ -52,6 +53,9 @@ public class DefaultAgentFactory {
     @Resource
     private TokenEstimator tokenEstimator;
 
+    @Resource
+    private HookRegistry hookRegistry;
+
     /** 工厂注册表：agentType -> AgentFactory */
     private final Map<String, AgentFactory> factoryMap = new ConcurrentHashMap<>();
 
@@ -72,6 +76,10 @@ public class DefaultAgentFactory {
                         toolExecutor, contextManager, publisher, checkpointCollector,
                         tokenBudget, pricingRegistry, curationPipeline, externalNotes);
                 injectHooks(agent);
+                // D3: 注入生命周期钩子分发器（API 请求挂点）
+                if (hookRegistry != null) {
+                    agent.setHookRegistry(hookRegistry);
+                }
                 return agent;
             }
         });

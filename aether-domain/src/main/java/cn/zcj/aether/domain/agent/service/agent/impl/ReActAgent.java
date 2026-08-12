@@ -4,6 +4,9 @@ import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointCollector;
 import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointData;
 import cn.zcj.aether.domain.agent.service.agent.core.*;
 import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookContext;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookPoint;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.middleware.AgentMiddleware;
 import cn.zcj.aether.domain.agent.service.agent.middleware.MiddlewareChain;
 import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
@@ -59,6 +62,15 @@ public class ReActAgent extends BaseAgent {
     private final cn.zcj.aether.domain.agent.service.curation.CurationPipeline curationPipeline;
     /** Phase 9: 外部笔记 */
     private final cn.zcj.aether.domain.agent.service.notes.ExternalNotes externalNotes;
+
+    // ── D3 API 请求生命周期钩子（对齐 hermes pre_api_request / post_api_request / api_request_error）──
+    /** 全局生命周期钩子分发器（由 DefaultAgentFactory 注入；未注入则跳过） */
+    private HookRegistry hookRegistry;
+
+    /** 注入全局生命周期钩子注册表（由 DefaultAgentFactory 在构造后调用） */
+    public void setHookRegistry(HookRegistry registry) {
+        this.hookRegistry = registry;
+    }
 
     private Instant startTime;
 
@@ -224,6 +236,17 @@ public class ReActAgent extends BaseAgent {
                 hook.onBeforeModelCall(this, ctx, state.getCurrentTurn());
             }
 
+            // D3: PRE_API_REQUEST（对齐 hermes pre_api_request）
+            if (hookRegistry != null) {
+                hookRegistry.invokeAll(HookPoint.PRE_API_REQUEST, HookContext.builder()
+                        .agentId(getId()).sessionId(ctx.sessionId())
+                        .turnNumber(state.getCurrentTurn())
+                        .request(enrichedInstruction != null
+                                ? enrichedInstruction.substring(0, Math.min(300, enrichedInstruction.length()))
+                                : null)
+                        .build());
+            }
+
             // P1-#2 + P1-#1: 带缓存的异步调用，失败回退同步（不带缓存）
             var modelResult = chain.applyModelCall(
                 () -> {
@@ -241,6 +264,24 @@ public class ReActAgent extends BaseAgent {
                 },
                 config.getModelRef());
             long modelDuration = System.currentTimeMillis() - modelStart;
+
+            // D3: POST_API_REQUEST / API_REQUEST_ERROR（对齐 hermes post_api_request / api_request_error）
+            // ModelInvoker 吞异常返回 error 结果 → hasError() 等价异常回调
+            if (hookRegistry != null) {
+                if (modelResult.hasError()) {
+                    hookRegistry.invokeAll(HookPoint.API_REQUEST_ERROR, HookContext.builder()
+                            .agentId(getId()).sessionId(ctx.sessionId())
+                            .turnNumber(state.getCurrentTurn())
+                            .error(modelResult.getError())
+                            .durationMs(modelDuration).build());
+                } else {
+                    hookRegistry.invokeAll(HookPoint.POST_API_REQUEST, HookContext.builder()
+                            .agentId(getId()).sessionId(ctx.sessionId())
+                            .turnNumber(state.getCurrentTurn())
+                            .response(modelResult.getFullText())
+                            .durationMs(modelDuration).build());
+                }
+            }
 
             // P1-6: Hook - after model call
             for (AgentHook hook : hooks) {
