@@ -36,7 +36,9 @@ public class SubAgentDelegationTool implements Tool {
             - 可并行的独立子问题
             - 需要隔离工具集的敏感操作
             返回结构化摘要（含状态、结论、涉及文件和工具调用统计）。
-            注意：子Agent有60秒超时限制，不适合超长任务。""";
+            注意：同步模式下子Agent有60秒超时限制，不适合超长任务。
+            可选参数 async=true 时异步委派（立即返回 delegationId+QUEUED，不等待完成；
+            异步子Agent超时由心跳/ stale 检测决定，不受同步 60 秒限制）。""";
 
     private final SubAgentOrchestrator orchestrator;
     private final SpawnGate spawnGate;                 // 可空（未接线时仅同步路径）
@@ -116,7 +118,11 @@ public class SubAgentDelegationTool implements Tool {
         }
         try {
             // D1: 异步委派模式（方案 a：平行新能力，同步路径保留）
-            if (asyncService != null && Boolean.TRUE.equals(input.get("async"))) {
+            boolean asyncRequested = Boolean.TRUE.equals(input.get("async"));
+            if (asyncRequested && asyncService == null) {
+                log.warn("SubAgentDelegationTool: 请求 async=true 但 AsyncDelegationService 未接线，回退同步阻塞路径");
+            }
+            if (asyncService != null && asyncRequested) {
                 String delegationId = asyncService.dispatch(new DelegationTask(
                         task, toolNames, modelRef, userId, parentSessionId, null));
                 if (delegationId == null) {
