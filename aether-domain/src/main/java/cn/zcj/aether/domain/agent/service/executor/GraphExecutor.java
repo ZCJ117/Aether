@@ -8,6 +8,9 @@ import cn.zcj.aether.domain.agent.service.agent.DefaultAgentFactory;
 import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookContext;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookPoint;
+import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionContext;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionHandler;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionResult;
@@ -59,6 +62,10 @@ public class GraphExecutor {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private InterventionHandler interventionHandler;
 
+    // ── D3 图生命周期钩子（Aether 特有：图节点级 + 图完成级）──
+    @Resource
+    private HookRegistry hookRegistry;
+
     private final ExecutorService parallelPool = Executors.newCachedThreadPool();
 
     // ========== 主入口 ==========
@@ -81,6 +88,8 @@ public class GraphExecutor {
                         executeSingle(entry, userId, sessionId,
                                 initialMessage, state, emitter, "entry");
                     }
+                    // D3: ON_GRAPH_FINALIZE
+                    hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
                     emitter.onComplete();
                     return;
                 }
@@ -104,11 +113,15 @@ public class GraphExecutor {
                     }
                 }
 
+                // D3: ON_GRAPH_FINALIZE
+                hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
                 emitter.onComplete();
             } catch (Exception e) {
                 log.error("GraphExecutor error", e);
                 if (!emitter.isCancelled()) {
                     emitter.onNext(RuntimeEvent.error(e.getMessage()));
+                    // D3: ON_GRAPH_FINALIZE（异常分支）
+                    hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
                     emitter.onComplete();
                 }
             }
@@ -218,6 +231,10 @@ public class GraphExecutor {
                     RuntimeContext ctx = new RuntimeContext(userId,
                             sessionId + "-" + agentName, null, null, "", null, null);
 
+                    // D3: ON_GRAPH_NODE_START（PARALLEL 线程）
+                    hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
+                            .agentId(agentName).sessionId(sessionId).graphNodeId(resolved.getOutputKey()).build());
+
                     List<RuntimeEvent> agentEvents = new ArrayList<>();
                     agent.execute(ctx)
                             .blockingForEach(event -> {
@@ -235,6 +252,10 @@ public class GraphExecutor {
 
                     localState.markComplete(def.getOutputKey(), localState.getText(def.getOutputKey()));
                     subStates.add(localState);
+                    // D3: ON_GRAPH_NODE_END（PARALLEL 线程）
+                    hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
+                            .agentId(agentName).sessionId(sessionId).graphNodeId(resolved.getOutputKey())
+                            .response(localState.getText(def.getOutputKey())).build());
                     log.info("并行Agent完成: {} events={}", agentName, agentEvents.size());
                 } catch (Exception e) {
                     log.error("并行Agent失败: {}", agentName, e);
@@ -625,6 +646,10 @@ public class GraphExecutor {
                         RuntimeContext ctx = new RuntimeContext(userId,
                             sessionId + "-" + name, null, null, input, null, null);
 
+                        // D3: ON_GRAPH_NODE_START（GRAPHFLOW 线程）
+                        hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
+                                .agentId(name).sessionId(sessionId).graphNodeId(def.getOutputKey()).build());
+
                         agent.execute(ctx)
                             .blockingForEach(event -> {
                                 synchronized (emitter) {
@@ -639,6 +664,11 @@ public class GraphExecutor {
                         String output = localState.getOutput(def.getOutputKey());
                         nodeOutputs.put(name, output);
                         flowState.setStatus(GraphFlowState.NodeStatus.COMPLETED);
+
+                        // D3: ON_GRAPH_NODE_END（GRAPHFLOW 线程）
+                        hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
+                                .agentId(name).sessionId(sessionId).graphNodeId(def.getOutputKey())
+                                .response(output).build());
 
                         // 按边条件路由到子节点
                         synchronized (flowStates) {
@@ -699,6 +729,8 @@ public class GraphExecutor {
         }
 
         emitter.onNext(RuntimeEvent.done());
+        // D3: ON_GRAPH_FINALIZE
+        hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
         emitter.onComplete();
     }
 
@@ -815,6 +847,11 @@ public class GraphExecutor {
         Agent agent = agentFactory.create(agentConfig);
         RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, input, null, null);
 
+        String nodeId = agentName != null ? agentName : def.getName();
+        // D3: ON_GRAPH_NODE_START
+        hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
+                .agentId(nodeId).sessionId(sessionId).graphNodeId(def.getOutputKey()).request(input).build());
+
         // 收集输出用于 onResponse 回调
         StringBuilder collectedOutput = new StringBuilder();
 
@@ -827,6 +864,11 @@ public class GraphExecutor {
                     }
                     emitter.onNext(event);
                 });
+
+        // D3: ON_GRAPH_NODE_END
+        hookRegistry.invokeAll(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
+                .agentId(nodeId).sessionId(sessionId).graphNodeId(def.getOutputKey())
+                .response(collectedOutput.toString()).build());
 
         // H4-步骤7: 执行完成后触发 onResponse 拦截
         if (interventionHandler != null && collectedOutput.length() > 0) {
