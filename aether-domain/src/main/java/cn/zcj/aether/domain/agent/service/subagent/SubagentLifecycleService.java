@@ -277,13 +277,15 @@ public class SubagentLifecycleService {
         return rt == null ? Optional.empty() : Optional.of(rt.task());
     }
 
-    /** 终态保留上限：超出 terminalRetention 时逐出最旧终态运行时（active 永不逐出）。 */
+    /** 终态保留上限：超出 terminalRetention 时逐出最旧终态运行时（active 永不逐出）。
+     * 仅逐出 future 已完成的终态运行时——finalizeDelegation 经 whenComplete 在 future 完成时
+     * 同步触发，故 future.isDone() 保证收尾已执行，避免并发逐出把 COMPLETED 误标 FAILED。 */
     private void evictTerminalIfNeeded() {
         while (runtimes.size() > terminalRetention) {
             String oldest = null;
             Instant oldestAt = null;
             for (SubagentRuntime rt : runtimes.values()) {
-                if (SubagentRuntime.isTerminal(rt.state())) {
+                if (SubagentRuntime.isTerminal(rt.state()) && rt.future() != null && rt.future().isDone()) {
                     Instant at = rt.createdAt();
                     if (oldestAt == null || at.isBefore(oldestAt)) {
                         oldest = rt.id();
@@ -292,7 +294,7 @@ public class SubagentLifecycleService {
                 }
             }
             if (oldest == null) {
-                break; // 无可逐出的终态条目（active 全部占位）
+                break; // 无可逐出的终态条目（active / future 未完成占位）
             }
             runtimes.remove(oldest);
         }

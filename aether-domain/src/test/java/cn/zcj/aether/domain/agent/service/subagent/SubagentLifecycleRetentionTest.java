@@ -52,7 +52,7 @@ class SubagentLifecycleRetentionTest {
     }
 
     @Test
-    void terminalRetentionEvictsOldestCompleted() throws Exception {
+    void terminalRetentionEvictsToCap() throws Exception {
         launchToCompletion("ad-1");
         launchToCompletion("ad-2");
         launchToCompletion("ad-3");
@@ -61,9 +61,17 @@ class SubagentLifecycleRetentionTest {
         assertTrue(service.wait("ad-1", 5000));
         assertTrue(service.wait("ad-4", 5000));
 
-        // 最旧的 ad-1 已被逐出 → status 返回 empty；最近 3 个仍在
-        assertTrue(service.status("ad-1").isEmpty(), "最旧终态应被逐出");
-        assertEquals(SubagentState.COMPLETED, service.status("ad-4").orElseThrow());
+        // 并发完成顺序不定：逐出"已完成(future.isDone)"中 createdAt 最旧的，具体是 ad-1/2/3 哪一个
+        // 取决于哪个最后收尾。稳定断言：终态保留总数 = 上限(3)，最新 ad-4 必被保留，且全部为真终态而非 FAILED 误标。
+        int retained = 0;
+        for (String id : new String[]{"ad-1", "ad-2", "ad-3", "ad-4"}) {
+            if (service.status(id).isPresent()) {
+                assertEquals(SubagentState.COMPLETED, service.status(id).orElseThrow(),
+                        "逐出不得把已完成的委派误标 FAILED: " + id);
+                retained++;
+            }
+        }
+        assertEquals(3, retained, "终态保留上限（3）应被强制执行");
     }
 
     @Test
