@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -107,39 +106,34 @@ class SubagentLifecycleLiveLogIntegrationTest {
     }
 
     @Test
-    void cancelBeforeWorkerStartsDoesNotLeakSubagentIdMdc() throws Exception {
-        // 单线程池保证运行 runAgent 的工作线程是已知的同一线程，探测可确定性读取其 MDC
+    void runAgentEarlyReturnCleansSubagentIdMdc() throws Exception {
+        // 白盒：cancel-before-start 公开流不可达（supplyAsync 会跳过已 complete future 的 supplier），
+        // 故直接驱动 runAgent 的早退路径，验证防御性修复的 MDC 清理契约。
         ExecutorService single = Executors.newSingleThreadExecutor();
         SubagentLifecycleService svc = new SubagentLifecycleService(boundary, agentFactory, refiner, single);
 
-        // 先用阻塞任务占满唯一的工作线程，让 launch 的任务停留在 QUEUED
-        CountDownLatch blockerStarted = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        single.submit(() -> {
-            blockerStarted.countDown();
+        AgentConfig cfg = mock(AgentConfig.class);
+        when(cfg.getName()).thenReturn("sub-agent");
+        when(cfg.getCancelToken()).thenReturn(new CancelToken());
+        SubagentRuntime rt = new SubagentRuntime("ad-9", task(), cfg, mock(Agent.class), cfg.getCancelToken());
+        assertTrue(rt.toCancelled(), "预置 CANCELLED 状态以触发早退");
+
+        java.lang.reflect.Method m = SubagentLifecycleService.class.getDeclaredMethod("runAgent", SubagentRuntime.class);
+        m.setAccessible(true);
+
+        // 早退应发生在反射调用所在线程（worker），该线程无泄漏
+        AtomicReference<String> leaked = new AtomicReference<>();
+        Future<?> f = single.submit(() -> {
             try {
-                release.await();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                m.invoke(svc, rt);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
             }
+            leaked.set(org.slf4j.MDC.get("subagentId"));
         });
-        assertTrue(blockerStarted.await(5, TimeUnit.SECONDS));
+        f.get(5, TimeUnit.SECONDS);
+        single.shutdownNow();
 
-        String id = "ad-4";
-        svc.launch(id, task());
-        // 抢占在工作线程消费队列之前取消（QUEUED→CANCELLED CAS 竞争）
-        assertTrue(svc.cancel(id));
-
-        release.countDown(); // 放行工作线程，runAgent 命中启动前已取消 → 早退
-        assertTrue(svc.wait(id, 5000));
-
-        // 在同一个工作线程上探测 runAgent 之后（FIFO）其 MDC 是否残留 subagentId
-        AtomicReference<String> workerMdc = new AtomicReference<>();
-        Future<?> probe = single.submit(() ->
-                workerMdc.set(org.slf4j.MDC.get("subagentId")));
-        probe.get(5, TimeUnit.SECONDS); // 保证 runAgent 已先于探测完成
-
-        // 早退路径不应在池线程 MDC 泄漏 subagentId
-        assertEquals(null, workerMdc.get());
+        assertEquals(null, leaked.get(), "早退路径不应泄漏 subagentId 到 worker 线程 MDC");
     }
 }
