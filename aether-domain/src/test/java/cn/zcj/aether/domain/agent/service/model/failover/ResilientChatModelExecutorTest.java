@@ -88,8 +88,16 @@ class ResilientChatModelExecutorTest {
 
         // 领域层不依赖 aether-infrastructure，用 CredentialPool 双实现验证轮换流程。
         // RotatingCredentialPool 的轮换正确性由 aether-infrastructure 模块单测覆盖。
-        CredentialPool pool = (current, providerName) -> Optional.of(
-                ModelConfig.builder().modelId("gpt-4o").apiKey("key2").baseUrl("https://b").build());
+        CredentialPool pool = new CredentialPool() {
+            @Override
+            public void seed(String provider, List<CredentialEntry> entries) { }
+
+            @Override
+            public Optional<ModelConfig> rotate(ModelConfig current, String provider) {
+                return Optional.of(
+                        ModelConfig.builder().modelId("gpt-4o").apiKey("key2").baseUrl("https://b").build());
+            }
+        };
         ModelConfig cfg = ModelConfig.builder().modelId("gpt-4o").apiKey("key1").baseUrl("https://a").build();
 
         ResilientChatModelExecutor executor = build(cfg, List.of());

@@ -18,14 +18,11 @@ import java.util.Optional;
 @Component
 public class RotatingCredentialPool implements CredentialPool {
 
-    /** 一组备用凭据 */
-    public record CredentialEntry(String apiKey, String baseUrl, String completionsPath) {
-    }
-
     private final Map<String, List<CredentialEntry>> credentials = new HashMap<>();
 
-    /** 注册某 provider 的凭据组（至少 2 组才可轮换） */
-    public void register(String provider, List<CredentialEntry> entries) {
+    /** 播种某 provider 的凭据组（至少 2 组才可轮换）。幂等：重复播种覆盖旧池。 */
+    @Override
+    public void seed(String provider, List<CredentialEntry> entries) {
         credentials.put(provider, new ArrayList<>(entries));
     }
 

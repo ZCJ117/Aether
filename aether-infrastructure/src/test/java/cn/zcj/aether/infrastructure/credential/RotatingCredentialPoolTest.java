@@ -1,6 +1,7 @@
 package cn.zcj.aether.infrastructure.credential;
 
 import cn.zcj.aether.domain.agent.service.model.ModelConfig;
+import cn.zcj.aether.domain.agent.service.model.failover.CredentialPool;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -13,9 +14,9 @@ class RotatingCredentialPoolTest {
     @Test
     void rotatesToNextCredential() {
         RotatingCredentialPool pool = new RotatingCredentialPool();
-        pool.register("openai", List.of(
-                new RotatingCredentialPool.CredentialEntry("key1", "https://a", null),
-                new RotatingCredentialPool.CredentialEntry("key2", "https://b", null)));
+        pool.seed("openai", List.of(
+                new CredentialPool.CredentialEntry("key1", "https://a", null),
+                new CredentialPool.CredentialEntry("key2", "https://b", null)));
 
         ModelConfig current = ModelConfig.builder()
                 .modelId("gpt-4o").apiKey("key1").baseUrl("https://a").build();
@@ -29,8 +30,8 @@ class RotatingCredentialPoolTest {
     @Test
     void emptyWhenOnlyOneCredential() {
         RotatingCredentialPool pool = new RotatingCredentialPool();
-        pool.register("openai", List.of(
-                new RotatingCredentialPool.CredentialEntry("key1", "https://a", null)));
+        pool.seed("openai", List.of(
+                new CredentialPool.CredentialEntry("key1", "https://a", null)));
 
         ModelConfig current = ModelConfig.builder().modelId("gpt-4o").apiKey("key1").build();
         assertTrue(pool.rotate(current, "openai").isEmpty());
@@ -39,8 +40,8 @@ class RotatingCredentialPoolTest {
     @Test
     void emptyWhenKeyUnknown() {
         RotatingCredentialPool pool = new RotatingCredentialPool();
-        pool.register("openai", List.of(
-                new RotatingCredentialPool.CredentialEntry("key1", "https://a", null)));
+        pool.seed("openai", List.of(
+                new CredentialPool.CredentialEntry("key1", "https://a", null)));
 
         ModelConfig current = ModelConfig.builder().modelId("gpt-4o").apiKey("unknown").build();
         assertTrue(pool.rotate(current, "openai").isEmpty());
@@ -51,5 +52,18 @@ class RotatingCredentialPoolTest {
         RotatingCredentialPool pool = new RotatingCredentialPool();
         ModelConfig current = ModelConfig.builder().modelId("gpt-4o").apiKey("key1").build();
         assertTrue(pool.rotate(current, "unknown-provider").isEmpty());
+    }
+
+    @Test
+    void seedOverwritesPreviousPool() {
+        RotatingCredentialPool pool = new RotatingCredentialPool();
+        pool.seed("openai", List.of(
+                new CredentialPool.CredentialEntry("key1", "https://a", null),
+                new CredentialPool.CredentialEntry("key2", "https://b", null)));
+        pool.seed("openai", List.of(
+                new CredentialPool.CredentialEntry("key3", "https://c", null)));
+
+        ModelConfig current = ModelConfig.builder().modelId("gpt-4o").apiKey("key3").build();
+        assertTrue(pool.rotate(current, "openai").isEmpty()); // 重播种后只剩 1 组，无法轮换
     }
 }
