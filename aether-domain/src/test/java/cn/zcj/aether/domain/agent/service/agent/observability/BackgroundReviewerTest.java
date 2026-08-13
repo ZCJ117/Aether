@@ -18,6 +18,8 @@ import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class BackgroundReviewerTest {
@@ -160,6 +162,43 @@ class BackgroundReviewerTest {
             assertTrue(tpe.getQueue() instanceof ArrayBlockingQueue, "队列必须是有界的 ArrayBlockingQueue");
             assertEquals(4, tpe.getQueue().remainingCapacity() + tpe.getQueue().size(), "队列容量应为 4");
         } finally {
+            reviewer.shutdown();
+        }
+    }
+
+    @Test
+    void submitDoesNotBlockWhenQueueFull() throws InterruptedException {
+        GraphExecutionRecorder recorder = mock(GraphExecutionRecorder.class);
+        AgentEventPublisher publisher = mock(AgentEventPublisher.class);
+        ModelInvoker modelInvoker = mock(ModelInvoker.class);
+
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(modelInvoker.callWithStreamAsync(any(), any(), any(), any()))
+                .thenAnswer(inv -> {
+                    started.countDown();
+                    release.await();
+                    return reactor.core.publisher.Mono.just(
+                            ModelInvoker.ModelCallResult.builder().fullText("ok").build());
+                });
+
+        // queueCapacity=1：1 running + 1 queued 即满，第 3 个 submit 应被 DiscardPolicy 丢弃而非阻塞调用方
+        BackgroundReviewer reviewer = new BackgroundReviewer(
+                recorder, publisher, modelInvoker, mock(org.springframework.ai.chat.model.ChatModel.class),
+                "gpt-4o", "你是一名评审。", Duration.ofSeconds(30), 1);
+
+        try {
+            reviewer.submit("gx-1", "goal", "o1");           // 占用唯一线程（阻塞在 release）
+            assertTrue(started.await(5, TimeUnit.SECONDS), "首个任务应已开始执行");
+            reviewer.submit("gx-2", "goal", "o2");           // 填满容量为 1 的队列
+
+            long start = System.currentTimeMillis();
+            reviewer.submit("gx-3", "goal", "o3");           // 队列已满 → DiscardPolicy 静默丢弃，立即返回
+            long elapsed = System.currentTimeMillis() - start;
+
+            assertTrue(elapsed < 2000, "满载时 submit 不应阻塞调用方，耗时: " + elapsed + "ms");
+        } finally {
+            release.countDown();
             reviewer.shutdown();
         }
     }
