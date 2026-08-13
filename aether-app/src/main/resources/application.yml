@@ -52,6 +52,6 @@ aether:
       retention: 200                         # 图级 trace 内存保留执行数
       persistence: false                     # 是否异步落 JSONL（对齐 moa_trace.py opt-in）
       dir: ./cache/graph-traces
-      background-review:
-        enabled: false                       # 后台自评审总开关（默认关）
-        model-ref: gpt-4o
+    background-review:                       # 后台自评审（与 trace 平级，@ConditionalOnProperty 读 aether.graph.background-review.*）
+      enabled: false                         # 后台自评审总开关（默认关）
+      model-ref: gpt-4o

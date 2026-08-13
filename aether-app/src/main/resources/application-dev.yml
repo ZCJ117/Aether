@@ -45,11 +45,11 @@ aether:
   # ====== D1: 异步委派持久化（PostgreSQL，激活 PgAsyncDelegationStore）======
   delegation:
     persistence: true
-    # ====== D4: 图级 trace 落盘（开发环境开启便于离线审计）======
     live-log-dir: ./cache/delegation/live
     stale-timeout: PT10M
     stale-scan-interval-ms: 60000
   graph:
+    # ====== D4: 图级 trace 落盘（开发环境开启便于离线审计）======
     trace:
       persistence: true
   memory:

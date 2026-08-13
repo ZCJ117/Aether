@@ -2387,9 +2387,9 @@ git commit -m "feat(d4): BackgroundReviewer 后台自评审（默认关闭，@Co
       retention: 200                         # 图级 trace 内存保留执行数
       persistence: false                     # 是否异步落 JSONL（对齐 moa_trace.py opt-in）
       dir: ./cache/graph-traces
-      background-review:
-        enabled: false                       # 后台自评审总开关（默认关）
-        model-ref: gpt-4o
+    background-review:                       # 后台自评审（与 trace 平级，代码读 aether.graph.background-review.*，勿嵌套进 trace）
+      enabled: false                         # 后台自评审总开关（默认关）
+      model-ref: gpt-4o
 ```
 
 在 `application-dev.yml` 的 `aether.delegation:` 段下追加（开发环境开启图 trace 落盘便于调试）：
