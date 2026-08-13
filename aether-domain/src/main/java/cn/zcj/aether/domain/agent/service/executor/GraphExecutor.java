@@ -14,11 +14,14 @@ import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionContext;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionHandler;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionResult;
+import cn.zcj.aether.domain.agent.service.agent.observability.AgentTracer;
 import cn.zcj.aether.domain.agent.service.agent.observability.BackgroundReviewer;
 import cn.zcj.aether.domain.agent.service.agent.observability.GraphExecutionRecorder;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.subagent.ResultRefiner;
 import cn.zcj.aether.domain.agent.service.subagent.SubAgentOrchestrator;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.StatusCode;
 import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.FlowableEmitter;
@@ -103,6 +106,7 @@ public class GraphExecutor {
             String graphExecutionId = null;
             String prevGraphId = MDC.get("graphExecutionId");
             String prevSessionId = MDC.get("sessionId");
+            AgentTracer.SpanScope graphSpan = null;
             try {
                 ExecutionState state = new ExecutionState();
                 List<AgentEdge> edges = graph.getEdges();
@@ -113,6 +117,7 @@ public class GraphExecutor {
                     graphExecutionId = graphExecutionRecorder.beginExecution(sessionId);
                     MDC.put("graphExecutionId", graphExecutionId);
                     MDC.put("sessionId", sessionId);
+                    graphSpan = AgentTracer.startGraphExecution(graphExecutionId, sessionId);
                 }
 
                 if (edges.isEmpty() && graph.getEntryPoint() != null) {
@@ -150,6 +155,9 @@ public class GraphExecutor {
                 emitter.onComplete();
             } catch (Exception e) {
                 log.error("GraphExecutor error", e);
+                if (graphSpan != null) {
+                    graphSpan.span().setStatus(StatusCode.ERROR, e.getMessage());
+                }
                 if (graphExecutionRecorder != null && graphExecutionId != null) {
                     graphExecutionRecorder.endExecution(graphExecutionId, e);
                 }
@@ -160,6 +168,9 @@ public class GraphExecutor {
                     emitter.onComplete();
                 }
             } finally {
+                if (graphSpan != null) {
+                    graphSpan.close();
+                }
                 if (graphExecutionId != null) {
                     if (prevGraphId != null) {
                         MDC.put("graphExecutionId", prevGraphId);
@@ -674,6 +685,8 @@ public class GraphExecutor {
                             GraphFlowState.NodeStatus.RUNNING, nodeStart, null, 0, null);
                 }
                 AgentNodeDef def = flowState.getNodeDef();
+                Span nodeSpan = (graphExecutionId != null)
+                        ? AgentTracer.startGraphNode(graphExecutionId, def.getAgentType(), name) : null;
 
                 // H4-步骤7: GRAPHFLOW 并发批次 → BROADCAST 通道
                 // 每个节点在执行前做广播拦截，失败的节点静默跳过
@@ -692,6 +705,9 @@ public class GraphExecutor {
                     if (graphExecutionRecorder != null && graphExecutionId != null) {
                         graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
                                 GraphFlowState.NodeStatus.SKIPPED, nodeStart, Instant.now(), 0, null);
+                    }
+                    if (nodeSpan != null) {
+                        AgentTracer.endGraphNode(nodeSpan, true, null);
                     }
                     batchLatch.countDown();
                     continue;
@@ -727,6 +743,9 @@ public class GraphExecutor {
                             graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
                                     GraphFlowState.NodeStatus.COMPLETED, nodeStart, Instant.now(),
                                     Duration.between(nodeStart, Instant.now()).toMillis(), null);
+                        }
+                        if (nodeSpan != null) {
+                            AgentTracer.endGraphNode(nodeSpan, true, null);
                         }
 
                         // D3: ON_GRAPH_NODE_END（GRAPHFLOW 线程）
@@ -774,6 +793,9 @@ public class GraphExecutor {
                             graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
                                     GraphFlowState.NodeStatus.FAILED, nodeStart, Instant.now(),
                                     Duration.between(nodeStart, Instant.now()).toMillis(), e.getMessage());
+                        }
+                        if (nodeSpan != null) {
+                            AgentTracer.endGraphNode(nodeSpan, false, e.getMessage());
                         }
                         synchronized (emitter) {
                             emitter.onNext(RuntimeEvent.error("节点 [" + name + "] 失败: " + e.getMessage()));
