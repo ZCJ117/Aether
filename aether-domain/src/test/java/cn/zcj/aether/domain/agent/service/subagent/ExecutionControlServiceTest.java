@@ -49,6 +49,18 @@ class ExecutionControlServiceTest {
     }
 
     @Test
+    void listActiveSubAgentsCallsTaskOfOncePerId() {
+        when(lifecycle.activeIds()).thenReturn(List.of("ad-1"));
+        when(lifecycle.status("ad-1")).thenReturn(Optional.of(SubagentState.RUNNING));
+        when(lifecycle.taskOf("ad-1")).thenReturn(Optional.of(
+                new DelegationTask("t1", List.of(), null, "u1", "s1", null)));
+
+        service().listActiveSubAgents();
+
+        verify(lifecycle, times(1)).taskOf("ad-1");
+    }
+
+    @Test
     void setSpawnPausedDelegatesToSpawnGate() {
         when(spawnGate.isSpawnPaused()).thenReturn(true);
         service().setSpawnPaused(true);

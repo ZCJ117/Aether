@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 编排实时控制面 — 对齐 hermes delegate_tool.py TUI 能力（interrupt / list / spawn pause / delegation 查询）。
@@ -35,8 +36,9 @@ public class ExecutionControlService {
         List<ActiveSubAgentView> views = new ArrayList<>();
         for (String id : lifecycle.activeIds()) {
             String status = lifecycle.status(id).map(Object::toString).orElse("?");
-            String sessionId = lifecycle.taskOf(id).map(t -> t.parentSessionId()).orElse(null);
-            String goal = lifecycle.taskOf(id).map(t -> t.task()).orElse(null);
+            Optional<DelegationTask> task = lifecycle.taskOf(id);
+            String sessionId = task.map(t -> t.parentSessionId()).orElse(null);
+            String goal = task.map(t -> t.task()).orElse(null);
             views.add(new ActiveSubAgentView(id, status, sessionId, goal, null));
         }
         return views;
