@@ -7,6 +7,7 @@ import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
@@ -43,18 +44,35 @@ public class SubagentLifecycleService {
     private final ResultRefiner refiner;
     private final ExecutorService executor;
     private final Map<String, SubagentRuntime> runtimes = new ConcurrentHashMap<>();
+    private final DelegationLiveLog liveLog;
+    private final int terminalRetention;
 
-    public SubagentLifecycleService(SubAgentBoundary boundary, DefaultAgentFactory agentFactory, ResultRefiner refiner) {
-        this(boundary, agentFactory, refiner, Executors.newFixedThreadPool(DEFAULT_POOL_SIZE));
+    /** Spring 构造：liveLog 可选（无 Bean 时 no-op）；terminalRetention 可配置（默认 100）。 */
+    @org.springframework.beans.factory.annotation.Autowired
+    public SubagentLifecycleService(SubAgentBoundary boundary, DefaultAgentFactory agentFactory,
+                                    ResultRefiner refiner,
+                                    org.springframework.beans.factory.ObjectProvider<DelegationLiveLog> liveLogProvider,
+                                    @org.springframework.beans.factory.annotation.Value("${aether.subagent.terminal-retention:100}") int terminalRetention) {
+        this(boundary, agentFactory, refiner, Executors.newFixedThreadPool(DEFAULT_POOL_SIZE),
+                liveLogProvider.getIfAvailable(), terminalRetention);
     }
 
-    /** 测试注入线程池。 */
+    /** 测试注入线程池（liveLog 空、retention 默认 100）。 */
     SubagentLifecycleService(SubAgentBoundary boundary, DefaultAgentFactory agentFactory,
                              ResultRefiner refiner, ExecutorService executor) {
+        this(boundary, agentFactory, refiner, executor, null, 100);
+    }
+
+    /** 测试注入线程池 + liveLog + retention。 */
+    SubagentLifecycleService(SubAgentBoundary boundary, DefaultAgentFactory agentFactory,
+                             ResultRefiner refiner, ExecutorService executor,
+                             DelegationLiveLog liveLog, int terminalRetention) {
         this.boundary = boundary;
         this.agentFactory = agentFactory;
         this.refiner = refiner;
         this.executor = executor;
+        this.liveLog = liveLog;
+        this.terminalRetention = terminalRetention;
     }
 
     /**
@@ -70,6 +88,9 @@ public class SubagentLifecycleService {
         Agent agent = agentFactory.create(config);
         SubagentRuntime rt = new SubagentRuntime(id, task, config, agent, config.getCancelToken());
         runtimes.put(id, rt);
+        if (liveLog != null) {
+            liveLog.open(id, task.task());
+        }
 
         CompletableFuture<ResultRefiner.SubAgentResult> future =
                 CompletableFuture.supplyAsync(() -> runAgent(rt), executor);
@@ -83,6 +104,7 @@ public class SubagentLifecycleService {
     }
 
     private ResultRefiner.SubAgentResult runAgent(SubagentRuntime rt) {
+        MDC.put("subagentId", rt.id());
         if (!rt.toRunning()) {
             // 启动前已被 cancel → 直接终态返回（对齐 hermes _run L402：非 CANCEL_REQUESTED 才置 RUNNING）
             return rt.result();
@@ -101,15 +123,25 @@ public class SubagentLifecycleService {
                         rt.heartbeat(); // 每次事件刷新心跳（进度信号）
                         if (event.getType() == RuntimeEvent.EventType.textDelta && event.getText() != null) {
                             collected.add(TurnMessage.assistant(event.getText()));
+                            if (liveLog != null) {
+                                liveLog.append(rt.id(), "assistant", event.getText());
+                            }
                         }
                         if (event.getType() == RuntimeEvent.EventType.toolResult) {
                             collected.add(TurnMessage.toolResult(event.getToolCallId(),
                                     event.getToolName(), event.getToolOutput()));
+                            if (liveLog != null) {
+                                liveLog.append(rt.id(), "result",
+                                        (event.getToolName() == null ? "?" : event.getToolName())
+                                        + (event.isToolError() ? " ERROR" : " ok") + ": "
+                                        + (event.getToolOutput() == null ? "" : event.getToolOutput()));
+                            }
                         }
                     });
             ResultRefiner.SubAgentResult result = refiner.refine(rt.task().task(), collected);
             rt.setResult(result);
             rt.tryTerminal(SubagentState.COMPLETED); // 已被 cancel/stale 置终态则 CAS 失败，保持原终态
+            closeLiveLog(rt);
             return result;
         } catch (Exception e) {
             log.error("SubagentLifecycleService: 子Agent执行异常 id={} task={}",
@@ -118,8 +150,22 @@ public class SubagentLifecycleService {
                     "失败", "[子任务异常: " + e.getMessage() + "]", Map.of());
             rt.setResult(result);
             rt.tryTerminal(SubagentState.FAILED);
+            closeLiveLog(rt);
             return result;
+        } finally {
+            MDC.remove("subagentId");
         }
+    }
+
+    /** 写终态摘要并 close 直播日志（best-effort；close 幂等）。 */
+    private void closeLiveLog(SubagentRuntime rt) {
+        if (liveLog == null) {
+            return;
+        }
+        String summary = rt.result() != null && rt.result().summary() != null
+                ? rt.result().summary() : "";
+        liveLog.close(rt.id(), "end status=" + rt.state()
+                + (summary.isEmpty() ? "" : " | " + summary));
     }
 
     /** 阻塞等待完成，超时返回 false（对齐 hermes wait timed_out 标志，L270）。 */
@@ -153,6 +199,9 @@ public class SubagentLifecycleService {
         if (future != null) {
             future.complete(rt.result() != null ? rt.result()
                     : new ResultRefiner.SubAgentResult("取消", "[子任务已取消]", Map.of()));
+        }
+        if (liveLog != null) {
+            liveLog.close(id, "end status=CANCELLED [取消]");
         }
         return true;
     }
@@ -198,6 +247,9 @@ public class SubagentLifecycleService {
                                 : new ResultRefiner.SubAgentResult("超时", "[子任务超时]", Map.of()));
                     }
                     stale.add(rt.id());
+                    if (liveLog != null) {
+                        liveLog.close(rt.id(), "end status=TIMED_OUT [超时]");
+                    }
                 }
             }
         }
