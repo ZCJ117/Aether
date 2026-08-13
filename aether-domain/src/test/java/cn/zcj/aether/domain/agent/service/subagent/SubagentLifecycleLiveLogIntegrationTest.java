@@ -12,9 +12,14 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -99,5 +104,42 @@ class SubagentLifecycleLiveLogIntegrationTest {
         assertTrue(service.wait(id, 5000));
 
         verify(liveLog).close(eq(id), contains("CANCELLED"));
+    }
+
+    @Test
+    void cancelBeforeWorkerStartsDoesNotLeakSubagentIdMdc() throws Exception {
+        // 单线程池保证运行 runAgent 的工作线程是已知的同一线程，探测可确定性读取其 MDC
+        ExecutorService single = Executors.newSingleThreadExecutor();
+        SubagentLifecycleService svc = new SubagentLifecycleService(boundary, agentFactory, refiner, single);
+
+        // 先用阻塞任务占满唯一的工作线程，让 launch 的任务停留在 QUEUED
+        CountDownLatch blockerStarted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        single.submit(() -> {
+            blockerStarted.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        assertTrue(blockerStarted.await(5, TimeUnit.SECONDS));
+
+        String id = "ad-4";
+        svc.launch(id, task());
+        // 抢占在工作线程消费队列之前取消（QUEUED→CANCELLED CAS 竞争）
+        assertTrue(svc.cancel(id));
+
+        release.countDown(); // 放行工作线程，runAgent 命中启动前已取消 → 早退
+        assertTrue(svc.wait(id, 5000));
+
+        // 在同一个工作线程上探测 runAgent 之后（FIFO）其 MDC 是否残留 subagentId
+        AtomicReference<String> workerMdc = new AtomicReference<>();
+        Future<?> probe = single.submit(() ->
+                workerMdc.set(org.slf4j.MDC.get("subagentId")));
+        probe.get(5, TimeUnit.SECONDS); // 保证 runAgent 已先于探测完成
+
+        // 早退路径不应在池线程 MDC 泄漏 subagentId
+        assertEquals(null, workerMdc.get());
     }
 }

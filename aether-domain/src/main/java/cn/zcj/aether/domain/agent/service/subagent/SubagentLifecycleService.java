@@ -105,11 +105,11 @@ public class SubagentLifecycleService {
 
     private ResultRefiner.SubAgentResult runAgent(SubagentRuntime rt) {
         MDC.put("subagentId", rt.id());
-        if (!rt.toRunning()) {
-            // 启动前已被 cancel → 直接终态返回（对齐 hermes _run L402：非 CANCEL_REQUESTED 才置 RUNNING）
-            return rt.result();
-        }
         try {
+            if (!rt.toRunning()) {
+                // 启动前已被 cancel → 直接终态返回（对齐 hermes _run L402：非 CANCEL_REQUESTED 才置 RUNNING）
+                return rt.result();
+            }
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("subAgentContext", Boolean.TRUE);
             metadata.put("taskId", rt.id());
