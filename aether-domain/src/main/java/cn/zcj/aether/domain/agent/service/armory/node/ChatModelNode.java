@@ -14,6 +14,7 @@ import cn.zcj.aether.domain.agent.service.model.ModelConfig;
 import cn.zcj.aether.domain.agent.service.model.ModelProvider;
 import cn.zcj.aether.domain.agent.service.model.ModelProviderRegistry;
 import cn.zcj.aether.domain.agent.service.model.failover.CredentialPool;
+import cn.zcj.aether.domain.agent.service.model.failover.CredentialPoolSeeder;
 import cn.zcj.aether.domain.agent.service.model.failover.ModelErrorClassifier;
 import cn.zcj.aether.domain.agent.service.model.failover.ModelRoute;
 import cn.zcj.aether.domain.agent.service.model.failover.ResilientChatModelExecutor;
@@ -137,16 +138,17 @@ public class ChatModelNode extends AbstractArmorySupport {
                 if (mcpToolRegistry != null) {
                     String serverId = extractMcpName(toolMcp);
                     boolean parallelSafe = Boolean.TRUE.equals(toolMcp.getParallelSafe());
-                    List<ToolSpec> specs = new ArrayList<>();
-                    for (ToolCallback tc : toolCallbacks) {
-                        String toolName = tc.getToolDefinition() != null ? tc.getToolDefinition().name() : null;
-                        String desc = tc.getToolDefinition() != null && tc.getToolDefinition().description() != null
-                                ? tc.getToolDefinition().description() : "";
-                        if (toolName != null) {
-                            specs.add(new ToolSpec(toolName, desc, parallelSafe));
+                    List<ToolSpec> specs = toSpecs(toolCallbacks, parallelSafe);
+                    // 运行时刷新 rebuilder：重连 MCP server 重新拉取 tools/list（手动 POST /api/mcp/refresh 触发）
+                    mcpToolRegistry.register(serverId, specs, () -> {
+                        try {
+                            TooMcpCreateService svc = defaultMcpClientFactory.getTooMcpCreateService(toolMcp);
+                            ToolCallback[] rebuilt = svc.buildToolCallback(toolMcp);
+                            return toSpecs(rebuilt, parallelSafe);
+                        } catch (Exception e) {
+                            throw new RuntimeException("MCP 工具重拉失败: server=" + serverId, e);
                         }
-                    }
-                    mcpToolRegistry.register(serverId, specs);
+                    });
                     log.info("MCP 工具已登记到运行时注册表: server={} tools={}", serverId, specs.size());
                 }
             }
@@ -170,6 +172,11 @@ public class ChatModelNode extends AbstractArmorySupport {
         // P0-2 改造：通过 ModelProvider 创建 ChatModel（自动处理 toolCallbacks）
         ModelProvider provider = dynamicContext.getModelProvider();
         ModelConfig modelConfig = dynamicContext.getModelConfig();
+
+        // D2: 生产播种凭据池（credentials 未配置时静默跳过，维持空池退化 fallback）
+        CredentialPoolSeeder.seed(credentialPool, provider.providerName(),
+                aiAgentConfigTableVO.getModule().getAiApi());
+
         ChatModel rawChatModel = provider.createChatModelWithTools(modelConfig, toolCallbackList);
 
         // P1 容错：包装为 ResilientChatModelExecutor（实现 ChatModel 接口，透明装饰）
@@ -365,6 +372,20 @@ public class ChatModelNode extends AbstractArmorySupport {
         } catch (Exception e) {
             log.error("内置工具注册失败: {}", label, e);
         }
+    }
+
+    /** 把 MCP ToolCallback[] 转为 ToolSpec 元数据快照 */
+    private List<ToolSpec> toSpecs(ToolCallback[] toolCallbacks, boolean parallelSafe) {
+        List<ToolSpec> specs = new ArrayList<>();
+        for (ToolCallback tc : toolCallbacks) {
+            String toolName = tc.getToolDefinition() != null ? tc.getToolDefinition().name() : null;
+            String desc = tc.getToolDefinition() != null && tc.getToolDefinition().description() != null
+                    ? tc.getToolDefinition().description() : "";
+            if (toolName != null) {
+                specs.add(new ToolSpec(toolName, desc, parallelSafe));
+            }
+        }
+        return specs;
     }
 
     private String extractMcpName(AiAgentConfigTableVO.Module.ChatModel.ToolMcp toolMcp) {
