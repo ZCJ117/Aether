@@ -9,6 +9,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import org.mockito.ArgumentCaptor;
+import org.springframework.ai.chat.messages.Message;
+import java.util.List;
+
 class BackgroundReviewerTest {
 
     @Test
@@ -23,7 +27,7 @@ class BackgroundReviewerTest {
         BackgroundReviewer reviewer = new BackgroundReviewer(
                 recorder, publisher, modelInvoker, mock(org.springframework.ai.chat.model.ChatModel.class),
                 "gpt-4o", "你是一名评审。");
-        assertEquals("评审通过", reviewer.review("final output"));
+        assertEquals("评审通过", reviewer.review("目标A", "final output"));
     }
 
     @Test
@@ -65,5 +69,48 @@ class BackgroundReviewerTest {
         } finally {
             reviewer.shutdown();
         }
+    }
+
+    @Test
+    void reviewIncludesGoalAndFinalOutputInPrompt() {
+        GraphExecutionRecorder recorder = mock(GraphExecutionRecorder.class);
+        AgentEventPublisher publisher = mock(AgentEventPublisher.class);
+        ModelInvoker modelInvoker = mock(ModelInvoker.class);
+        when(modelInvoker.callWithStream(any(), any(), any(), any()))
+                .thenReturn(ModelInvoker.ModelCallResult.builder().fullText("评审通过").build());
+
+        BackgroundReviewer reviewer = new BackgroundReviewer(
+                recorder, publisher, modelInvoker, mock(org.springframework.ai.chat.model.ChatModel.class),
+                "gpt-4o", "你是一名评审。");
+
+        reviewer.review("写一份报告", "报告正文");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Message>> captor = ArgumentCaptor.forClass(List.class);
+        verify(modelInvoker).callWithStream(any(), captor.capture(), any(), any());
+        String text = captor.getValue().get(0).getText();
+        assertTrue(text.contains("写一份报告"), "提示词应含 goal");
+        assertTrue(text.contains("报告正文"), "提示词应含 finalOutput");
+    }
+
+    @Test
+    void reviewBlankGoalUsesOnlyFinalOutput() {
+        GraphExecutionRecorder recorder = mock(GraphExecutionRecorder.class);
+        AgentEventPublisher publisher = mock(AgentEventPublisher.class);
+        ModelInvoker modelInvoker = mock(ModelInvoker.class);
+        when(modelInvoker.callWithStream(any(), any(), any(), any()))
+                .thenReturn(ModelInvoker.ModelCallResult.builder().fullText("评审通过").build());
+
+        BackgroundReviewer reviewer = new BackgroundReviewer(
+                recorder, publisher, modelInvoker, mock(org.springframework.ai.chat.model.ChatModel.class),
+                "gpt-4o", "你是一名评审。");
+
+        reviewer.review("   ", "报告正文");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Message>> captor = ArgumentCaptor.forClass(List.class);
+        verify(modelInvoker).callWithStream(any(), captor.capture(), any(), any());
+        String text = captor.getValue().get(0).getText();
+        assertEquals("报告正文", text, "goal 为 blank 时提示词只应含 finalOutput");
     }
 }

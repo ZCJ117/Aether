@@ -66,7 +66,7 @@ public class BackgroundReviewer {
         }
         executor.submit(() -> {
             try {
-                String review = review(finalOutput);
+                String review = review(goal, finalOutput);
                 recorder.recordNodeEvent(graphExecutionId, "__review", "background-review",
                         GraphFlowState.NodeStatus.COMPLETED, Instant.now(), Instant.now(), 0, null);
                 publisher.publishBackgroundReview(graphExecutionId, null, goal, review);
@@ -78,10 +78,13 @@ public class BackgroundReviewer {
         });
     }
 
-    /** 对最终输出做模型评审；返回评审文本。 */
-    String review(String finalOutput) {
+    /** 对最终输出做模型评审；返回评审文本。goal 为 null/blank 时仅用 finalOutput。 */
+    String review(String goal, String finalOutput) {
+        String userContent = (goal == null || goal.isBlank())
+                ? finalOutput
+                : "任务目标:\n" + goal + "\n\n执行结果:\n" + finalOutput;
         ModelInvoker.ModelCallResult r = modelInvoker.callWithStream(chatModel,
-                List.of(new UserMessage(finalOutput)), systemPrompt, modelRef);
+                List.of(new UserMessage(userContent)), systemPrompt, modelRef);
         return r.hasError() ? "[评审失败: " + r.getError() + "]"
                 : (r.getFullText() == null ? "" : r.getFullText());
     }
