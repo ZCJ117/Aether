@@ -135,4 +135,15 @@ class SubagentLifecycleServiceTest {
         assertFalse(service.wait(id, 100), "超时应返回 false（对齐 hermes timed_out 标志）");
         service.cancel(id); // 清理
     }
+
+    @Test
+    void launchWithShortTaskDoesNotThrow() {
+        Agent agent = mock(Agent.class);
+        when(agentFactory.create(config)).thenReturn(agent);
+        when(agent.execute(any(RuntimeContext.class))).thenReturn(Flowable.just(textEvent("x")));
+
+        // task="" 的 hashCode=0 → Integer.toHexString(0)="0" → substring(0,6) 越界
+        assertDoesNotThrow(() -> service.launch("ad-short",
+                new DelegationTask("", List.of(), null, "u1", "s1", null)));
+    }
 }

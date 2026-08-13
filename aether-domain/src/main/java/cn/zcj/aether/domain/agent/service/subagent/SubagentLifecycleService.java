@@ -82,7 +82,8 @@ public class SubagentLifecycleService {
      * @return 完成 future（completed 后经 status(id) 读取终态）
      */
     public CompletableFuture<ResultRefiner.SubAgentResult> launch(String id, DelegationTask task) {
-        String taskId = "t" + Integer.toHexString(Math.abs(task.task().hashCode())).substring(0, 6);
+        String hex = Integer.toHexString(Math.abs(task.task().hashCode()));
+        String taskId = "t" + hex.substring(0, Math.min(6, hex.length()));
         AgentConfig config = boundary.createIsolatedConfig(
                 task.parentSessionId(), task.task(), task.toolNames(), task.modelRef(), taskId, null);
         Agent agent = agentFactory.create(config);
