@@ -14,6 +14,7 @@ import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionContext;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionHandler;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionResult;
+import cn.zcj.aether.domain.agent.service.agent.observability.BackgroundReviewer;
 import cn.zcj.aether.domain.agent.service.agent.observability.GraphExecutionRecorder;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.subagent.ResultRefiner;
@@ -73,6 +74,10 @@ public class GraphExecutor {
     /** D4: 图级 trace 录制（可选注入，镜像 interventionHandler 可空模式）。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private GraphExecutionRecorder graphExecutionRecorder;
+
+    /** D4: 后台自评审（默认关闭，@ConditionalOnProperty 启用；无 Bean 时 null → no-op）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private BackgroundReviewer backgroundReviewer;
 
     private final ExecutorService parallelPool = Executors.newCachedThreadPool();
 
@@ -789,6 +794,12 @@ public class GraphExecutor {
 
         for (Map.Entry<String, String> entry : nodeOutputs.entrySet()) {
             globalState.setFinalOutput(entry.getKey(), entry.getValue());
+        }
+
+        // D4: 图执行成功结束后，可选后台自评审（best-effort；null 安全）
+        if (backgroundReviewer != null && graphExecutionId != null) {
+            String finalOutput = String.join("\n", nodeOutputs.values());
+            backgroundReviewer.submit(graphExecutionId, initialMessage, finalOutput);
         }
 
         emitter.onNext(RuntimeEvent.done());

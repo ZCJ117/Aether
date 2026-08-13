@@ -61,6 +61,9 @@ public class BackgroundReviewer {
         if (graphExecutionId == null || finalOutput == null || finalOutput.isBlank()) {
             return;
         }
+        if (executor.isShutdown()) {
+            return;
+        }
         executor.submit(() -> {
             try {
                 String review = review(finalOutput);
