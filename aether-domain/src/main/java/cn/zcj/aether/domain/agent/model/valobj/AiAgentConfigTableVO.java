@@ -91,6 +91,16 @@ public class AiAgentConfigTableVO {
             private String completionsPath = "/v1/chat/completions"; //聊天接口路径,"v1"要和官方文档保持一致
             private String embeddingsPath = "/v1/embeddings"; //向量接口路径
 
+            /** D2: 同 provider 的备用凭据池（可选；缺省则维持空池退化 fallback） */
+            private List<Credential> credentials;
+
+            @Data
+            public static class Credential {
+                private String apiKey;
+                private String baseUrl;
+                private String completionsPath;
+            }
+
         }
 
         @Data

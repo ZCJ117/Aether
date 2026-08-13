@@ -45,7 +45,19 @@
                 "base-url": { "type": "string", "format": "uri", "examples": ["https://api.deepseek.com"] },
                 "api-key": { "type": "string", "description": "API 密钥（支持${ENV_VAR}环境变量）" },
                 "completions-path": { "type": "string", "default": "v1/chat/completions" },
-                "embeddings-path": { "type": "string", "default": "v1/embeddings" }
+                "embeddings-path": { "type": "string", "default": "v1/embeddings" },
+                "credentials": {
+                  "type": "array",
+                  "description": "同 provider 的备用凭据池（可选）",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "api-key": { "type": "string", "description": "备用 API 密钥（支持${ENV_VAR}）" },
+                      "base-url": { "type": "string", "format": "uri" },
+                      "completions-path": { "type": "string" }
+                    }
+                  }
+                }
               }
             },
             "chat-model": {
