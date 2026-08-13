@@ -4,11 +4,10 @@ import cn.zcj.aether.domain.agent.service.model.ModelConfig;
 import cn.zcj.aether.domain.agent.service.model.failover.CredentialPool;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 基于轮询的凭据池 — 按 provider 维护一组凭据，轮换时返回下一个。
@@ -18,12 +17,12 @@ import java.util.Optional;
 @Component
 public class RotatingCredentialPool implements CredentialPool {
 
-    private final Map<String, List<CredentialEntry>> credentials = new HashMap<>();
+    private final Map<String, List<CredentialEntry>> credentials = new ConcurrentHashMap<>();
 
     /** 播种某 provider 的凭据组（至少 2 组才可轮换）。幂等：重复播种覆盖旧池。 */
     @Override
     public void seed(String provider, List<CredentialEntry> entries) {
-        credentials.put(provider, new ArrayList<>(entries));
+        credentials.put(provider, List.copyOf(entries));
     }
 
     @Override
