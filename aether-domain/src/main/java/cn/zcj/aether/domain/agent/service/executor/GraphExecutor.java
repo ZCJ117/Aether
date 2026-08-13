@@ -107,6 +107,7 @@ public class GraphExecutor {
             String prevGraphId = MDC.get("graphExecutionId");
             String prevSessionId = MDC.get("sessionId");
             AgentTracer.SpanScope graphSpan = null;
+            boolean graphFailed = false;
             try {
                 ExecutionState state = new ExecutionState();
                 List<AgentEdge> edges = graph.getEdges();
@@ -155,6 +156,7 @@ public class GraphExecutor {
                 emitter.onComplete();
             } catch (Exception e) {
                 log.error("GraphExecutor error", e);
+                graphFailed = true;
                 if (graphSpan != null) {
                     graphSpan.span().setStatus(StatusCode.ERROR, e.getMessage());
                 }
@@ -169,6 +171,9 @@ public class GraphExecutor {
                 }
             } finally {
                 if (graphSpan != null) {
+                    if (!graphFailed) {
+                        graphSpan.span().setStatus(StatusCode.OK);
+                    }
                     graphSpan.close();
                 }
                 if (graphExecutionId != null) {
