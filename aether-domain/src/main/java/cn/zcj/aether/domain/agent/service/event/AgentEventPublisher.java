@@ -1,6 +1,8 @@
 package cn.zcj.aether.domain.agent.service.event;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
@@ -15,7 +17,9 @@ import java.util.Map;
 @Component
 public class AgentEventPublisher {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER =
+            new ObjectMapper().registerModule(new JavaTimeModule())
+                    .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     /**
      * 发布 Agent 启动事件
@@ -178,7 +182,7 @@ public class AgentEventPublisher {
     }
 
     /** 把 MDC 上下文（graphExecutionId/sessionId/subagentId）并入 JSON 顶层，不改任何事件签名。 */
-    private static Object toJsonWithMdc(Object obj) {
+    static Object toJsonWithMdc(Object obj) {
         Map<String, String> mdc = mdcFields();
         if (mdc.isEmpty()) {
             return obj;
