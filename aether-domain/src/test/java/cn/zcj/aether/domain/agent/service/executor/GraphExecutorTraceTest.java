@@ -59,6 +59,36 @@ class GraphExecutorTraceTest {
         return AgentGraph.builder().appName("app").agentDefs(defs).edges(edges).build();
     }
 
+    private AgentGraph sequentialGraph() {
+        Map<String, AgentNodeDef> defs = new LinkedHashMap<>();
+        defs.put("n1", AgentNodeDef.builder().name("n1").instruction("i1")
+                .outputKey("o1").agentType("researcher").build());
+        List<AgentEdge> edges = List.of(AgentEdge.builder()
+                .workflowName("wf").type(AgentEdgeType.SEQUENTIAL).subAgents(List.of("n1")).build());
+        return AgentGraph.builder().appName("app").agentDefs(defs).edges(edges).build();
+    }
+
+    @Test
+    void beginExecutionOnlyForGraphflow() throws Exception {
+        GraphExecutionRecorder recorder = mock(GraphExecutionRecorder.class);
+        GraphExecutor executor = buildExecutor(recorder);
+
+        executor.execute(sequentialGraph(), "u1", "s1", "hi").blockingSubscribe();
+
+        verify(recorder, never()).beginExecution(any());
+    }
+
+    @Test
+    void beginExecutionCalledForGraphflow() throws Exception {
+        GraphExecutionRecorder recorder = mock(GraphExecutionRecorder.class);
+        when(recorder.beginExecution(any())).thenReturn("gx-test");
+        GraphExecutor executor = buildExecutor(recorder);
+
+        executor.execute(graphflowGraph(), "u1", "s1", "hi").blockingSubscribe();
+
+        verify(recorder).beginExecution(any());
+    }
+
     @Test
     void recordsNodeEventsAndCleansMdc() throws Exception {
         GraphExecutionRecorder recorder = new GraphExecutionRecorder(200);

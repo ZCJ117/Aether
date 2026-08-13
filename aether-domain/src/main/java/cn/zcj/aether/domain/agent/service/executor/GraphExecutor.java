@@ -108,7 +108,8 @@ public class GraphExecutor {
                 List<AgentEdge> edges = graph.getEdges();
                 Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
 
-                if (graphExecutionRecorder != null) {
+                boolean isGraphFlow = edges.stream().anyMatch(AgentEdge::isGraphFlow);
+                if (graphExecutionRecorder != null && isGraphFlow) {
                     graphExecutionId = graphExecutionRecorder.beginExecution(sessionId);
                     MDC.put("graphExecutionId", graphExecutionId);
                     MDC.put("sessionId", sessionId);
