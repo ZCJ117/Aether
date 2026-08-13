@@ -61,11 +61,17 @@ public class StaleDelegationScanner {
 
     /** 执行一次 stale 扫描；返回受影响 id 列表（供测试直接调用）。 */
     public List<String> scanOnce() {
-        List<String> stale = lifecycle.detectStale(staleTimeout);
-        if (!stale.isEmpty()) {
-            log.warn("StaleDelegationScanner: 检测到 {} 个挂起子Agent: {}", stale.size(), stale);
+        try {
+            List<String> stale = lifecycle.detectStale(staleTimeout);
+            if (!stale.isEmpty()) {
+                log.warn("StaleDelegationScanner: 检测到 {} 个挂起子Agent: {}", stale.size(), stale);
+            }
+            return stale;
+        } catch (Exception e) {
+            // 单次扫描失败降级，绝不让异常取消周期调度（ScheduledExecutorService 对未捕获异常会永久停止周期任务）
+            log.warn("StaleDelegationScanner: 扫描失败，降级（周期任务继续）", e);
+            return java.util.List.of();
         }
-        return stale;
     }
 
     @PreDestroy
