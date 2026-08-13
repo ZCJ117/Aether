@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,12 +15,12 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -48,6 +49,7 @@ public class GraphExecutionRecorder {
     private final boolean persistToFile;
     private final String traceDir;
     private final ExecutorService fileWriter;
+    /** 记录在案节点事件（值线程安全：同一图执行可并发 add）。 */
     private final Map<String, List<NodeEvent>> traces = new ConcurrentHashMap<>();
     private final Deque<String> order = new ArrayDeque<>();
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -78,7 +80,7 @@ public class GraphExecutionRecorder {
     /** 开始一次图执行，返回 graphExecutionId（内存注册 + 有界逐出）。 */
     public String beginExecution(String sessionId) {
         String id = "gx-" + UUID.randomUUID().toString().substring(0, 8);
-        traces.put(id, new ArrayList<>());
+        traces.put(id, new CopyOnWriteArrayList<>());
         synchronized (order) {
             order.addLast(id);
             while (order.size() > retention) {
@@ -130,6 +132,14 @@ public class GraphExecutionRecorder {
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
         } catch (Exception e) {
             log.debug("GraphExecutionRecorder: 落盘失败 graphExecutionId={}", graphExecutionId, e);
+        }
+    }
+
+    /** 关闭自带的 fileWriter 线程池。 */
+    @PreDestroy
+    public void shutdown() {
+        if (fileWriter != null) {
+            fileWriter.shutdown();
         }
     }
 }
