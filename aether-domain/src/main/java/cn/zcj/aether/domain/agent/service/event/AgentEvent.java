@@ -168,4 +168,18 @@ public interface AgentEvent {
         int toolCount,
         String status
     ) implements AgentEvent {}
+
+    /** D4: 后台图执行质量评审事件。 */
+    record BackgroundReview(
+            String eventId,
+            java.time.Instant timestamp,
+            String graphExecutionId,
+            String sessionId,
+            String goal,
+            String review
+    ) implements AgentEvent {
+        /** 无 agentId/root correlation，返回空串以满足 AgentEvent 抽象契约。 */
+        public String agentId() { return ""; }
+        public String correlationId() { return ""; }
+    }
 }

@@ -173,6 +173,17 @@ public class AgentEventPublisher {
         log.info("delegation_dispatched: {}", toJson(event));
     }
 
+    /**
+     * D4: 发布后台自评审事件（BackgroundReviewer 专用）。
+     */
+    public void publishBackgroundReview(String graphExecutionId, String sessionId,
+                                        String goal, String review) {
+        AgentEvent.BackgroundReview event = new AgentEvent.BackgroundReview(
+                java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
+                graphExecutionId, sessionId, goal, review);
+        log.info("background_review: {}", toJson(event));
+    }
+
     private String toJson(Object obj) {
         try {
             return MAPPER.writeValueAsString(toJsonWithMdc(obj));
