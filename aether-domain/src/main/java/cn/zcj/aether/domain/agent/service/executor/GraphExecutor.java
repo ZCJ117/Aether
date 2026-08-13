@@ -14,6 +14,7 @@ import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionContext;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionHandler;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionResult;
+import cn.zcj.aether.domain.agent.service.agent.observability.GraphExecutionRecorder;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.subagent.ResultRefiner;
 import cn.zcj.aether.domain.agent.service.subagent.SubAgentOrchestrator;
@@ -21,9 +22,12 @@ import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.FlowableEmitter;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -66,6 +70,10 @@ public class GraphExecutor {
     @Resource
     private HookRegistry hookRegistry;
 
+    /** D4: 图级 trace 录制（可选注入，镜像 interventionHandler 可空模式）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GraphExecutionRecorder graphExecutionRecorder;
+
     private final ExecutorService parallelPool = Executors.newCachedThreadPool();
 
     /**
@@ -87,10 +95,19 @@ public class GraphExecutor {
             String initialMessage) {
 
         return Flowable.create(emitter -> {
+            String graphExecutionId = null;
+            String prevGraphId = MDC.get("graphExecutionId");
+            String prevSessionId = MDC.get("sessionId");
             try {
                 ExecutionState state = new ExecutionState();
                 List<AgentEdge> edges = graph.getEdges();
                 Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
+
+                if (graphExecutionRecorder != null) {
+                    graphExecutionId = graphExecutionRecorder.beginExecution(sessionId);
+                    MDC.put("graphExecutionId", graphExecutionId);
+                    MDC.put("sessionId", sessionId);
+                }
 
                 if (edges.isEmpty() && graph.getEntryPoint() != null) {
                     AgentNodeDef entry = agentDefs.get(graph.getEntryPoint());
@@ -105,7 +122,7 @@ public class GraphExecutor {
 
                 for (AgentEdge edge : edges) {
                     if (edge.isGraphFlow()) {
-                        executeGraphFlow(graph, userId, sessionId, initialMessage, emitter);
+                        executeGraphFlow(graph, userId, sessionId, initialMessage, emitter, graphExecutionId);
                         return;
                     }
                     switch (edge.getType()) {
@@ -127,11 +144,27 @@ public class GraphExecutor {
                 emitter.onComplete();
             } catch (Exception e) {
                 log.error("GraphExecutor error", e);
+                if (graphExecutionRecorder != null && graphExecutionId != null) {
+                    graphExecutionRecorder.endExecution(graphExecutionId, e);
+                }
                 if (!emitter.isCancelled()) {
                     emitter.onNext(RuntimeEvent.error(e.getMessage()));
                     // D3: ON_GRAPH_FINALIZE（异常分支）
                     notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
                     emitter.onComplete();
+                }
+            } finally {
+                if (graphExecutionId != null) {
+                    if (prevGraphId != null) {
+                        MDC.put("graphExecutionId", prevGraphId);
+                    } else {
+                        MDC.remove("graphExecutionId");
+                    }
+                    if (prevSessionId != null) {
+                        MDC.put("sessionId", prevSessionId);
+                    } else {
+                        MDC.remove("sessionId");
+                    }
                 }
             }
         }, BackpressureStrategy.BUFFER);
@@ -561,7 +594,7 @@ public class GraphExecutor {
     // ========== GRAPHFLOW (BROADCAST 通道 per 并发批次) ==========
 
     private void executeGraphFlow(AgentGraph graph, String userId, String sessionId,
-            String initialMessage, FlowableEmitter<RuntimeEvent> emitter) {
+            String initialMessage, FlowableEmitter<RuntimeEvent> emitter, String graphExecutionId) {
 
         List<AgentEdge> edges = graph.getEdges();
         Map<String, AgentNodeDef> nodeDefs = graph.getAgentDefs();
@@ -629,6 +662,11 @@ public class GraphExecutor {
             for (String name : currentBatch) {
                 GraphFlowState flowState = flowStates.get(name);
                 flowState.setStatus(GraphFlowState.NodeStatus.RUNNING);
+                Instant nodeStart = Instant.now();
+                if (graphExecutionRecorder != null && graphExecutionId != null) {
+                    graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
+                            GraphFlowState.NodeStatus.RUNNING, nodeStart, null, 0, null);
+                }
                 AgentNodeDef def = flowState.getNodeDef();
 
                 // H4-步骤7: GRAPHFLOW 并发批次 → BROADCAST 通道
@@ -645,6 +683,10 @@ public class GraphExecutor {
                 if (!shouldProceed) {
                     // BROADCAST 通道：DROP 语义，仅跳过当前节点
                     flowState.setStatus(GraphFlowState.NodeStatus.SKIPPED);
+                    if (graphExecutionRecorder != null && graphExecutionId != null) {
+                        graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
+                                GraphFlowState.NodeStatus.SKIPPED, nodeStart, Instant.now(), 0, null);
+                    }
                     batchLatch.countDown();
                     continue;
                 }
@@ -675,6 +717,11 @@ public class GraphExecutor {
                         String output = localState.getOutput(def.getOutputKey());
                         nodeOutputs.put(name, output);
                         flowState.setStatus(GraphFlowState.NodeStatus.COMPLETED);
+                        if (graphExecutionRecorder != null && graphExecutionId != null) {
+                            graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
+                                    GraphFlowState.NodeStatus.COMPLETED, nodeStart, Instant.now(),
+                                    Duration.between(nodeStart, Instant.now()).toMillis(), null);
+                        }
 
                         // D3: ON_GRAPH_NODE_END（GRAPHFLOW 线程）
                         notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
@@ -717,6 +764,11 @@ public class GraphExecutor {
                     } catch (Exception e) {
                         log.error("GraphFlow 节点 [{}] 执行失败", name, e);
                         flowState.setStatus(GraphFlowState.NodeStatus.FAILED);
+                        if (graphExecutionRecorder != null && graphExecutionId != null) {
+                            graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
+                                    GraphFlowState.NodeStatus.FAILED, nodeStart, Instant.now(),
+                                    Duration.between(nodeStart, Instant.now()).toMillis(), e.getMessage());
+                        }
                         synchronized (emitter) {
                             emitter.onNext(RuntimeEvent.error("节点 [" + name + "] 失败: " + e.getMessage()));
                         }

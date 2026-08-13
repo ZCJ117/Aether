@@ -72,8 +72,8 @@ public class GraphExecutionRecorder {
                 : null;
     }
 
-    /** 测试构造：仅内存。 */
-    GraphExecutionRecorder(int retention) {
+    /** 测试构造：仅内存。跨包（executor test）可用，故 public。 */
+    public GraphExecutionRecorder(int retention) {
         this(retention, false, "./cache/graph-traces");
     }
 
