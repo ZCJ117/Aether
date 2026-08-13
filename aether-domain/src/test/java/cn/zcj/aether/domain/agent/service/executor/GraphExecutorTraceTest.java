@@ -28,13 +28,17 @@ import static org.mockito.Mockito.*;
 class GraphExecutorTraceTest {
 
     private GraphExecutor buildExecutor(GraphExecutionRecorder recorder) throws Exception {
+        Agent agent = mock(Agent.class);
+        when(agent.execute(any(RuntimeContext.class)))
+                .thenReturn(Flowable.just(RuntimeEvent.text("node output")));
+        return buildExecutorWithAgent(recorder, agent);
+    }
+
+    private GraphExecutor buildExecutorWithAgent(GraphExecutionRecorder recorder, Agent agent) throws Exception {
         GraphExecutor executor = new GraphExecutor();
         ReflectionTestUtils.setField(executor, "graphExecutionRecorder", recorder);
 
         DefaultAgentFactory factory = mock(DefaultAgentFactory.class);
-        Agent agent = mock(Agent.class);
-        when(agent.execute(any(RuntimeContext.class)))
-                .thenReturn(Flowable.just(RuntimeEvent.text("node output")));
         when(factory.create(any(AgentConfig.class))).thenReturn(agent);
         ReflectionTestUtils.setField(executor, "agentFactory", factory);
 
@@ -122,5 +126,23 @@ class GraphExecutorTraceTest {
         GraphExecutor executor = buildExecutor(null);
         assertDoesNotThrow(() -> executor.execute(graphflowGraph(), "u1", "s1", "hi")
                 .blockingSubscribe());
+    }
+
+    @Test
+    void graphflowWorkerThreadInheritsGraphExecutionIdMdc() throws Exception {
+        GraphExecutionRecorder recorder = new GraphExecutionRecorder(200);
+        Agent agent = mock(Agent.class);
+        AtomicReference<String> workerMdc = new AtomicReference<>();
+        when(agent.execute(any(RuntimeContext.class)))
+                .thenAnswer(inv -> {
+                    workerMdc.set(MDC.get("graphExecutionId"));
+                    return Flowable.just(RuntimeEvent.text("node output"));
+                });
+        GraphExecutor executor = buildExecutorWithAgent(recorder, agent);
+
+        executor.execute(graphflowGraph(), "u1", "s1", "hi").blockingSubscribe();
+
+        assertNotNull(workerMdc.get(), "graphflow 节点工作线程应继承 graphExecutionId MDC");
+        assertNull(MDC.get("graphExecutionId"), "执行结束后主线程 MDC 应清理");
     }
 }

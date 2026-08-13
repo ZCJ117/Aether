@@ -247,6 +247,7 @@ public class GraphExecutor {
 
         CountDownLatch latch = new CountDownLatch(count);
         List<ExecutionState> subStates = new CopyOnWriteArrayList<>();
+        Map<String, String> mdcCtx = MDC.getCopyOfContextMap();
 
         for (String agentName : agentNames) {
             AgentNodeDef def = graph.getAgentDefs().get(agentName);
@@ -284,6 +285,9 @@ public class GraphExecutor {
             }
 
             parallelPool.submit(() -> {
+                if (mdcCtx != null) {
+                    MDC.setContextMap(mdcCtx);
+                }
                 try {
                     AgentConfig agentConfig = AgentConfig.fromNodeDef(resolved);
                     Agent agent = agentFactory.create(agentConfig);
@@ -325,6 +329,7 @@ public class GraphExecutor {
                         }
                     }
                 } finally {
+                    MDC.clear();
                     latch.countDown();
                 }
             });
@@ -656,6 +661,7 @@ public class GraphExecutor {
         }
 
         Map<String, String> nodeOutputs = new ConcurrentHashMap<>();
+        Map<String, String> mdcCtx = MDC.getCopyOfContextMap();
         Queue<String> readyQueue = new ConcurrentLinkedQueue<>(entryNodes);
         ExecutionState globalState = new ExecutionState();
 
@@ -714,6 +720,9 @@ public class GraphExecutor {
                 }
 
                 new Thread(() -> {
+                    if (mdcCtx != null) {
+                        MDC.setContextMap(mdcCtx);
+                    }
                     try {
                         ExecutionState localState = globalState.forkSource();
                         AgentConfig agentConfig = AgentConfig.fromNodeDef(def);
@@ -801,6 +810,7 @@ public class GraphExecutor {
                             emitter.onNext(RuntimeEvent.error("节点 [" + name + "] 失败: " + e.getMessage()));
                         }
                     } finally {
+                        MDC.clear();
                         batchLatch.countDown();
                     }
                 }, "graphflow-" + name).start();
