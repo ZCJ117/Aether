@@ -2,7 +2,10 @@ package cn.zcj.aether.domain.agent.service.event;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
+
+import java.util.Map;
 
 /**
  * Agent 领域事件发布器 — P0-6。
@@ -167,6 +170,38 @@ public class AgentEventPublisher {
     }
 
     private String toJson(Object obj) {
-        try { return MAPPER.writeValueAsString(obj); } catch (Exception e) { return obj.toString(); }
+        try {
+            return MAPPER.writeValueAsString(toJsonWithMdc(obj));
+        } catch (Exception e) {
+            return obj.toString();
+        }
+    }
+
+    /** 把 MDC 上下文（graphExecutionId/sessionId/subagentId）并入 JSON 顶层，不改任何事件签名。 */
+    private static Object toJsonWithMdc(Object obj) {
+        Map<String, String> mdc = mdcFields();
+        if (mdc.isEmpty()) {
+            return obj;
+        }
+        // 事件对象序列化为 Map 后合并 MDC 键
+        try {
+            Map<String, Object> base = new java.util.LinkedHashMap<>(MAPPER.convertValue(obj, Map.class));
+            base.putAll(mdc);
+            return base;
+        } catch (Exception e) {
+            return obj;
+        }
+    }
+
+    /** 当前 MDC 中的结构化上下文字段（供日志 grep/join 与测试）。 */
+    public static Map<String, String> mdcFields() {
+        Map<String, String> result = new java.util.LinkedHashMap<>();
+        for (String key : new String[]{"graphExecutionId", "sessionId", "subagentId"}) {
+            String v = MDC.get(key);
+            if (v != null && !v.isEmpty()) {
+                result.put(key, v);
+            }
+        }
+        return result;
     }
 }
