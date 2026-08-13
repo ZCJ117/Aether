@@ -60,6 +60,25 @@ public final class AgentTracer {
             .startSpan();
     }
 
+    /** 图级执行 span（graph.execute）— D4 可视化调试。 */
+    public static SpanScope startGraphExecution(String graphExecutionId, String sessionId) {
+        Span span = tracer.spanBuilder("graph.execute")
+            .setSpanKind(SpanKind.INTERNAL)
+            .setAttribute("graph.execution.id", graphExecutionId)
+            .setAttribute("session.id", sessionId)
+            .startSpan();
+        return new SpanScope(span, span.makeCurrent());
+    }
+
+    /** 图节点 span（graph.node.<type>.<id>）— D4 可视化调试。 */
+    public static Span startGraphNode(String graphExecutionId, String agentType, String nodeName) {
+        return tracer.spanBuilder("graph.node." + (agentType == null ? "unknown" : agentType) + "." + nodeName)
+            .setSpanKind(SpanKind.INTERNAL)
+            .setAttribute("graph.execution.id", graphExecutionId)
+            .setAttribute("graph.node.name", nodeName)
+            .startSpan();
+    }
+
     // =========================================================
     // Span 结束
     // =========================================================
@@ -86,6 +105,18 @@ public final class AgentTracer {
 
     public static void endSpanWithError(Span span, String errorMessage) {
         span.setStatus(StatusCode.ERROR, errorMessage);
+        span.end();
+    }
+
+    /** 结束图节点 span。 */
+    public static void endGraphNode(Span span, boolean success, String errorMsg) {
+        if (success) {
+            span.setStatus(StatusCode.OK);
+        } else if (errorMsg != null) {
+            span.setStatus(StatusCode.ERROR, errorMsg);
+        } else {
+            span.setStatus(StatusCode.ERROR);
+        }
         span.end();
     }
 
