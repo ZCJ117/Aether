@@ -4,7 +4,6 @@ import cn.zcj.aether.api.response.Response;
 import cn.zcj.aether.domain.agent.service.subagent.DelegationRecord;
 import cn.zcj.aether.domain.agent.service.subagent.ExecutionControlService;
 import cn.zcj.aether.types.enums.ResponseCode;
-import cn.zcj.aether.types.exception.AppException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
@@ -56,8 +55,6 @@ public class OrchestrationController {
                     .info(ResponseCode.SUCCESS.getInfo())
                     .data(hit)
                     .build();
-        } catch (AppException e) {
-            return Response.<Boolean>builder().code(e.getCode()).info(e.getInfo()).build();
         } catch (Exception e) {
             log.error("中断子Agent失败 id={}", id, e);
             return Response.<Boolean>builder()

@@ -53,6 +53,14 @@ class OrchestrationControllerTest {
     }
 
     @Test
+    void spawnPauseWithNullBodyDefaultsToResume() {
+        when(control.setSpawnPaused(false)).thenReturn(false);
+        Response<Boolean> resp = controller.setSpawnPaused(null);
+        assertEquals(Boolean.FALSE, resp.getData());
+        verify(control).setSpawnPaused(false);
+    }
+
+    @Test
     void delegationsWithSessionDelegates() {
         DelegationRecord rec = new DelegationRecord();
         rec.setId("ad-1");
