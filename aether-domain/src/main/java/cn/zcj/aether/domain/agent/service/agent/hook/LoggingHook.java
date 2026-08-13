@@ -5,6 +5,8 @@ import cn.zcj.aether.domain.agent.service.agent.core.AgentResult;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.event.AgentEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
@@ -20,7 +22,9 @@ import java.util.UUID;
 @Component
 public class LoggingHook implements AgentHook {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     @Override
     public int priority() { return 50; } // 最先执行
