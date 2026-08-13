@@ -40,3 +40,18 @@ aether:
       enabled: true
       batch-size: 50
       max-per-run: 500
+  # ====== D4: 可视化调试 ======
+  delegation:
+    live-log-dir: ./cache/delegation/live   # 每子Agent直播日志根目录（对齐 hermes cache/delegation/live）
+    stale-timeout: PT10M                     # 挂起子Agent判定窗口（StaleDelegationScanner）
+    stale-scan-interval-ms: 60000            # stale 扫描间隔；<=0 禁用
+  subagent:
+    terminal-retention: 100                  # runtimes 终态保留上限（超出逐出最旧）
+  graph:
+    trace:
+      retention: 200                         # 图级 trace 内存保留执行数
+      persistence: false                     # 是否异步落 JSONL（对齐 moa_trace.py opt-in）
+      dir: ./cache/graph-traces
+      background-review:
+        enabled: false                       # 后台自评审总开关（默认关）
+        model-ref: gpt-4o
