@@ -12,6 +12,12 @@ public interface McpToolRegistry {
     /** 登记某 MCP server 的工具快照 */
     void register(String serverId, List<ToolSpec> tools);
 
+    /**
+     * 登记某 MCP server 的工具快照，并附带运行时刷新 rebuilder（重新拉取 tools/list）。
+     * 供手动 POST /api/mcp/refresh 触发 {@link #refresh(String)}。
+     */
+    void register(String serverId, List<ToolSpec> tools, Supplier<List<ToolSpec>> rebuilder);
+
     /** 查询某 MCP server 的工具快照 */
     List<ToolSpec> getTools(String serverId);
 
@@ -27,6 +33,12 @@ public interface McpToolRegistry {
      * 快照 in-place 替换，返回新增/移除的工具名。
      */
     RefreshResult refreshTools(String serverId, Supplier<List<ToolSpec>> rebuilder);
+
+    /** 用已登记的 rebuilder 刷新某 MCP server 工具集（手动触发）。未登记 rebuilder 时返回空结果。 */
+    RefreshResult refresh(String serverId);
+
+    /** 已登记的所有 serverId（供 refresh-all） */
+    List<String> serverIds();
 
     /** 刷新结果：新增/移除的工具名 */
     record RefreshResult(List<String> added, List<String> removed) {

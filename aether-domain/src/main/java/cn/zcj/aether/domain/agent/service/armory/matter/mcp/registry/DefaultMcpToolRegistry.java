@@ -22,6 +22,8 @@ public class DefaultMcpToolRegistry implements McpToolRegistry {
     private final Map<String, List<ToolSpec>> toolsByServer = new ConcurrentHashMap<>();
     /** toolName → serverId（注册时精确捕获的 provenance） */
     private final Map<String, String> serverByToolName = new ConcurrentHashMap<>();
+    /** serverId → 运行时刷新 rebuilder（重新拉取 tools/list） */
+    private final Map<String, Supplier<List<ToolSpec>>> rebuilders = new ConcurrentHashMap<>();
 
     @Override
     public void register(String serverId, List<ToolSpec> tools) {
@@ -30,6 +32,14 @@ public class DefaultMcpToolRegistry implements McpToolRegistry {
         }
         toolsByServer.put(serverId, List.copyOf(tools));
         log.info("MCP 工具已登记: server={} tools={}", serverId, tools.size());
+    }
+
+    @Override
+    public void register(String serverId, List<ToolSpec> tools, Supplier<List<ToolSpec>> rebuilder) {
+        register(serverId, tools);
+        if (rebuilder != null) {
+            rebuilders.put(serverId, rebuilder);
+        }
     }
 
     @Override
@@ -87,5 +97,20 @@ public class DefaultMcpToolRegistry implements McpToolRegistry {
             log.info("MCP 工具无变更: server={}", serverId);
         }
         return new RefreshResult(added, removed);
+    }
+
+    @Override
+    public RefreshResult refresh(String serverId) {
+        Supplier<List<ToolSpec>> rebuilder = rebuilders.get(serverId);
+        if (rebuilder == null) {
+            log.warn("MCP 刷新：server 未登记 rebuilder: server={}", serverId);
+            return new RefreshResult(List.of(), List.of());
+        }
+        return refreshTools(serverId, rebuilder);
+    }
+
+    @Override
+    public List<String> serverIds() {
+        return new ArrayList<>(toolsByServer.keySet());
     }
 }
