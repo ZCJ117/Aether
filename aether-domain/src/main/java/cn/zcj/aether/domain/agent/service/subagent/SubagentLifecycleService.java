@@ -142,6 +142,7 @@ public class SubagentLifecycleService {
             rt.setResult(result);
             rt.tryTerminal(SubagentState.COMPLETED); // 已被 cancel/stale 置终态则 CAS 失败，保持原终态
             closeLiveLog(rt);
+            evictTerminalIfNeeded();
             return result;
         } catch (Exception e) {
             log.error("SubagentLifecycleService: 子Agent执行异常 id={} task={}",
@@ -151,6 +152,7 @@ public class SubagentLifecycleService {
             rt.setResult(result);
             rt.tryTerminal(SubagentState.FAILED);
             closeLiveLog(rt);
+            evictTerminalIfNeeded();
             return result;
         } finally {
             MDC.remove("subagentId");
@@ -203,6 +205,7 @@ public class SubagentLifecycleService {
         if (liveLog != null) {
             liveLog.close(id, "end status=CANCELLED [取消]");
         }
+        evictTerminalIfNeeded();
         return true;
     }
 
@@ -250,6 +253,7 @@ public class SubagentLifecycleService {
                     if (liveLog != null) {
                         liveLog.close(rt.id(), "end status=TIMED_OUT [超时]");
                     }
+                    evictTerminalIfNeeded();
                 }
             }
         }
@@ -271,6 +275,27 @@ public class SubagentLifecycleService {
     public Optional<DelegationTask> taskOf(String id) {
         SubagentRuntime rt = runtimes.get(id);
         return rt == null ? Optional.empty() : Optional.of(rt.task());
+    }
+
+    /** 终态保留上限：超出 terminalRetention 时逐出最旧终态运行时（active 永不逐出）。 */
+    private void evictTerminalIfNeeded() {
+        while (runtimes.size() > terminalRetention) {
+            String oldest = null;
+            Instant oldestAt = null;
+            for (SubagentRuntime rt : runtimes.values()) {
+                if (SubagentRuntime.isTerminal(rt.state())) {
+                    Instant at = rt.createdAt();
+                    if (oldestAt == null || at.isBefore(oldestAt)) {
+                        oldest = rt.id();
+                        oldestAt = at;
+                    }
+                }
+            }
+            if (oldest == null) {
+                break; // 无可逐出的终态条目（active 全部占位）
+            }
+            runtimes.remove(oldest);
+        }
     }
 
     @PreDestroy
