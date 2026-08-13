@@ -12,10 +12,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 后台图执行质量评审 — 对齐 hermes background_review.py（默认关闭，配置启用）。
@@ -36,6 +39,10 @@ public class BackgroundReviewer {
     private final String systemPrompt;
     private final ExecutorService executor;
 
+    private static final Duration REVIEW_TIMEOUT = Duration.ofSeconds(60);
+    private static final int REVIEW_QUEUE_CAPACITY = 16;
+    private final Duration reviewTimeout;
+
     @Autowired
     public BackgroundReviewer(GraphExecutionRecorder recorder,
                               AgentEventPublisher publisher,
@@ -43,17 +50,34 @@ public class BackgroundReviewer {
                               ChatModel chatModel,
                               @Value("${aether.graph.background-review.model-ref:gpt-4o}") String modelRef,
                               @Value("${aether.graph.background-review.system-prompt:你是资深评审。请对给定 Agent 执行结果做质量评审，200 字内。}") String systemPrompt) {
+        this(recorder, publisher, modelInvoker, chatModel, modelRef, systemPrompt,
+                REVIEW_TIMEOUT, REVIEW_QUEUE_CAPACITY);
+    }
+
+    /** 包私有测试构造器：可注入短超时/小容量（对齐 GraphExecutionRecorder(int retention) 可测性模式）。 */
+    BackgroundReviewer(GraphExecutionRecorder recorder,
+                       AgentEventPublisher publisher,
+                       ModelInvoker modelInvoker,
+                       ChatModel chatModel,
+                       String modelRef,
+                       String systemPrompt,
+                       Duration reviewTimeout,
+                       int queueCapacity) {
         this.recorder = recorder;
         this.publisher = publisher;
         this.modelInvoker = modelInvoker;
         this.chatModel = chatModel;
         this.modelRef = modelRef;
         this.systemPrompt = systemPrompt;
-        this.executor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "background-review");
-            t.setDaemon(true);
-            return t;
-        });
+        this.reviewTimeout = reviewTimeout;
+        this.executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity),
+                r -> {
+                    Thread t = new Thread(r, "background-review");
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.DiscardPolicy());
     }
 
     /** 异步提交图执行结果做后台评审。best-effort。 */
@@ -78,15 +102,23 @@ public class BackgroundReviewer {
         });
     }
 
-    /** 对最终输出做模型评审；返回评审文本。goal 为 null/blank 时仅用 finalOutput。 */
+    /** 对最终输出做模型评审；返回评审文本。goal 为 null/blank 时仅用 finalOutput。超时/错误统一转占位。 */
     String review(String goal, String finalOutput) {
         String userContent = (goal == null || goal.isBlank())
                 ? finalOutput
                 : "任务目标:\n" + goal + "\n\n执行结果:\n" + finalOutput;
-        ModelInvoker.ModelCallResult r = modelInvoker.callWithStream(chatModel,
-                List.of(new UserMessage(userContent)), systemPrompt, modelRef);
-        return r.hasError() ? "[评审失败: " + r.getError() + "]"
-                : (r.getFullText() == null ? "" : r.getFullText());
+        try {
+            ModelInvoker.ModelCallResult r = modelInvoker.callWithStreamAsync(chatModel,
+                    List.of(new UserMessage(userContent)), systemPrompt, modelRef)
+                    .block(reviewTimeout);
+            if (r == null) {
+                return "[评审失败: 无结果]";
+            }
+            return r.hasError() ? "[评审失败: " + r.getError() + "]"
+                    : (r.getFullText() == null ? "" : r.getFullText());
+        } catch (Exception e) {
+            return "[评审失败: " + e.getMessage() + "]";
+        }
     }
 
     @PreDestroy
