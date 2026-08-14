@@ -2,6 +2,7 @@ package cn.zcj.aether.infrastructure.deleg;
 
 import cn.zcj.aether.domain.agent.service.subagent.DelegationLiveLog;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -42,6 +43,7 @@ public class FileDelegationLiveLog implements DelegationLiveLog {
     private final Map<String, Boolean> ok = new ConcurrentHashMap<>();
     private final Set<String> closed = ConcurrentHashMap.newKeySet();
 
+    @Autowired
     public FileDelegationLiveLog(
             @Value("${aether.delegation.live-log-dir:./cache/delegation/live}") String baseDir) {
         this.baseDir = Paths.get(baseDir).toAbsolutePath().normalize();

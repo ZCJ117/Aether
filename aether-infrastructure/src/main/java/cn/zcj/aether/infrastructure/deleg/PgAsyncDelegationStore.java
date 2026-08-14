@@ -4,6 +4,7 @@ import cn.zcj.aether.domain.agent.service.subagent.AsyncDelegationStore;
 import cn.zcj.aether.domain.agent.service.subagent.DelegationRecord;
 import cn.zcj.aether.domain.agent.service.subagent.SubagentState;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -32,6 +33,7 @@ public class PgAsyncDelegationStore implements AsyncDelegationStore {
 
     private final JdbcTemplate jdbcTemplate;
 
+    @Autowired
     public PgAsyncDelegationStore(DataSource dataSource) {
         this(new JdbcTemplate(dataSource));
         log.info("PgAsyncDelegationStore 已初始化");

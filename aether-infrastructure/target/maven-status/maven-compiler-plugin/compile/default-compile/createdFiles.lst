@@ -6,13 +6,17 @@ cn\zcj\aether\infrastructure\persistence\AuditLogRepository.class
 cn\zcj\aether\infrastructure\persistence\RefreshTokenRepository.class
 cn\zcj\aether\infrastructure\persistence\UserRepository$UserEntity.class
 cn\zcj\aether\infrastructure\persistence\UserRepository.class
+cn\zcj\aether\infrastructure\deleg\FileDelegationLiveLog.class
 cn\zcj\aether\repository\PgSessionRepository.class
 cn\zcj\aether\repository\SessionStore$SessionRecord.class
 cn\zcj\aether\infrastructure\persistence\RefreshTokenRepository$RefreshTokenEntity.class
 cn\zcj\aether\repository\PgSessionRepository$SessionRowMapper.class
 cn\zcj\aether\infrastructure\checkpoint\GitShadowCheckpointStore$1.class
+cn\zcj\aether\infrastructure\deleg\PgAsyncDelegationStore.class
 cn\zcj\aether\repository\RedisSessionRepository.class
 cn\zcj\aether\infrastructure\checkpoint\GitShadowCheckpointStore.class
+cn\zcj\aether\infrastructure\credential\RotatingCredentialPool.class
+cn\zcj\aether\infrastructure\deleg\PgAsyncDelegationStore$DelegationRowMapper.class
 cn\zcj\aether\infrastructure\security\SsrfSafeInterceptor.class
 cn\zcj\aether\infrastructure\classifier\DefaultModelErrorClassifier.class
 cn\zcj\aether\infrastructure\persistence\AuditLogRepository$AuditLogEntity.class

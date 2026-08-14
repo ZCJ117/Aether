@@ -31,10 +31,10 @@ aether:
       consolidation-threshold: 0.85  # 相似度合并阈值
       vector-dimension: 1024     # 向量维度（pgvector，与 embedding 模型一致）
     embedding:                   # 记忆向量生成（未配置 base-url 则语义检索降级）
-      base-url: https://api.deepseek.com
-      api-key: ${DEEPSEEK_API_KEY:}
-      path: v1/embeddings
-      model: bge-m3
+      base-url: https://open.bigmodel.cn
+      api-key: ***REMOVED-CREDENTIAL***
+      path: api/paas/v4/embeddings
+      model: embedding-2
       dimension: 1024
     backfill:                    # 存量 NULL 向量回填
       enabled: true

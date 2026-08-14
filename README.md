@@ -1,8 +1,8 @@
 # Aether: 企业级多 Agent 协作架构
 
-Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、**PlanActAgent 规划执行模式**、**检查点/恢复机制**、**LLM 响应缓存**、**上下文工程架构升级**（Token 预算 + AgentScope 6步压缩管道 + 信号策展 + 运行时即时检索 + 子Agent 物理隔离 + 外部笔记）、**三级优先级代码优化**（P0 工具校验闭环与 Schema 回喂 + P1 错误分类容错与 Fallback 模型链 + P2 上下文压缩守卫与熔断）、工具沙箱、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统和 OpenTelemetry 可观测性。
+Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent 引擎 + DDD 六边形架构。YAML 配置驱动多 Agent 编排，支持 MCP/Skills 工具集成、**Agent 级工具作用域**、**PlanActAgent 规划执行模式**、**检查点/恢复机制**、**LLM 响应缓存**、**上下文工程架构升级**（Token 预算 + AgentScope 6步压缩管道 + 信号策展 + 运行时即时检索 + 子Agent 物理隔离 + 外部笔记）、**三级优先级代码优化**（P0 工具校验闭环与 Schema 回喂 + P1 错误分类容错与 Fallback 模型链 + P2 上下文压缩守卫与熔断）、工具沙箱、异构模型混合调用、DAG 条件路由、洋葱中间件体系、权限引擎、多层记忆系统（hermes 生命周期对齐：Provider SPI + `<memory-context>` 围栏净化）、**编排协调 hermes 对齐**（D1 异步委派多 Agent 协作 + D2 异常重试与凭据池轮换 + D3 生命周期 Hook 可扩展配置 + D4 可视化调试）和 OpenTelemetry 可观测性。
 
-设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha、hermes-agent 六大开源 Agent 框架，累计 100+ 源文件、9 个测试类（112 个测试用例）。
+设计参考 AutoGen、AgentScope Java、CrewAI、MetaGPT、cc-haha、hermes-agent 六大开源 Agent 框架，累计 100+ 源文件、15 个测试类（144 个测试用例）。
 
 ---
 
@@ -147,7 +147,16 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 - **MemoryFacade 统一门面**：`remember()`（LLM 推断元数据）+ `recall()`（自适应召回，Shallow/Deep 双模式）
 - **RecallFlow**：Shallow（单次语义搜索 + 时间衰减）→ Deep（LLM 查询分解 → 多子查询并行搜索 → 去重合并 → LLM 重排序）
 - **MemoryScope 层级隔离**：`"crew/research/agent/analyst"`，支持祖先路径遍历
-- **{memory} 占位符注入**：通过 `ChatService.injectMemory()` 注入记忆到 Agent instruction。instruction 缺少 `{memory}` 占位符时 → WARN 日志提示（不静默丢弃）
+- **{memory} 占位符注入**：通过 `ChatService.injectMemory()`（优先 `MemoryLifecycleHooks.prefetch`，回退文件存储关键词匹配）注入记忆到 Agent instruction。instruction 缺少 `{memory}` 占位符时 → WARN 日志提示（不静默丢弃）
+
+**hermes 对齐的记忆生命周期层（`memory/core/`，新增）** —— 参照 hermes-agent 的 `MemoryProvider`/`MemoryManager`/`MemoryStore` 设计，在 Java 侧对齐生命周期钩子、编排约束与上下文围栏净化：
+
+- **MemoryProvider SPI**：`name()` / `isAvailable()` / `initialize(sessionId, ctx)` + 默认 no-op 的 `prefetch` / `queuePrefetch` / `syncTurn` / `getToolSchemas` / `handleToolCall` / `shutdown`，以及 `onTurnStart` / `onSessionEnd` / `onSessionSwitch` / `onPreCompress` / `onMemoryWrite` 五个可选钩子（对齐 hermes `MemoryProvider` ABC）
+- **MemoryManager 编排**：builtin 恒接受 + **外部 provider 只许一个**（防 tool schema 膨胀与后端冲突）；单线程后台 executor 保证 turn 顺序落盘；`drain()` 5s 超时；`buildNudge()` 按 `nudge-interval` 注入保存记忆提醒（对齐 hermes `MemoryManager` + turn_context nudge）
+- **BuiltinMemoryProvider**：委托现有 `MemoryFacade` 执行写入/检索——`syncTurn` 按用户画像关键词启发式判定 scope（agent 事实 ↔ MEMORY.md / user 画像 ↔ USER.md），`prefetch` 双作用域检索并按 `memory-char-limit`/`user-char-limit` 预算格式化 `<memory-context>` 围栏（对齐 hermes `MemoryStore` 双文件双预算语义）
+- **MemoryContextScrubber**：`sanitize()` 一次性剥除围栏/注记 + `StreamingScrubber` 流式块边界状态机（跨分片标签暂存、未闭合围栏丢弃、行内提及不误伤）——对齐 hermes `sanitize_context` + `StreamingContextScrubber`
+- **MemoryLifecycleHooks**：Spring 门面，`ChatService` 唯一接入点——turn 前 `prefetch`、turn 后 `syncTurn`（同步/流式路径均经净化防记忆回显递归污染）、会话删除 `onSessionEnd`（按 `flush-min-turns` 门控）
+- **MemoryProperties**：`aether.memory` 配置段，默认值与 hermes 完全一致（`memory-char-limit=2200` / `user-char-limit=1375` / `nudge-interval=10` / `flush-min-turns=6` / `recall.max-results=10`）
 
 ### 2.9 会话持久化
 
@@ -168,9 +177,49 @@ Aether — 企业级 AI Agent 架构，基于 Spring Boot 3.4.3 + 自研 Agent �
 
 ### 2.11 测试覆盖
 
-9 个测试文件（JUnit 5 + Mockito）：`ReActAgentTest` / `ModelInvokerTest` / `ToolExecutorTest` / `ContextManagerTest` / `GraphExecutorTest` / `ChatServiceTest` / `ModelProviderTest` / `SessionRepositoryTest` / `AgentIntegrationTest`
+15 个测试文件（JUnit 5 + Mockito）：`ReActAgentTest` / `ModelInvokerTest` / `ToolExecutorTest` / `ContextManagerTest` / `GraphExecutorTest` / `ChatServiceTest` / `ModelProviderTest` / `SessionRepositoryTest` / `AgentIntegrationTest` + `memory/core/` 6 个（见下）
+
+记忆系统对齐测试（新增 32 用例）：`BuiltinMemoryProviderTest`（**核心验收 `writeTenThenPreciseRecall`**：写入 10 条不同主题记忆 → `prefetch` 精确召回目标主题且排位第一；双作用域召回、截断围栏可净化往返、scope 防误分类）+ `MemoryManagerTest`（builtin 恒接受 + 外部只许一个 + nudge + 异步保序 + drain）+ `MemoryContextScrubberTest`（单次净化 + 流式跨分片状态机 + 行内提及不误伤）+ `MemoryPropertiesTest`（默认值对齐 hermes）+ `MemoryProviderTest`（SPI 默认行为 + handleToolCall 抛异常）+ `MemoryLifecycleHooksTest`（enabled 开关 + flush-min-turns 门控）。测试双 `FakeMemoryFacade` 以字符袋向量（32 维）做真实余弦相似度检索，CI 无需 Postgres
 
 测试增强（P2 上下文压缩守卫）：`ContextManagerTest` 新增 `alignToolPairBoundaries` 配对对齐、`trimMessages` 修剪配对完整性、`isOrphanToolResult` / `isDanglingToolUse` 边界判断、microCompact 成对移除安全等单元测试用例
+
+### 2.12 编排协调对齐（hermes 对齐，D1–D4 四维度）
+
+参照 `hermes-agent-main/` 的编排协调架构，按四维度对齐 Aether 的 Agent 编排能力。落于分支 `feat/orchestration-hermes-alignment`，分四批交付（每批 JUnit + `mvn test` 全绿），`hermes-agent-main/` 全程零修改。
+
+#### D2 异常重试与凭据池轮换（Batch 1）
+- **turn 级重试状态机**：`TurnRetryState` / `RecoveryBranch` / `RecoveryDirective` / `RetryBackoff`——将单次模型调用的容错提升为 turn 级可恢复状态（对齐 hermes 恢复分支 + 去相关抖动退避）
+- **凭据池**：`CredentialPool`（domain 接口）+ `RotatingCredentialPool`（infra 轮询实现）——`rotate(current, provider)` 返回同 provider 下一个凭据，`AUTH_TRANSIENT`/`BILLING` 时同 provider 轮换而非直接退化 fallback（对齐 hermes `recover_with_credential_pool`）
+- **凭据池生产播种**：`ai-api.credentials` 列表配置（主 `api-key` 首项 + 备用按 apiKey 去重），`CredentialPoolSeeder` 纯函数播种，`ChatModelNode` 装配期 `seed`（幂等覆盖）；`RotatingCredentialPool` 用 `ConcurrentHashMap` + `List.copyOf` 防每请求播种与轮换竞态
+
+#### D3 可扩展配置（Batch 2）
+- **生命周期 Hook 体系**：`LifecycleHook` + `HookPoint`（14 挂点）+ `HookContext`（`@Builder` record）——与既有 `AgentHook`（7 拦截点）并存的双钩子体系（决策：AgentHook 不动，LifecycleHook 新增）
+- **Shell 钩子**：`ShellHookSpec` + `ShellHook`（shell 命令钩子）
+- **配置驱动装配**：`HookConfigLoader` 解析 YAML hook 配置，`AgentGraphCompiler` 装配接线
+- **4 个注入点**：`ChatService`（会话）、`SubAgentOrchestrator`（子代理）、`ReActAgent`（API 请求，经 `DefaultAgentFactory.setHookRegistry`）、`GraphExecutor`（图节点/图完成）
+- **MCP 工具注册表**：`McpToolRegistry.refreshTools(serverId, rebuilder)` diff 增量更新（added/removed）+ `isToolParallelSafe` 精确溯源
+
+#### D1 多 Agent 协作 — 异步委派（Batch 3）
+- **委派生命周期**：`SubagentLifecycleService.launch` 返回 `CompletableFuture`，`AtomicReference` 状态机，`cancel`/`detectStale` 用合成非空结果完成 future（供 `whenComplete` 触发）；终态保留上限 + `future.isDone()` 门控逐出（修并发逐出把 COMPLETED 误标 FAILED 的数据竞态）
+- **异步委派服务**：`AsyncDelegationService`（`dispatch`/`recoverAbandoned` 一次性 at-most-once + attemptCount≤8/`restoreUndelivered`/`interruptForSession`/`listBySession`），store 用 `ObjectProvider` 可选注入（`aether.delegation.persistence=false` 时内存降级，修 prod 启动失败 Critical）
+- **并发控制**：`SpawnGate`（暂停 + `ThreadLocal` 深度，exit 归零 remove 防滞留）、`CompletionBus`（`ConcurrentLinkedQueue` + `CopyOnWriteArrayList` 订阅者，回灌去重）、`LeaseManager`（每 session `AtomicInteger` CAS 容量拒绝，不排队）
+- **持久化**：`AsyncDelegationStore`（domain 端口）+ `PgAsyncDelegationStore`（infra，PostgreSQL 零新依赖，`t_async_delegation` 表入 schema.sql，`JdbcTemplate` + `RowMapper`，safeState 宽松映射）
+- **委派即工具**：`SubAgentDelegationTool` async 模式 + `SpawnGate` 闸门 + `ChatModelNode` 接线
+
+#### D4 可视化调试（Batch 4）
+- **委派直播日志**：`DelegationLiveLog`（domain 端口）+ `FileDelegationLiveLog`（infra，append-mode 崩溃安全 / 首错禁用 / 7 天留存 / close 幂等）
+- **图执行录制**：`GraphExecutionRecorder`（内存有界 200 回放 + opt-in JSONL，`CopyOnWriteArrayList` 线程安全 + `@PreDestroy` 关 fileWriter）+ `GraphExecutor` 接线（begin/end + graphflow 4 节点事件 RUNNING/SKIPPED/COMPLETED/FAILED + MDC graphExecutionId/sessionId try/finally 恢复）
+- **可观测性增强**：`AgentTracer` 图级 span（`graph.execute` / `graph.node.<type>.<id>`）+ `AgentEventPublisher` MDC 富化（合并 graphExecutionId/sessionId/subagentId + `JavaTimeModule` 修复 Instant 序列化）
+- **实时控制**：`ExecutionControlService`（list/interrupt/spawn-pause/delegations）+ `OrchestrationController`（4 端点，见第七节）
+- **过期扫描**：`StaleDelegationScanner`（自建单线程 `ScheduledExecutorService`，interval≤0 禁用，scanOnce 包 try/catch 防周期任务被异常取消）
+- **后台评审**：`BackgroundReviewer`（`@ConditionalOnProperty` 默认关，graphflow 成功尾调用 submit，有界 `ThreadPoolExecutor` + DiscardPolicy 满载静默丢弃，`REVIEW_TIMEOUT=60s`）
+
+#### D2/D3 残留收尾
+- 凭据池生产播种（`ai-api.credentials` + `CredentialPoolSeeder`）✅
+- MCP 手动刷新端点（`McpRefreshController` `POST /api/mcp/refresh`）✅
+- **仍延后**：MCP `tools/list_changed` 自动监听（sync `McpSyncClient` 不暴露 notification，重构异步客户端违反 YAGNI）
+
+**已接受限制**（final review 确认为真限制非 bug）：① `rotate` 只复制 5 字段（丢 embeddingsPath/backoff/fallbackModels/extraParams，Batch 1 既有）；② refresh 仅刷 registry 元数据不热替换 ChatModel 工具回调（设计 §5.3⑦ 范围）；③ stdio refresh 重连泄漏子进程（手动低频可接受）。
 
 ---
 
@@ -256,6 +305,7 @@ aether/
 │           │   │   └── workflow/                 # LoopAgentNode / ParallelAgentNode / SequentialAgentNode
 │           │   └── matter/
 │           │       ├── mcp/              # MCP 客户端工厂（SSE / Stdio / Local）
+│           │       │   └── registry/     # McpToolRegistry, DefaultMcpToolRegistry（D3 diff 刷新）
 │           │       └── skills/           # Skills 技能工具
 │           │
 │           ├── agent/                    # ★ Agent 接口体系
@@ -263,11 +313,14 @@ aether/
 │           │   ├── impl/ReActAgent.java  # 标准 Think-Act-Observe 循环
 │           │   ├── hook/                 # AgentHook, HookRegistry, CompositeHook,
 │           │   │   │                     # LoggingHook, SessionPersistenceHook
+│           │   │   │                     # LifecycleHook, HookPoint(14挂点), HookContext,
+│           │   │   │                     # ShellHook, ShellHookSpec（D3）
 │           │   ├── middleware/           # AgentMiddleware, MiddlewareChain
 │           │   │   └── impl/             # RateLimitMiddleware, GracefulShutdownMiddleware, PermissionMiddleware
 │           │   ├── permission/           # PermissionMode, PermissionDecision, PermissionContext,
 │           │   │                         # PermissionRule, PermissionEngine
-│           │   └── observability/        # AgentTracer, AgentMetrics, TokenUsage
+│           │   └── observability/        # AgentTracer, AgentMetrics, TokenUsage,
+│           │                             # GraphExecutionRecorder, BackgroundReviewer（D4）
 │           │
 │           ├── model/                    # ★ 模型提供商抽象
 │           │   ├── ModelProvider.java    # SPI 接口
@@ -279,7 +332,12 @@ aether/
 │           │       ├── ClassifiedError.java       # 动作提示内联（retryable/shouldCompress/shouldFallback）
 │           │       ├── ModelErrorClassifier.java  # 分类器接口
 │           │       ├── ModelRoute.java            # 模型路由（含 fallback 链）
-│           │       └── ResilientChatModelExecutor.java  # 统一容错执行器
+│           │       ├── ResilientChatModelExecutor.java  # 统一容错执行器
+│           │       ├── TurnRetryState.java        # turn 级重试状态（D2）
+│           │       ├── RecoveryBranch.java / RecoveryDirective.java  # 恢复分支/指令（D2）
+│           │       ├── RetryBackoff.java          # 去相关抖动退避（D2）
+│           │       ├── CredentialPool.java        # 凭据池接口（D2）
+│           │       └── CredentialPoolSeeder.java  # 凭据池播种器（D2）
 │           │
 │           ├── session/                  # ★ 会话持久化
 │           │   ├── SessionEntity.java
@@ -296,7 +354,15 @@ aether/
 │           │   ├── RecallFlow.java       # Shallow/Deep 自适应召回
 │           │   ├── EncodingFlow.java     # LLM 编码管线
 │           │   ├── SessionMemoryExtractor.java  # 后台记忆提取
-│           │   └── MemoryStore.java      # 文件存储（保留向后兼容）
+│           │   ├── MemoryStore.java      # 文件存储（保留向后兼容）
+│           │   └── core/                 # ★ hermes 生命周期对齐层（新增）
+│           │       ├── MemoryProvider.java         # Provider SPI（生命周期钩子）
+│           │       ├── MemoryManager.java          # 编排器（builtin+单外部/nudge/异步同步/drain）
+│           │       ├── BuiltinMemoryProvider.java  # 内置 provider（委托 MemoryFacade，双作用域）
+│           │       ├── MemoryContextScrubber.java  # <memory-context> 围栏净化（单次+流式）
+│           │       ├── MemoryProperties.java       # aether.memory 配置
+│           │       ├── MemoryLifecycleHooks.java   # Spring 门面（prefetch/syncTurn/onSessionEnd）
+│           │       └── MemoryInitContext.java      # initialize 上下文
 │           │
 │           ├── event/                    # ★ 结构化事件
 │           │   ├── AgentEvent.java       # 10 种事件 record，Jackson 多态
@@ -337,10 +403,17 @@ aether/
 │           │   ├── DynamicLoader.java      # 按需数据加载
 │           │   ├── CodeExplorer.java       # grep/glob 搜索工具
 │           │   └── DocRetriever.java       # 两级文档检索工具
-│           ├── subagent/                 # ★ 子Agent 物理隔离
+│           ├── subagent/                 # ★ 子Agent 物理隔离 + 异步委派（D1）
 │           │   ├── SubAgentOrchestrator.java # 派遣编排（Semaphore 5 并发）
 │           │   ├── SubAgentBoundary.java     # 隔离配置工厂
-│           │   └── ResultRefiner.java        # 结果精炼（零 LLM 调用）
+│           │   ├── ResultRefiner.java        # 结果精炼（零 LLM 调用）
+│           │   ├── SubagentLifecycleService.java # 委派生命周期（CompletableFuture + 状态机，D1）
+│           │   ├── AsyncDelegationService.java   # 异步委派服务（D1）
+│           │   ├── AsyncDelegationStore.java     # 委派持久化端口（D1）
+│           │   ├── SpawnGate.java / CompletionBus.java / LeaseManager.java  # 并发控制（D1）
+│           │   ├── DelegationLiveLog.java    # 委派直播日志端口（D4）
+│           │   ├── StaleDelegationScanner.java # 过期委派扫描（D4）
+│           │   └── ExecutionControlService.java # 编排实时控制（D4）
 │           ├── notes/                    # ★ 外部笔记
 │           │   ├── ExternalNotes.java     # 持久化 TODO/NOTES
 │           │   └── NotesTools.java        # todo_write + note_write 工具
@@ -360,11 +433,16 @@ aether/
 │       ├── MySqlSessionRepository.java   # MySQL 持久化
 │       ├── RedisSessionRepository.java   # Redis 持久化
 │       ├── PgvectorVectorStore.java      # Pgvector 向量存储
-│       └── GitShadowCheckpointStore.java # ★ H5 Git 影子仓检查点存储（新增，JGit）
+│       ├── GitShadowCheckpointStore.java # ★ H5 Git 影子仓检查点存储（新增，JGit）
+│       ├── PgAsyncDelegationStore.java   # ★ D1 委派 PostgreSQL 持久化（infrastructure/deleg，新增）
+│       ├── FileDelegationLiveLog.java    # ★ D4 委派直播日志文件实现（infrastructure/deleg，新增）
+│       └── RotatingCredentialPool.java   # ★ D2 凭据池轮询实现（infrastructure/credential，新增）
 │
 ├── aether-trigger/         # HTTP 触发层
 │   └── src/main/java/cn/zcj/aether/trigger/http/
 │       ├── AgentServiceController.java   # ★ REST API 入口
+│       ├── OrchestrationController.java  # ★ D4 编排实时控制（4 端点）
+│       ├── McpRefreshController.java     # ★ D3 MCP 工具手动刷新端点
 │       └── filter/MdcFilter.java         # MDC trace 注入
 │
 ├── aether-types/           # 类型定义层
@@ -713,6 +791,11 @@ npm run dev
 | POST | `/api/v1/chat_stream` | 流式对话（SSE），含 `permissionAsking`/`agentPaused` 类型 |
 | POST | `/api/v1/confirm` | H4 权限确认回执（提交工具调用批准/拒绝结果） |
 | POST | `/api/v1/resume` | H5 检查点恢复端点（从 `.claude/checkpoints/` 恢复会话） |
+| GET | `/api/orchestration/active-subagents` | 编排控制：活跃子 Agent 列表 |
+| POST | `/api/orchestration/subagents/{id}/interrupt` | 编排控制：中断子 Agent |
+| POST | `/api/orchestration/spawn/pause` | 编排控制：暂停/恢复新 spawn（body `{"paused": true}`） |
+| GET | `/api/orchestration/delegations?sessionId=` | 编排控制：委派查询 |
+| POST | `/api/mcp/refresh` | MCP 工具手动刷新（body 可选 `{"serverId": "..."}`，缺省刷全部） |
 | GET | `/actuator/prometheus` | Prometheus 指标端点 |
 
 统一响应格式 `cn.zcj.aether.api.response.Response<T>`：
@@ -773,6 +856,18 @@ npm run dev
 | **H4 权限确认** | `AgentServiceController` | `POST /api/v1/confirm` SSE 事件 `permissionAsking/agentPaused` ← **新增** |
 | **H5 快照去重** | `ToolExecutor` | 写操作前每轮每目录至多一次快照 ← **新增** |
 | **H5 中断信号** | `InterruptControl` | transient 语义，永不序列化落盘 ← **新增** |
+| **记忆总开关** | `MemoryProperties` | `aether.memory.enabled`，默认 `true`（对齐 hermes `memory_enabled`） ← **新增** |
+| **记忆 char 预算** | `MemoryProperties` | `memory-char-limit=2200`（≈800 token）/ `user-char-limit=1375`（≈500 token） ← **新增** |
+| **记忆 nudge / flush** | `MemoryManager` / `MemoryLifecycleHooks` | `nudge-interval=10`（0=禁用）/ `flush-min-turns=6`（0=禁用） ← **新增** |
+| **记忆召回 Top-K** | `BuiltinMemoryProvider` | `recall.max-results=10`，语义/时效/重要性权重 0.6/0.3/0.1 ← **新增** |
+| **记忆合并阈值** | `BuiltinMemoryProvider` | `recall.consolidation-threshold=0.85`（相似度 ≥ 阈值合并） ← **新增** |
+| **记忆向量维度** | `MemoryProperties` | `recall.vector-dimension=1280`（pgvector 预留） ← **新增** |
+| **记忆异步同步** | `MemoryManager` | 单线程后台 executor 保 turn 序，`drain()` 5s 超时（对齐 hermes `_SYNC_DRAIN_TIMEOUT_S`） ← **新增** |
+| **委派持久化开关** | `PgAsyncDelegationStore` / `AsyncDelegationService` | `aether.delegation.persistence`，默认 `false`（内存降级；PostgreSQL 持久化需 `true`） ← **新增** |
+| **委派过期窗口** | `StaleDelegationScanner` | `aether.delegation.stale-timeout` 默认 `PT10M`；`stale-scan-interval-ms` 默认 `60000` ← **新增** |
+| **委派直播日志目录** | `FileDelegationLiveLog` | `aether.delegation.live-log-dir` 默认 `./cache/delegation/live`，7 天留存 ← **新增** |
+| **图执行录制** | `GraphExecutionRecorder` | `aether.graph.trace.persistence` 默认 `false`；`retention=200`；`dir=./cache/graph-traces` ← **新增** |
+| **后台评审** | `BackgroundReviewer` | `aether.graph.background-review.enabled` 默认 `false`；`model-ref=gpt-4o`；`REVIEW_TIMEOUT=60s` ← **新增** |
 
 ---
 
@@ -785,7 +880,7 @@ npm run dev
 | **CrewAI** | Python | BaseAgent 可序列化实体 + BaseLLM 类层次 + **EncodingFlow/RecallFlow 记忆管线**（→ llmRerank 真实实现） + **CheckpointConfig + from_checkpoint**（→ 检查点/恢复机制） + EventBus（→ internalLlmCall 事件化） + **build_schema_hint**（→ P0 Schema 回喂） |
 | **MetaGPT** | Python | RoleContext.llm per-role + Working/LongTerm Memory 分层 + ProjectRepo 持久化 + **ActionNode 编译期校验**（→ {outputKey} 启动时校验） + **PLAN_AND_ACT 模式**（→ PlanActAgent）+ 消息级去重（→ LLM 缓存） |
 | **cc-haha** | TypeScript | cost-tracker token 核算 + SessionMemory 后台 Fork Agent + **显式 allow/deny 工具列表**（→ toolNames YAML 配置） + **WAL 日志模式 jsonl**（→ 检查点 WAL） + PermissionMode 四级模式 + **autoCompact 熔断器 MAX_CONSECUTIVE_FAILURES=3**（→ P2 熔断） |
-| **hermes-agent** | Python | **FailoverReason 21 种分类**（→ P1 14 种 FailoverReason）+ **jittered_backoff 去相关抖动**（→ P1 退避算法）+ **try_activate_fallback 模型链切换**（→ P1 Fallback 链）+ **分类 action 提示内联**（→ P1 ClassifiedError）+ 禁用 SDK 内建重试（→ P1 重试所有权收归） |
+| **hermes-agent** | Python | **FailoverReason 21 种分类**（→ P1 14 种 FailoverReason）+ **jittered_backoff 去相关抖动**（→ P1 退避算法）+ **try_activate_fallback 模型链切换**（→ P1 Fallback 链）+ **分类 action 提示内联**（→ P1 ClassifiedError）+ 禁用 SDK 内建重试（→ P1 重试所有权收归）+ **MemoryProvider 生命周期 + MemoryManager 编排（单外部约束/nudge/异步同步/drain）+ MemoryStore 双文件双预算 + sanitize_context/StreamingContextScrubber 围栏净化**（→ 记忆系统生命周期对齐）+ **recover_with_credential_pool**（→ D2 凭据池轮换）+ **_refresh_tools + is_mcp_tool_parallel_safe**（→ D3 MCP 刷新/并行安全溯源）+ **delegate_tool TUI / background_review / moa_trace**（→ D4 编排实时控制/后台评审/图执行录制） |
 
 ---
 

@@ -1,11 +1,13 @@
 cn\zcj\aether\trigger\http\filter\RateLimitFilter.class
 cn\zcj\aether\trigger\http\AgentServiceController$1.class
-cn\zcj\aether\trigger\http\AuthController.class
-cn\zcj\aether\trigger\http\AgentServiceController.class
-cn\zcj\aether\trigger\http\filter\MdcFilter.class
-cn\zcj\aether\trigger\http\filter\RateLimitFilter$WindowCounter.class
 cn\zcj\aether\trigger\http\handler\ValidationExceptionHandler.class
 cn\zcj\aether\trigger\http\filter\JwtAuthFilter.class
 cn\zcj\aether\trigger\http\handler\JwtAccessDeniedHandler.class
 cn\zcj\aether\trigger\http\filter\SecurityHeadersFilter.class
 cn\zcj\aether\trigger\http\handler\JwtAuthEntryPoint.class
+cn\zcj\aether\trigger\http\AuthController.class
+cn\zcj\aether\trigger\http\AgentServiceController.class
+cn\zcj\aether\trigger\http\filter\MdcFilter.class
+cn\zcj\aether\trigger\http\filter\RateLimitFilter$WindowCounter.class
+cn\zcj\aether\trigger\http\OrchestrationController.class
+cn\zcj\aether\trigger\http\McpRefreshController.class

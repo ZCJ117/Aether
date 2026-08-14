@@ -3,6 +3,7 @@ package cn.zcj.aether.domain.agent.service.subagent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
@@ -28,6 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Slf4j
 @Service
+@DependsOnDatabaseInitialization
 public class AsyncDelegationService {
 
     /** 重执行上限：Aether 借用 hermes _MAX_DELIVERY_ATTEMPTS=8（投递预算）作为启动恢复重入队上限。 */

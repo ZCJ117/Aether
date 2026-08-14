@@ -209,7 +209,7 @@ public class PgvectorVectorStore implements VectorStore {
         return CompletableFuture.runAsync(() -> {
             try {
                 if (vector == null || vector.length == 0) return;
-                jdbc.update("UPDATE aether_memories SET embedding = ?::vector WHERE id = ?",
+                jdbc.update("UPDATE aether_memories SET embedding = ? WHERE id = ?",
                     vectorToDbString(vector), id);
             } catch (Exception e) {
                 log.warn("回填向量更新失败: id={}, error={}", id, e.getMessage());

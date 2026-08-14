@@ -50,7 +50,7 @@ services:
         max-file: "3"
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: aether-db-secure
     user: "999:999"
     security_opt:
