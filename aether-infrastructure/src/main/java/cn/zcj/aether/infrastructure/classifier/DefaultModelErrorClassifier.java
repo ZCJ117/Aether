@@ -144,6 +144,13 @@ public class DefaultModelErrorClassifier implements ModelErrorClassifier {
                             statusCode, provider, model, msg);
                 }
                 case 400 -> {
+                    // 小觅 mimo 兼容（原 ModelInvoker.isRetryable 特判 modelRef.contains("mimo")）：
+                    // 非标准 API 的 400 可能为瞬时错误（MCP 工具定义未就绪），映射 UNKNOWN →
+                    // 抖动退避重试（仍受 Resilient 层 maxAttempts 预算约束）；其余 Provider 的 400 为真实客户端错误
+                    if (model != null && model.toLowerCase().contains("mimo")) {
+                        return ClassifiedError.of(FailoverReason.UNKNOWN,
+                                statusCode, provider, model, msg);
+                    }
                     return ClassifiedError.of(FailoverReason.FORMAT_ERROR,
                             statusCode, provider, model, msg);
                 }

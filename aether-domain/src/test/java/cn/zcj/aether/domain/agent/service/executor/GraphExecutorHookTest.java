@@ -56,7 +56,7 @@ class GraphExecutorHookTest {
         Field field = GraphExecutor.class.getDeclaredField("hookRegistry");
         assertEquals(HookRegistry.class, field.getType());
         // 存在 @Resource 注解 → Spring 注入接线
-        assertTrue(field.isAnnotationPresent(javax.annotation.Resource.class),
+        assertTrue(field.isAnnotationPresent(jakarta.annotation.Resource.class),
                 "hookRegistry 必须经 @Resource 注入");
     }
 }

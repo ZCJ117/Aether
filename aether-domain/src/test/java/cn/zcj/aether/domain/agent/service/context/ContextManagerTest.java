@@ -1,14 +1,20 @@
 package cn.zcj.aether.domain.agent.service.context;
 
+import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.model.ChatModel;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /**
  * ContextManager 单元测试 — P2 上下文压缩守卫。
@@ -41,6 +47,7 @@ class ContextManagerTest {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        windowRegistry.register("p0-model", 8_000); // 缩小窗口以便压缩触发
     }
 
     // ========== TokenEstimator ==========
@@ -353,7 +360,7 @@ class ContextManagerTest {
     // ========== helpers ==========
 
     private ContextManager newContextManager() {
-        ContextManager cm = new ContextManager();
+        ContextManager cm = new ContextManager(null, null);
         try {
             var field = ContextManager.class.getDeclaredField("tokenEstimator");
             field.setAccessible(true);
@@ -362,5 +369,206 @@ class ContextManagerTest {
             throw new RuntimeException(e);
         }
         return cm;
+    }
+
+    // ========== O7: 摘要纳入管线 ==========
+
+    private void injectField(Object target, String name, Object value) throws Exception {
+        var f = target.getClass().getDeclaredField(name);
+        f.setAccessible(true);
+        f.set(target, value);
+    }
+
+    private ContextManager newCompactionContextManager(ModelInvoker invoker, ModelPricingRegistry pricing)
+            throws Exception {
+        ContextManager cm = new ContextManager(invoker, pricing);
+        injectField(cm, "tokenEstimator", tokenEstimator);
+        SummaryChatModelResolver resolver = mock(SummaryChatModelResolver.class);
+        when(resolver.resolve()).thenReturn(mock(ChatModel.class));
+        injectField(cm, "summaryChatModelResolver", resolver);
+        return cm;
+    }
+
+    private List<TurnMessage> manyMessages(int n) {
+        List<TurnMessage> msgs = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            msgs.add(TurnMessage.user("message " + i + " " + "x".repeat(50)));
+        }
+        return msgs;
+    }
+
+    @Test
+    void autoCompactRoutesSummaryThroughModelInvokerAndAccumulatesCost() throws Exception {
+        ModelInvoker invoker = mock(ModelInvoker.class);
+        when(invoker.callWithStream(any(), anyList(), anyString(), anyString()))
+                .thenReturn(ModelInvoker.ModelCallResult.builder()
+                        .fullText("summary ok").inputTokens(100).outputTokens(50)
+                        .events(List.of()).toolCalls(List.of()).build());
+        ModelPricingRegistry pricing = mock(ModelPricingRegistry.class);
+        when(pricing.lookup("p0-model")).thenReturn(new ModelPricing("p0-model", 0.001, 0.002));
+
+        ContextManager cm = newCompactionContextManager(invoker, pricing);
+        TokenBudget budget = mock(TokenBudget.class);
+
+        AutoCompactResult result = cm.autoCompactIfNeeded(manyMessages(25), "p0-model", "s-1", budget);
+
+        assertTrue(result.isCompacted());
+        verify(invoker).callWithStream(any(), anyList(), anyString(), eq("p0-model"));
+        verify(budget).accumulateCost(eq(100), eq(50), any(ModelPricing.class));
+    }
+
+    @Test
+    void summaryCooldownSkipsLlmCallAfterFailure() throws Exception {
+        ModelInvoker invoker = mock(ModelInvoker.class);
+        when(invoker.callWithStream(any(), anyList(), anyString(), anyString()))
+                .thenReturn(ModelInvoker.ModelCallResult.error("boom"));
+        ContextManager cm = newCompactionContextManager(invoker, mock(ModelPricingRegistry.class));
+
+        cm.autoCompactIfNeeded(manyMessages(25), "p0-model", "s-2", mock(TokenBudget.class));
+        assertTrue(cm.isInSummaryCooldown("s-2"));
+
+        cm.autoCompactIfNeeded(manyMessages(25), "p0-model", "s-2", mock(TokenBudget.class));
+        verify(invoker, times(1)).callWithStream(any(), anyList(), anyString(), anyString());
+    }
+
+    // ========== O8: 压缩策略参数化 ==========
+
+    private cn.zcj.aether.domain.agent.service.context.compaction.CompactionTrigger triggerOf(ContextManager cm)
+            throws Exception {
+        var f = ContextManager.class.getDeclaredField("compactionTrigger");
+        f.setAccessible(true);
+        return (cn.zcj.aether.domain.agent.service.context.compaction.CompactionTrigger) f.get(cm);
+    }
+
+    @Test
+    void thresholdPercentAndMinMessagesAreConfigurable() throws Exception {
+        ModelInvoker invoker = mock(ModelInvoker.class);
+        when(invoker.callWithStream(any(), anyList(), anyString(), anyString()))
+                .thenReturn(ModelInvoker.ModelCallResult.builder()
+                        .fullText("s").inputTokens(1).outputTokens(1)
+                        .events(List.of()).toolCalls(List.of()).build());
+        ContextManager cm = newCompactionContextManager(invoker, mock(ModelPricingRegistry.class));
+        cn.zcj.aether.domain.agent.service.context.compaction.CompactionTrigger trigger = triggerOf(cm);
+
+        // threshold-percent 收紧到 0.05、min-messages 降到 3 → 少量消息也应触发
+        java.lang.reflect.Field tp = trigger.getClass().getDeclaredField("thresholdPercent");
+        tp.setAccessible(true);
+        tp.set(trigger, 0.05);
+        java.lang.reflect.Field mm = trigger.getClass().getDeclaredField("minMessagesToCompact");
+        mm.setAccessible(true);
+        mm.set(trigger, 3);
+
+        // p0-model 窗口 8000，effectiveWindow=8000-20000 为负 → 任何 token 都超过阈值
+        AutoCompactResult result = cm.autoCompactIfNeeded(manyMessages(5), "p0-model", "s-tp", mock(TokenBudget.class));
+        assertTrue(result.isCompacted(), "threshold-percent=0.05 + min-messages=3 时 5 条消息应触发压缩");
+
+        // 默认 min-messages=20 时同样 5 条消息不应触发
+        ContextManager cm2 = newCompactionContextManager(invoker, mock(ModelPricingRegistry.class));
+        AutoCompactResult r2 = cm2.autoCompactIfNeeded(manyMessages(5), "p0-model", "s-tp2", mock(TokenBudget.class));
+        assertFalse(r2.isCompacted(), "默认 min-messages-to-compact=20 时 5 条消息不应触发压缩");
+    }
+
+    @Test
+    void protectFirstNPreservesHeadMessages() throws Exception {
+        ModelInvoker invoker = mock(ModelInvoker.class);
+        when(invoker.callWithStream(any(), anyList(), anyString(), anyString()))
+                .thenReturn(ModelInvoker.ModelCallResult.builder()
+                        .fullText("s").inputTokens(1).outputTokens(1)
+                        .events(List.of()).toolCalls(List.of()).build());
+        ContextManager cm = newCompactionContextManager(invoker, mock(ModelPricingRegistry.class));
+        cn.zcj.aether.domain.agent.service.context.compaction.CompactionTrigger trigger = triggerOf(cm);
+        java.lang.reflect.Field pf = trigger.getClass().getDeclaredField("protectFirstN");
+        pf.setAccessible(true);
+        pf.set(trigger, 2);
+        java.lang.reflect.Field pl = trigger.getClass().getDeclaredField("protectLastN");
+        pl.setAccessible(true);
+        pl.set(trigger, 3);
+
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("system-prompt-0"));
+        messages.add(TurnMessage.user("important-context-1"));
+        messages.addAll(manyMessages(25));
+
+        AutoCompactResult result = cm.autoCompactIfNeeded(messages, "p0-model", "s-pf", mock(TokenBudget.class));
+        assertTrue(result.isCompacted());
+        assertEquals("system-prompt-0", ((TurnMessage) result.getCompressedMessages().get(0)).content(),
+                "头部保护消息应原样保留在最前");
+        assertEquals("important-context-1", ((TurnMessage) result.getCompressedMessages().get(1)).content(),
+                "protect-first-n=2 时前两条应原样保留");
+    }
+
+    @Test
+    void ineffectiveCompressionTriggersSuppressRounds() throws Exception {
+        // LLM 摘要几乎不缩减 token（长摘要）→ 降幅 < 5% → 进入防抖冷却
+        ModelInvoker invoker = mock(ModelInvoker.class);
+        when(invoker.callWithStream(any(), anyList(), anyString(), anyString()))
+                .thenAnswer(inv -> ModelInvoker.ModelCallResult.builder()
+                        .fullText("冗长摘要 ".repeat(200)) // ≈1000+ 字符，与原内容量级相当
+                        .inputTokens(1).outputTokens(1)
+                        .events(List.of()).toolCalls(List.of()).build());
+        ContextManager cm = newCompactionContextManager(invoker, mock(ModelPricingRegistry.class));
+
+        AutoCompactResult first = cm.autoCompactIfNeeded(manyMessages(25), "p0-model", "s-inef", mock(TokenBudget.class));
+        assertTrue(first.isCompacted());
+        assertTrue(cm.getIneffectiveSuppressRounds("s-inef") > 0,
+                "无有效进展的压缩应进入防抖冷却");
+
+        // 冷却轮数内再次调用 → 不触发压缩（LLM 不再被调用）
+        int callsAfterFirst = 1;
+        AutoCompactResult second = cm.autoCompactIfNeeded(manyMessages(25), "p0-model", "s-inef", mock(TokenBudget.class));
+        assertFalse(second.isCompacted(), "防抖冷却轮数内应跳过压缩");
+        verify(invoker, times(callsAfterFirst)).callWithStream(any(), anyList(), anyString(), anyString());
+    }
+
+    @Test
+    void tailTokenBudgetComputesFromWindow() {
+        var trigger = new cn.zcj.aether.domain.agent.service.context.compaction.CompactionTrigger();
+        assertEquals(-1, trigger.tailTokenBudget(128_000), "tail-token-ratio=0 时应禁用 token 预算");
+    }
+
+    @Test
+    void tokenEstimatorDelegatesWindowToRegistryOnly() {
+        // O8: Registry 未注入时回退默认常量（硬编码窗口表已删除）
+        TokenEstimator bare = new TokenEstimator();
+        assertEquals(128_000, bare.getContextWindow("claude-sonnet-4-6"),
+                "Registry 未注入时应返回默认 128k，而非命中已删除的 claude 关键字表");
+        assertEquals(128_000, bare.getContextWindow(null));
+        // Registry 注入后精确匹配生效
+        assertEquals(200_000, tokenEstimator.getContextWindow("claude-sonnet-4-6"));
+    }
+
+    @Test
+    void applyToolResultBudgetWritesOverflowToDisk() throws Exception {
+        ContextManager cm = newContextManager();
+        var offloader = new cn.zcj.aether.domain.agent.service.context.compaction.MessageOffloader();
+        java.lang.reflect.Field f = ContextManager.class.getDeclaredField("messageOffloader");
+        f.setAccessible(true);
+        f.set(cm, offloader);
+
+        String big = "x".repeat(60_000);
+        List<TurnMessage> messages = List.of(TurnMessage.toolResult("tc-1", "Bash", big));
+
+        List<TurnMessage> result = cm.applyToolResultBudget(messages);
+        assertEquals(1, result.size());
+        String content = result.get(0).content();
+        assertTrue(content.length() < 1000, "超长工具结果应被替换为预览+路径引用");
+        assertTrue(content.contains("已存盘"), "替换文本应包含存盘标记");
+        assertTrue(content.contains(".txt"), "替换文本应包含存盘路径引用");
+        // 文件真实存在且内容完整
+        var m = java.util.regex.Pattern.compile("tool-overflow/[\\w\\-./]+\\.txt").matcher(content);
+        assertTrue(m.find(), "替换文本应包含 tool-overflow/ 路径引用");
+        Path overflow = Path.of(System.getProperty("user.dir"), ".aether/sessions", m.group());
+        assertTrue(Files.exists(overflow), "存盘文件应存在: " + overflow);
+        assertEquals(60_000, Files.readString(overflow).length());
+    }
+
+    @Test
+    void applyToolResultBudgetFallsBackToTruncateWhenOffloaderMissing() {
+        ContextManager cm = newContextManager(); // messageOffloader 未注入（null）
+        String big = "y".repeat(60_000);
+        List<TurnMessage> result = cm.applyToolResultBudget(
+                List.of(TurnMessage.toolResult("tc-2", "Bash", big)));
+        assertTrue(result.get(0).content().contains("已截断"));
+        assertFalse(result.get(0).content().contains("已存盘"));
     }
 }

@@ -10,7 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.time.Instant;
 
 /**
@@ -66,11 +66,11 @@ public class SessionPersistenceHook implements AgentHook {
                 .build();
             sessionRepository.save(entity)
                 .exceptionally(ex -> {
-                    log.error("错误状态持久化失败", ex);
+                    log.error("错误状态持久化失败: agentId={}, sessionId={}", agent.getId(), ctx.sessionId(), ex);
                     return null;
                 });
         } catch (Exception e) {
-            log.error("错误状态持久化失败", e);
+            log.error("错误状态持久化失败: agentId={}, sessionId={}", agent.getId(), ctx.sessionId(), e);
         }
     }
 }

@@ -1,0 +1,42 @@
+server:
+  port: 0
+
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+  config:
+    import:
+      - classpath:agent/agents-test.yml
+
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 2
+        max-pool-size: 4
+        keep-alive-time: 5000
+        block-queue-size: 100
+        policy: CallerRunsPolicy
+
+aether:
+  ssrf:
+    allow-private-urls: true
+  # 测试排除数据源自动配置：关闭会话持久化，避免 PgSessionRepository（默认激活）因无 DataSource 创建失败
+  session:
+    persistence: false
+  # O16: 基座 JWT 去默认回退后，测试环境必须显式提供密钥（JwtService 校验 ≥32 字符）
+  security:
+    jwt:
+      secret: test-only-jwt-secret-key-min-32-chars!!
+  # O16: 基座 embedding 改 ${ZHIPU_API_KEY} 后，测试环境提供空默认（不要求真实 Key）
+  memory:
+    embedding:
+      api-key: ${ZHIPU_API_KEY:}
+
+logging:
+  level:
+    root: WARN
+    cn.zcj.aether: INFO

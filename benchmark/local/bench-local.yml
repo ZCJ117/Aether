@@ -1,0 +1,15 @@
+# 本地（无 Docker）压测验证用覆盖文件：ai-api 指向本机 mock-llm。
+# 用法见 application-bench.yml 头部注释：
+#   SPRING_CONFIG_IMPORT='optional:classpath:agent/bench-agents.yml,file:benchmark/local/bench-local.yml'
+ai:
+  agent:
+    config:
+      tables:
+        AgentBenchMain:
+          module:
+            ai-api:
+              base-url: http://localhost:8011
+        AgentBenchChaos:
+          module:
+            ai-api:
+              base-url: http://localhost:8011

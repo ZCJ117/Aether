@@ -2,7 +2,7 @@ package cn.zcj.aether.domain.agent.service.context;
 
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 /**
  * Token 估算器。
@@ -48,19 +48,14 @@ public class TokenEstimator {
 
     /**
      * 获取模型上下文窗口大小。
-     * 委托给 {@link ModelContextWindowRegistry}（精确匹配 → 关键字包含 → 默认 128k）。
+     *
+     * <p>O8: 统一走 {@link ModelContextWindowRegistry}（精确匹配 → 关键字包含 → 默认 128k），
+     * 删除本类的兜底硬编码窗口表，消除双份窗口表漂移；Registry 未注入时回退默认常量。</p>
      */
     public int getContextWindow(String modelName) {
         if (windowRegistry != null) {
             return windowRegistry.getContextWindow(modelName);
         }
-        // 兜底：Registry 未注入时使用硬编码（向后兼容）
-        if (modelName == null) return 128_000;
-        String lower = modelName.toLowerCase();
-        if (lower.contains("claude")) return 200_000;
-        if (lower.contains("gpt-4")) return 128_000;
-        if (lower.contains("gpt-3.5")) return 16_000;
-        if (lower.contains("deepseek")) return 128_000;
-        return 128_000;
+        return ModelContextWindowRegistry.DEFAULT_CONTEXT_WINDOW;
     }
 }

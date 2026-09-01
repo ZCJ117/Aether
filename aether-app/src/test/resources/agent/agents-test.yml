@@ -1,0 +1,25 @@
+ai:
+  agent:
+    config:
+      tables:
+        test-agent:
+          app-name: test-agent
+          agent:
+            agent-id: "000001"
+            agent-name: "测试智能体"
+            agent-desc: "用于集成测试的最小配置"
+          module:
+            ai-api:
+              base-url: "https://api.openai.com/v1"
+              api-key: "sk-test-key"
+              completions-path: "/v1/chat/completions"
+              embeddings-path: "/v1/embeddings"
+            chat-model:
+              model: "gpt-4o"
+            agents:
+              - name: "assistant"
+                instruction: "你是一个测试助手"
+                description: "测试助手"
+                output-key: "answer"
+            runner:
+              agent-name: "assistant"

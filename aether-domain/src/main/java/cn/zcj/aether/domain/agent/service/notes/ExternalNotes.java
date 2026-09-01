@@ -24,6 +24,10 @@ import java.util.stream.Collectors;
  * 外部笔记持久化服务。
  * 将 TODO/NOTES 持久化到 .aether/notes/{sessionId}.json。
  * 支持 TODO 项和 NOTE 项的管理与摘要生成。
+ *
+ * <p><b>EXPERIMENTAL</b>: 本实现是 P2-2.3 明确标注的实验能力。当前只做单机文件
+ * 持久化，不提供跨实例同步、加密、审计或强制配置门控；生产多实例使用前需先
+ * 迁移到共享存储并重新评审失败语义。</p>
  */
 @Slf4j
 @Component

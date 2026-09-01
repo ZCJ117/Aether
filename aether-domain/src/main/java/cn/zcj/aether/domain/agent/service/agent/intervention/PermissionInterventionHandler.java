@@ -5,7 +5,7 @@ import cn.zcj.aether.domain.agent.service.agent.permission.PermissionEngine;
 import cn.zcj.aether.domain.agent.service.agent.permission.PermissionMode;
 import lombok.extern.slf4j.Slf4j;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.Map;
 
 /**

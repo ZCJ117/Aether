@@ -29,7 +29,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -74,6 +74,10 @@ public class ChatModelNode extends AbstractArmorySupport {
 
     @Resource
     private CredentialPool credentialPool;  // P1 容错：凭据轮换池（当前池未播种时退化为 fallback）
+
+    /** P0(1.5): 容错恢复指标（可选注入，无 actuator 环境为 null） */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private cn.zcj.aether.domain.agent.service.model.failover.FailoverMetrics failoverMetrics;
 
     @Resource
     private cn.zcj.aether.domain.agent.service.agent.permission.PermissionEngine permissionEngine;  // P1-#9
@@ -516,6 +520,10 @@ public class ChatModelNode extends AbstractArmorySupport {
                 modelProviderRegistry, modelErrorClassifier, fallbackChain);
 
         executor.setCredentialPool(credentialPool);
+        // P0(1.5): 容错恢复分支/fallback 切换指标（无 actuator 环境为 no-op）
+        if (failoverMetrics != null) {
+            executor.setFailoverMetrics(failoverMetrics);
+        }
 
         if (!fallbackChain.isEmpty()) {
             log.info("ChatModel 已包装为容错执行器: model={}, fallbackChain={}",

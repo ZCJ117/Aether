@@ -26,11 +26,18 @@ public class LoggingHook implements AgentHook {
             .registerModule(new JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
+    /**
+     * O18（对应 D18）：进入 Agent 执行前保存调用方 MDC 快照，结束时恢复——
+     * 此前 onAfterExecute/onError 直接 MDC.clear()，会清掉线程池复用线程上的外层上下文（串扰）。
+     */
+    private final ThreadLocal<java.util.Map<String, String>> previousMdc = new ThreadLocal<>();
+
     @Override
     public int priority() { return 50; } // 最先执行
 
     @Override
     public void onBeforeExecute(Agent agent, RuntimeContext ctx) {
+        previousMdc.set(MDC.getCopyOfContextMap());
         MDC.put("agentId", agent.getId());
         MDC.put("sessionId", ctx.sessionId());
         MDC.put("correlationId", ctx.correlationId());
@@ -53,7 +60,7 @@ public class LoggingHook implements AgentHook {
             result.status());
 
         log.info("agent_completed: {}", toJson(event));
-        MDC.clear();
+        restoreMdc();
     }
 
     @Override
@@ -65,7 +72,18 @@ public class LoggingHook implements AgentHook {
             agent.getState().getCurrentTurn());
 
         log.error("agent_error: {}", toJson(event), error);
-        MDC.clear();
+        restoreMdc();
+    }
+
+    /** O18: 恢复进入前的 MDC 快照（无快照时才清空）。 */
+    private void restoreMdc() {
+        java.util.Map<String, String> prev = previousMdc.get();
+        if (prev != null) {
+            MDC.setContextMap(prev);
+        } else {
+            MDC.clear();
+        }
+        previousMdc.remove();
     }
 
     private String toJson(Object obj) {

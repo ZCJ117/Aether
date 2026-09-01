@@ -22,13 +22,44 @@ public class AgentEventPublisher {
                     .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     /**
+     * O18（对应 D18）：内存事件总线——事件的真实订阅面（此前"事件总线"仅是 log.* 字符串）。
+     * 线程安全：CopyOnWriteArrayList 订阅隔离；订阅者异常逐个隔离不阻断发布与日志 sink。
+     * 订阅为可选能力：无订阅者时行为与纯日志一致（回滚安全）。
+     */
+    private final java.util.concurrent.CopyOnWriteArrayList<java.util.function.Consumer<AgentEvent>> subscribers =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** 订阅事件总线；返回 AutoCloseable 用于取消订阅。 */
+    public AutoCloseable subscribe(java.util.function.Consumer<AgentEvent> subscriber) {
+        subscribers.add(subscriber);
+        return () -> subscribers.remove(subscriber);
+    }
+
+    /** 统一发射：log 为默认 sink（不丢），订阅者为可选增强。 */
+    private void emit(String logKey, AgentEvent event, boolean isError) {
+        String json = toJson(event);
+        if (isError) {
+            log.error("{}: {}", logKey, json);
+        } else {
+            log.info("{}: {}", logKey, json);
+        }
+        for (java.util.function.Consumer<AgentEvent> subscriber : subscribers) {
+            try {
+                subscriber.accept(event);
+            } catch (Exception e) {
+                log.warn("事件订阅者执行异常（已隔离）: {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
      * 发布 Agent 启动事件
      */
     public void publishAgentStarted(String agentId, String sessionId, String correlationId,
                                      String agentType, String modelRef) {
         AgentEvent.AgentStarted event = new AgentEvent.AgentStarted(
                 agentId, sessionId, correlationId, agentType, modelRef);
-        log.info("agent_started: {}", toJson(event));
+        emit("agent_started", event, false);
     }
 
     /**
@@ -39,7 +70,7 @@ public class AgentEventPublisher {
         AgentEvent.AgentCompleted event = new AgentEvent.AgentCompleted(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, totalTurns, durationMs, status);
-        log.info("agent_completed: {}", toJson(event));
+        emit("agent_completed", event, false);
     }
 
     /**
@@ -48,7 +79,7 @@ public class AgentEventPublisher {
     public void publishTurnStarted(String agentId, String sessionId, String correlationId, int turnNumber) {
         AgentEvent.TurnStarted event = new AgentEvent.TurnStarted(
                 agentId, sessionId, correlationId, turnNumber);
-        log.info("turn_started: {}", toJson(event));
+        emit("turn_started", event, false);
     }
 
     /**
@@ -59,7 +90,7 @@ public class AgentEventPublisher {
         AgentEvent.TurnCompleted event = new AgentEvent.TurnCompleted(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, turnNumber, hasToolCalls, toolCallCount, durationMs);
-        log.info("turn_completed: {}", toJson(event));
+        emit("turn_completed", event, false);
     }
 
     /**
@@ -70,7 +101,7 @@ public class AgentEventPublisher {
         AgentEvent.ModelCallStarted event = new AgentEvent.ModelCallStarted(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, modelName, messageCount);
-        log.info("model_call_started: {}", toJson(event));
+        emit("model_call_started", event, false);
     }
 
     /**
@@ -83,7 +114,7 @@ public class AgentEventPublisher {
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, modelName, durationMs,
                 inputTokens, outputTokens, costUsd);
-        log.info("model_call_completed: {}", toJson(event));
+        emit("model_call_completed", event, false);
     }
 
     /**
@@ -93,7 +124,7 @@ public class AgentEventPublisher {
                                         String toolName, String toolCallId) {
         AgentEvent.ToolCallStarted event = new AgentEvent.ToolCallStarted(
                 agentId, sessionId, correlationId, toolName, toolCallId);
-        log.info("tool_call_started: {}", toJson(event));
+        emit("tool_call_started", event, false);
     }
 
     /**
@@ -105,7 +136,7 @@ public class AgentEventPublisher {
         AgentEvent.ToolCallCompleted event = new AgentEvent.ToolCallCompleted(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, toolName, toolCallId, success, durationMs);
-        log.info("tool_call_completed: {}", toJson(event));
+        emit("tool_call_completed", event, false);
     }
 
     /**
@@ -116,7 +147,7 @@ public class AgentEventPublisher {
         AgentEvent.CompactTriggered event = new AgentEvent.CompactTriggered(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, beforeTokens, afterTokens, messagesCompacted);
-        log.info("compact_triggered: {}", toJson(event));
+        emit("compact_triggered", event, false);
     }
 
     /**
@@ -126,7 +157,7 @@ public class AgentEventPublisher {
                               String errorType, String errorMessage, int turnNumber) {
         AgentEvent.ErrorOccurred event = new AgentEvent.ErrorOccurred(
                 agentId, sessionId, correlationId, errorType, errorMessage, turnNumber);
-        log.error("error_occurred: {}", toJson(event));
+        emit("error_occurred", event, true);
     }
 
     /**
@@ -137,7 +168,7 @@ public class AgentEventPublisher {
         AgentEvent.CheckpointCreated event = new AgentEvent.CheckpointCreated(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, turnNumber, messageCount);
-        log.info("checkpoint_created: {}", toJson(event));
+        emit("checkpoint_created", event, false);
     }
 
     /**
@@ -148,7 +179,7 @@ public class AgentEventPublisher {
         AgentEvent.PermissionAsking event = new AgentEvent.PermissionAsking(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, replyId, pendingCount, toolNames);
-        log.info("permission_asking: {}", toJson(event));
+        emit("permission_asking", event, false);
     }
 
     /**
@@ -159,7 +190,7 @@ public class AgentEventPublisher {
         AgentEvent.PermissionResolved event = new AgentEvent.PermissionResolved(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, replyId, approvedCount, deniedCount);
-        log.info("permission_resolved: {}", toJson(event));
+        emit("permission_resolved", event, false);
     }
 
     /**
@@ -170,7 +201,7 @@ public class AgentEventPublisher {
         AgentEvent.DelegationDispatched event = new AgentEvent.DelegationDispatched(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 agentId, sessionId, correlationId, taskId, toolCount, status);
-        log.info("delegation_dispatched: {}", toJson(event));
+        emit("delegation_dispatched", event, false);
     }
 
     /**
@@ -181,7 +212,7 @@ public class AgentEventPublisher {
         AgentEvent.BackgroundReview event = new AgentEvent.BackgroundReview(
                 java.util.UUID.randomUUID().toString(), java.time.Instant.now(),
                 graphExecutionId, sessionId, goal, review);
-        log.info("background_review: {}", toJson(event));
+        emit("background_review", event, false);
     }
 
     private String toJson(Object obj) {

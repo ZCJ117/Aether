@@ -5,8 +5,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.Resource;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Resource;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -24,6 +24,10 @@ public class AgentMetrics {
     private Counter errorCounter;
     private Counter toolCallCounter;
     private Counter toolErrorCounter;
+    private Counter planReplanCounter;
+    private Counter planCompletionSuccessCounter;
+    private Counter planCompletionFailureCounter;
+    private Counter planReflectionCounter;
 
     // ====== 直方图/计时器 ======
     private Timer turnLatency;
@@ -47,6 +51,24 @@ public class AgentMetrics {
 
         this.toolErrorCounter = Counter.builder("aether.agent.tool.errors.total")
             .description("工具调用失败总数")
+            .register(meterRegistry);
+
+        this.planReplanCounter = Counter.builder("aether.agent.plan.replans.total")
+            .description("PlanActAgent 重规划次数")
+            .register(meterRegistry);
+
+        this.planCompletionSuccessCounter = Counter.builder("aether.agent.plan.completions.total")
+            .description("PlanActAgent 任务完成/失败次数")
+            .tag("result", "success")
+            .register(meterRegistry);
+
+        this.planCompletionFailureCounter = Counter.builder("aether.agent.plan.completions.total")
+            .description("PlanActAgent 任务完成/失败次数")
+            .tag("result", "failure")
+            .register(meterRegistry);
+
+        this.planReflectionCounter = Counter.builder("aether.agent.plan.reflections.total")
+            .description("PlanActAgent 任务后自评次数")
             .register(meterRegistry);
 
         this.turnLatency = Timer.builder("aether.agent.turn.latency")
@@ -82,19 +104,42 @@ public class AgentMetrics {
         if (!success) toolErrorCounter.increment();
     }
 
+    public void recordPlanReplan() {
+        planReplanCounter.increment();
+    }
+
+    public void recordPlanCompletion(boolean success) {
+        if (success) {
+            planCompletionSuccessCounter.increment();
+        } else {
+            planCompletionFailureCounter.increment();
+        }
+    }
+
+    public void recordPlanReflection() {
+        planReflectionCounter.increment();
+    }
+
     public void recordModelCall(String modelName, long durationMs) {
         modelCallLatency.record(durationMs, TimeUnit.MILLISECONDS);
     }
 
+    /** O18: token 计数器缓存（key = name|model），避免每次调用动态注册导致 meter 表膨胀。 */
+    private final java.util.concurrent.ConcurrentHashMap<String, Counter> tokenCounters =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     public void recordTokenUsage(String modelName, int inputTokens, int outputTokens, double costUsd) {
-        // 使用 Counter 累加记录 token 总量
-        Counter.builder("aether.agent.tokens.input")
-            .tag("model", modelName)
-            .register(meterRegistry)
-            .increment(inputTokens);
-        Counter.builder("aether.agent.tokens.output")
-            .tag("model", modelName)
-            .register(meterRegistry)
-            .increment(outputTokens);
+        // O18: 使用 Counter 缓存累加记录 token 总量（同名同 tag 只注册一次）
+        String model = modelName != null ? modelName : "unknown";
+        tokenCounters.computeIfAbsent("tokens.input|" + model,
+                        k -> Counter.builder("aether.agent.tokens.input")
+                                .tag("model", model)
+                                .register(meterRegistry))
+                .increment(inputTokens);
+        tokenCounters.computeIfAbsent("tokens.output|" + model,
+                        k -> Counter.builder("aether.agent.tokens.output")
+                                .tag("model", model)
+                                .register(meterRegistry))
+                .increment(outputTokens);
     }
 }

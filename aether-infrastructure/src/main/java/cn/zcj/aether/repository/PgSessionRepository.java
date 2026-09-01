@@ -4,12 +4,11 @@ import cn.zcj.aether.domain.agent.service.session.SessionEntity;
 import cn.zcj.aether.domain.agent.service.session.SessionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
-import javax.sql.DataSource;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -20,19 +19,32 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * PostgreSQL 实现的会话持久化仓储 — P0-4。
- * 激活条件: PostgreSQL 驱动可用 + aether.session.persistence=true
+ *
+ * <p>P0-3 默认安全激活：零配置（未设 aether.session.*）即启用，使会话跨重启可恢复；
+ * 显式 {@code aether.session.store=redis|none} 或 {@code aether.session.persistence=false}
+ * 时关闭（与 RedisSessionRepository 互斥）。</p>
  */
 @Slf4j
 @Repository
 @ConditionalOnClass(name = "org.postgresql.Driver")
-@ConditionalOnProperty(name = "aether.session.persistence", havingValue = "true", matchIfMissing = false)
+// 双键条件：store 缺省或 postgres 且 persistence 缺省或 true（@ConditionalOnProperty 非 @Repeatable，合并为 SpEL）
+@ConditionalOnExpression(
+        "'${aether.session.store:postgres}' == 'postgres' && '${aether.session.persistence:true}' == 'true'")
 public class PgSessionRepository implements SessionRepository {
 
     private final JdbcTemplate jdbcTemplate;
+    /** P0-1 统一线程资源管理：注入共享 sessionPersistPool（aether.thread-pools.session-persist，默认 2/4/queue1000）。 */
+    private final java.util.concurrent.ExecutorService persistExecutor;
+    /** P0-3 写失败指标（Micrometer counter aether.session.persist.failures）；无 MeterRegistry 时仅日志。 */
+    private final SessionPersistenceMetrics metrics;
 
-    public PgSessionRepository(DataSource dataSource) {
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
-        log.info("PgSessionRepository 已初始化");
+    public PgSessionRepository(JdbcTemplate jdbcTemplate,
+            @org.springframework.beans.factory.annotation.Qualifier("sessionPersistPool") java.util.concurrent.ExecutorService persistExecutor,
+            SessionPersistenceMetrics metrics) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.persistExecutor = persistExecutor;
+        this.metrics = metrics;
+        log.info("PgSessionRepository 已初始化（默认安全激活）");
     }
 
     private static final String UPSERT_SQL = """
@@ -85,8 +97,9 @@ public class PgSessionRepository implements SessionRepository {
             log.info("会话已持久化: sessionId={}, status={}, stateJsonLen={}",
                 entity.getSessionId(), entity.getStatus(),
                 entity.getStateJson() != null ? entity.getStateJson().length() : 0);
-        }).exceptionally(ex -> {
-            log.error("会话持久化失败: sessionId={}, status={}", entity.getSessionId(), entity.getStatus(), ex);
+        }, persistExecutor).exceptionally(ex -> {
+            // O6 不再静默：显式告警 + 指标（aether.session.persist.failures + 最近错误快照）
+            metrics.recordFailure(entity.getSessionId(), "save", ex);
             return null;
         });
     }
@@ -102,6 +115,10 @@ public class PgSessionRepository implements SessionRepository {
         return CompletableFuture.runAsync(() -> {
             jdbcTemplate.update(SOFT_DELETE_SQL, Timestamp.from(Instant.now()), sessionId);
             log.debug("会话已归档: sessionId={}", sessionId);
+        }, persistExecutor).exceptionally(ex -> {
+            // O6: 删除（软删）失败同样可见，不再由 Future 静默吞掉
+            metrics.recordFailure(sessionId, "delete", ex);
+            return null;
         });
     }
 

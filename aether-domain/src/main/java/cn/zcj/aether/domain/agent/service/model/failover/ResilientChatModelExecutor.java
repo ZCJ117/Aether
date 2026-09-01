@@ -93,6 +93,25 @@ public class ResilientChatModelExecutor implements ChatModel {
         this.compressCallback = callback;
     }
 
+    // ── 容错指标（可选，未注入则不记录；P0(1.5) 混沌压测观测用）──
+    private FailoverMetrics failoverMetrics;
+
+    public void setFailoverMetrics(FailoverMetrics failoverMetrics) {
+        this.failoverMetrics = failoverMetrics;
+    }
+
+    private void recordBranch(RecoveryBranch branch) {
+        if (failoverMetrics != null) {
+            failoverMetrics.recordBranch(branch);
+        }
+    }
+
+    private void recordFallbackSwitch() {
+        if (failoverMetrics != null) {
+            failoverMetrics.recordFallbackSwitch();
+        }
+    }
+
     // ── 凭据轮换池（可选，未注入则不轮换）──
     /** 凭据轮换池（对齐 hermes recover_with_credential_pool） */
     private CredentialPool credentialPool;
@@ -158,6 +177,7 @@ public class ResilientChatModelExecutor implements ChatModel {
 
                 RecoveryDirective d = turnRetry.nextDirective(classified);
                 log.info("恢复指令: branch={} reason={}", d.branch(), d.reason());
+                recordBranch(d.branch());
 
                 switch (d.branch()) {
                     case JITTERED_BACKOFF, ADAPTIVE_RATE_LIMIT_BACKOFF -> {
@@ -334,6 +354,7 @@ public class ResilientChatModelExecutor implements ChatModel {
             this.currentModelConfig = fbConfig;
             this.fallbackActivated = true;
             setStateAttr("resilient:fallbackActivated", Boolean.TRUE);
+            recordFallbackSwitch();
             log.info("Fallback 切换成功: {}:{} (index={}/{})",
                     fb.getProvider(), fb.getModelId(), fallbackIndex, fallbackChain.size());
             return true;

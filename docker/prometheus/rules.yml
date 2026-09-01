@@ -1,0 +1,81 @@
+# ============================================================
+# P1(3.3): 告警规则 —— 7 条真实规则，覆盖模型链路/持久化/容量/限流/消息/存活
+# 指标名与代码注册逐一对应（Micrometer 点号 → Prometheus 下划线，Counter 自动加 _total）
+# 排障手册：docs/monitoring-guide.md#告警响应手册
+# ============================================================
+groups:
+  - name: aether-business
+    rules:
+      # ① 模型调用超时（预算耗尽 dispose 流）—— 模型链路异常的先导信号
+      - alert: AetherModelCallTimeouts
+        expr: increase(aether_model_call_timeouts_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "模型调用出现超时（5min 内 {{ $value }} 次）"
+          description: "aether.model.call.timeouts 计数增长，检查 LLM Provider 可用性与 aether.model.invoker.call-timeout-ms 配置。见 docs/monitoring-guide.md#AetherModelCallTimeouts"
+
+      # ② 模型链路错误率 > 5%（Agent 错误事件 / Turn 事件）
+      - alert: AetherModelErrorRateHigh
+        expr: >
+          rate(aether_agent_errors_total[5m])
+          / clamp_min(rate(aether_agent_turns_total[5m]), 0.01) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Agent 错误率超过 5%（当前 {{ $value | humanizePercentage }}）"
+          description: "模型链路异常（Provider 故障 / fallback 链耗尽）。检查 ResilientChatModelExecutor 分支指标 aether_model_recovery_branch_total。见 docs/monitoring-guide.md#AetherModelErrorRateHigh"
+
+      # ③ 会话持久化失败 —— checkpoint 机制失效会导致会话不可恢复
+      - alert: AetherSessionPersistFailures
+        expr: increase(aether_session_persist_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "会话持久化失败（5min 内 {{ $value }} 次）"
+          description: "sessionPersistPool 写 PG 失败，用户会话恢复能力受损。检查 PostgreSQL 与连接池。见 docs/monitoring-guide.md#AetherSessionPersistFailures"
+
+      # ④ graphPool 队列饱和度 > 80% 持续 10min —— 并发容量预警（容量公式见 docs/capacity-planning.md）
+      - alert: AetherGraphPoolSaturation
+        expr: max by (pool) (aether_executor_queue_utilization{pool="graph"}) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "graphPool 队列饱和度 {{ $value | humanizePercentage }}（>80% 持续 10min）"
+          description: "并发会话接近单实例上限。处置：调大 aether.thread-pools.graph.queue-capacity / max-pool-size，或横向扩容。见 docs/monitoring-guide.md#AetherGraphPoolSaturation"
+
+  - name: aether-platform
+    rules:
+      # ⑤ 限流触发突增 —— 异常流量 / 疑似攻击 / 限流阈值配置失当
+      - alert: AetherRateLimitSpike
+        expr: increase(aether_ratelimit_triggered_total[5m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "限流触发数突增（5min 内 {{ $value }} 次）"
+          description: "scope={{ $labels.scope }}。可能是爬虫/攻击（结合 X-Forwarded-For 排查），也可能是阈值过低。见 docs/monitoring-guide.md#AetherRateLimitSpike"
+
+      # ⑥ Kafka 消费 lag 过大 —— 审计/统计链路消费能力不足或消费者宕机
+      - alert: AetherKafkaConsumerLag
+        expr: max by (topic) (kafka_consumer_fetch_manager_records_lag) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka 消费 lag 超过 1000（topic={{ $labels.topic }}）"
+          description: "审计/统计消费落后于生产。检查 aether-*.consumer 实例状态与 DB 写入吞吐。见 docs/monitoring-guide.md#AetherKafkaConsumerLag"
+
+      # ⑦ 实例宕机 —— 抓取目标失联
+      - alert: AetherInstanceDown
+        expr: up{job="aether"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Aether 实例不可达（超过 1 分钟）"
+          description: "Prometheus 无法抓取 aether:8091/actuator/prometheus。检查容器状态与健康检查。见 docs/monitoring-guide.md#AetherInstanceDown"

@@ -50,8 +50,9 @@ class SubAgentOrchestratorHookTest {
         when(factory.create(any(AgentConfig.class))).thenReturn(agent);
         when(agent.execute(any(RuntimeContext.class))).thenReturn(Flowable.empty());
 
+        // O1: 测试直连构造，lifecycle 传 null（跳过状态机登记）
         SubAgentOrchestrator orchestrator = new SubAgentOrchestrator(factory,
-                new SubAgentBoundary(), new ResultRefiner());
+                new SubAgentBoundary(), new ResultRefiner(), (SubagentLifecycleService) null);
         orchestrator.setHookRegistryForTest(registry);
 
         var result = orchestrator.dispatch("do something", List.of(), null, "model-x", "u1", "session-1");

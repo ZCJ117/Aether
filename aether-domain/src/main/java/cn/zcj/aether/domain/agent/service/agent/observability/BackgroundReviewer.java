@@ -11,7 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PreDestroy;
+import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -82,6 +82,17 @@ public class BackgroundReviewer {
 
     /** 异步提交图执行结果做后台评审。best-effort。 */
     public void submit(String graphExecutionId, String goal, String finalOutput) {
+        submit(graphExecutionId, goal, finalOutput, null);
+    }
+
+    /** Reviewer 输出的回调；PlanActAgent 用它把复盘沉淀到 notes。 */
+    @FunctionalInterface
+    public interface ReviewSink {
+        void accept(String review);
+    }
+
+    /** 异步提交图执行结果并回传评审文本。best-effort；sink 异常不影响主流程。 */
+    public void submit(String graphExecutionId, String goal, String finalOutput, ReviewSink sink) {
         if (graphExecutionId == null || finalOutput == null || finalOutput.isBlank()) {
             return;
         }
@@ -94,6 +105,13 @@ public class BackgroundReviewer {
                 recorder.recordNodeEvent(graphExecutionId, "__review", "background-review",
                         GraphFlowState.NodeStatus.COMPLETED, Instant.now(), Instant.now(), 0, null);
                 publisher.publishBackgroundReview(graphExecutionId, null, goal, review);
+                if (sink != null) {
+                    try {
+                        sink.accept(review);
+                    } catch (Exception sinkError) {
+                        log.debug("BackgroundReviewer: 评审回调失败 graphExecutionId={}", graphExecutionId, sinkError);
+                    }
+                }
                 log.info("BackgroundReviewer: graphExecutionId={} 评审完成: {}",
                         graphExecutionId, truncate(review, 120));
             } catch (Exception e) {

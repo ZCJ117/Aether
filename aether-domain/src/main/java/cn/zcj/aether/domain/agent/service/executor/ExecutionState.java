@@ -119,6 +119,11 @@ public class ExecutionState {
     final Map<String, java.util.concurrent.BlockingQueue<MessageEnvelope>> agentMailboxes
             = new ConcurrentHashMap<>();
 
+    /** Read-only orchestration boundary for SubscriptionRouter. */
+    public Map<String, java.util.concurrent.BlockingQueue<MessageEnvelope>> mailboxes() {
+        return agentMailboxes;
+    }
+
     /**
      * 获取或创建 Agent 的私有邮箱。
      *

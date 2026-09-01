@@ -8,7 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.Map;
 
 /**
@@ -45,17 +45,20 @@ public class McpToolAdapter {
 
         ToolCallback cachedCallback = toolCallbacks[0];
 
+        // O9: adapt 时从 MCP 工具定义提取真实 inputSchema 并缓存（替代硬编码空 schema），
+        // 使 ToolExecutor 的 JSON Schema 校验与 SchemaHintBuilder 回喂对 MCP 工具真实生效
+        Map<String, Object> cachedInputSchema = extractInputSchema(cachedCallback, name);
+        String cachedDescription = extractDescription(cachedCallback, name);
+
         return new Tool() {
             @Override
             public String name() { return name; }
 
             @Override
-            public String description() { return "MCP tool: " + name; }
+            public String description() { return cachedDescription; }
 
             @Override
-            public Map<String, Object> inputSchema() {
-                return Map.of("type", "object", "properties", Map.of());
-            }
+            public Map<String, Object> inputSchema() { return cachedInputSchema; }
 
             @Override
             public ToolResult call(Map<String, Object> input, ToolContext context) {
@@ -82,6 +85,39 @@ public class McpToolAdapter {
         if (toolMcp.getStdio() != null) return toolMcp.getStdio().getName();
         if (toolMcp.getLocal() != null) return toolMcp.getLocal().getName();
         return "unknown_mcp";
+    }
+
+    /**
+     * O9: 从 MCP ToolCallback 的 ToolDefinition 提取真实 inputSchema。
+     * 来源缺失 / 解析失败时降级为空 schema 并告警（不阻断，保留空 schema 分支可回滚）。
+     */
+    private Map<String, Object> extractInputSchema(ToolCallback callback, String name) {
+        try {
+            var def = callback.getToolDefinition();
+            if (def == null || def.inputSchema() == null || def.inputSchema().isBlank()) {
+                log.warn("MCP 工具 [{}] 的 ToolDefinition 未提供 inputSchema，降级为空 schema"
+                        + "（JSON Schema 校验与 Schema 提示对该工具不生效）", name);
+                return Map.of("type", "object", "properties", Map.of());
+            }
+            return objectMapper.readValue(def.inputSchema(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("MCP 工具 [{}] inputSchema 解析失败，降级为空 schema: {}", name, e.getMessage());
+            return Map.of("type", "object", "properties", Map.of());
+        }
+    }
+
+    /** O9: 优先使用 MCP 工具定义的真实 description，缺失时回退占位描述。 */
+    private String extractDescription(ToolCallback callback, String name) {
+        try {
+            var def = callback.getToolDefinition();
+            if (def != null && def.description() != null && !def.description().isBlank()) {
+                return def.description();
+            }
+        } catch (Exception ignored) {
+            // 定义读取失败时回退占位描述
+        }
+        return "MCP tool: " + name;
     }
 
     private Tool createErrorTool(String name, String errorMsg) {

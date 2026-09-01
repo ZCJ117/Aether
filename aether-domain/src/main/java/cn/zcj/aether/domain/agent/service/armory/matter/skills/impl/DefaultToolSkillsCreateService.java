@@ -8,6 +8,8 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,14 +31,26 @@ public class DefaultToolSkillsCreateService implements ToolSkillsCreateService {
 
         List<ToolCallback> toolCallbackList = new ArrayList<>();
 
-        if ("directory".equals(type)){
+        // Spring Boot executable jars expose class-path directories only as nested resources.
+        // Docker images therefore also copy this directory to /app/agent/skills, and the
+        // local class-path path remains the fallback for IDE/development runs.
+        Path directory = Path.of(path);
+        if (!Files.isDirectory(directory)) {
+            directory = Path.of("/app").resolve(path).normalize();
+        }
+        if (Files.isDirectory(directory)) {
+            ToolCallback toolCallback = SkillsTool.builder()
+                    .addSkillsDirectory(directory.toString())
+                    .build();
+            toolCallbackList.add(toolCallback);
+        } else if ("directory".equals(type)){
             ToolCallback toolCallback = SkillsTool.builder()
                     .addSkillsDirectory(path)
                     .build();
             toolCallbackList.add(toolCallback);
         }
 
-        if ("resource".equals(type)){
+        else if ("resource".equals(type)){
             ToolCallback toolCallback = SkillsTool.builder()
                     .addSkillsResource(new ClassPathResource(path))
                     .build();

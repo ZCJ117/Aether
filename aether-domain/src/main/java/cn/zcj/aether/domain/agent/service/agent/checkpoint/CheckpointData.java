@@ -21,7 +21,10 @@ import java.util.Map;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class CheckpointData {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    // Instant 需 JavaTimeModule，否则 toJson() 每次序列化都失败（检查点持久化不可用）
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+            .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     /** 会话 ID */
     private String sessionId;

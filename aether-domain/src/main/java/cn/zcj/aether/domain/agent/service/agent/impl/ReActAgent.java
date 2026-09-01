@@ -11,6 +11,7 @@ import cn.zcj.aether.domain.agent.service.agent.middleware.AgentMiddleware;
 import cn.zcj.aether.domain.agent.service.agent.middleware.MiddlewareChain;
 import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
 import cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall;
+import cn.zcj.aether.domain.agent.observability.ModelCallObservability;
 import cn.zcj.aether.domain.agent.service.context.AutoCompactResult;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
 import cn.zcj.aether.domain.agent.service.context.TokenBudget;
@@ -32,7 +33,9 @@ import org.springframework.ai.chat.model.ChatModel;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -70,6 +73,14 @@ public class ReActAgent extends BaseAgent {
     /** 注入全局生命周期钩子注册表（由 DefaultAgentFactory 在构造后调用） */
     public void setHookRegistry(HookRegistry registry) {
         this.hookRegistry = registry;
+    }
+
+    /** P1(1.1): 模型调用等待可观测（gauge + 超时计数；由 DefaultAgentFactory 注入，未注入则 no-op） */
+    private ModelCallObservability modelCallObservability;
+
+    /** P1(1.1): 注入模型等待可观测（DefaultAgentFactory 构造后调用）。 */
+    public void setModelCallObservability(ModelCallObservability observability) {
+        this.modelCallObservability = observability;
     }
 
     private Instant startTime;
@@ -156,18 +167,26 @@ public class ReActAgent extends BaseAgent {
     private void queryLoop(FlowableEmitter<RuntimeEvent> emitter, RuntimeContext ctx,
             String enrichedInstruction, MiddlewareChain chain) {
         AtomicBoolean aborted = new AtomicBoolean(false);
-        emitter.setCancellable(() -> aborted.set(true));
+        // O5: 持有进行中的模型流订阅，取消时 dispose 即时停止上游（取消传播到模型流）
+        AtomicReference<reactor.core.Disposable> activeModelSub = new AtomicReference<>();
+        emitter.setCancellable(() -> {
+            aborted.set(true);
+            // O5: 取消同时置位中断信号，传播到后续检查点（InterruptControl 取消传播）
+            state.interruptControl().interrupt();
+            disposeActiveModelSub(activeModelSub);
+        });
+
+        // H5: 执行开始时清除上轮中断信号（对齐 AgentScope 模式：reset 在 execute 起点，检查在每轮循环）
+        state.interruptControl().reset();
 
         int consecutiveToolFailures = 0;
 
-        while (state.getCurrentTurn() < MAX_TURNS && !config.getCancelToken().isCancelled() && !aborted.get()) {
+        while (state.getCurrentTurn() < MAX_TURNS && !config.getCancelToken().isCancelled()
+                && !aborted.get() && !state.interruptControl().isInterrupted()) {
             state.incrementTurn();
 
             // H5-步骤5: 每轮清空快照去重集合（对齐 hermes new_turn() L737-739）
             toolExecutor.clearSnapshotTracking();
-
-            // H5: 每轮重置中断信号（对齐 AgentScope ReActAgent 每轮检查模式）
-            state.interruptControl().reset();
 
             Instant turnStart = Instant.now();
 
@@ -188,7 +207,7 @@ public class ReActAgent extends BaseAgent {
             messages = contextManager.applyToolResultBudget(messages);
             messages = contextManager.microCompact(messages);
 
-            var compactResult = contextManager.autoCompactIfNeeded(messages, config.getModelRef(), ctx.sessionId());
+            var compactResult = contextManager.autoCompactIfNeeded(messages, config.getModelRef(), ctx.sessionId(), tokenBudget);
             if (compactResult.isCompacted()) {
                 List<TurnMessage> compacted = (List<TurnMessage>) compactResult.getCompressedMessages();
                 messages.clear();
@@ -206,7 +225,7 @@ public class ReActAgent extends BaseAgent {
 
             // Phase 9: Pipe compaction (六步压缩管道)
             if (!compactResult.isCompacted() && externalNotes != null) {
-                var pipeResult = contextManager.runCompactionPipeline(messages, config.getModelRef(), ctx.sessionId(), state.getCurrentTurn());
+                var pipeResult = contextManager.runCompactionPipeline(messages, config.getModelRef(), ctx.sessionId(), state.getCurrentTurn(), tokenBudget);
                 if (pipeResult.compacted()) {
                     messages.clear();
                     messages.addAll(pipeResult.messages());
@@ -230,11 +249,9 @@ public class ReActAgent extends BaseAgent {
             // 在模型调用前发送 turnStarted，避免前端长时间空白
             emitter.onNext(RuntimeEvent.turnStarted(state.getCurrentTurn()));
 
-            // P1-6: Hook - before model call
+            // P1-6 + O15: Hook - before model call（经 HookRegistry 单一命名空间分发）
             long modelStart = System.currentTimeMillis();
-            for (AgentHook hook : hooks) {
-                hook.onBeforeModelCall(this, ctx, state.getCurrentTurn());
-            }
+            fireBeforeModelCall(ctx, state.getCurrentTurn());
 
             // D3: PRE_API_REQUEST（对齐 hermes pre_api_request）
             if (hookRegistry != null) {
@@ -247,21 +264,9 @@ public class ReActAgent extends BaseAgent {
                         .build());
             }
 
-            // P1-#2 + P1-#1: 带缓存的异步调用，失败回退同步（不带缓存）
+            // P1-#2 + P1-#1 + O5: 真流式/缓冲路径按 aether.model.invoker.true-streaming 切换
             var modelResult = chain.applyModelCall(
-                () -> {
-                    try {
-                        return modelInvoker.callWithStreamCachedAsync(chatModel,
-                                enrichedMessages, enrichedInstruction, config.getModelRef(),
-                                config.isCacheEnabled(), config.getCacheTtlSeconds())
-                                .block(java.time.Duration.ofMinutes(2));
-                    } catch (Exception e) {
-                        log.warn("异步缓存调用失败，回退同步: {}", e.getMessage());
-                        return modelInvoker.callWithStreamCached(chatModel, enrichedMessages,
-                                enrichedInstruction, config.getModelRef(),
-                                config.isCacheEnabled(), config.getCacheTtlSeconds());
-                    }
-                },
+                () -> invokeModel(enrichedMessages, enrichedInstruction, emitter, aborted, activeModelSub),
                 config.getModelRef());
             long modelDuration = System.currentTimeMillis() - modelStart;
 
@@ -283,10 +288,8 @@ public class ReActAgent extends BaseAgent {
                 }
             }
 
-            // P1-6: Hook - after model call
-            for (AgentHook hook : hooks) {
-                hook.onAfterModelCall(this, ctx, modelResult, modelDuration);
-            }
+            // P1-6 + O15: Hook - after model call（经 HookRegistry 单一命名空间分发）
+            fireAfterModelCall(ctx, modelResult, modelDuration);
 
             if (modelResult.hasError()) {
                 emitter.onNext(RuntimeEvent.error(modelResult.getError()));
@@ -348,26 +351,42 @@ public class ReActAgent extends BaseAgent {
                 .map(tc -> new ToolExecutor.ToolCallRequest(tc.getId(), tc.getName(), tc.getInput()))
                 .toList();
 
-            // P1-6: Hook - before tool call
+            // P1-6 + O15: Hook - before tool call（经 HookRegistry 单一命名空间分发）
             long toolStart = System.currentTimeMillis();
-            for (AgentHook hook : hooks) {
-                hook.onBeforeToolCall(this, ctx, requests);
-            }
+            fireBeforeToolCall(ctx, requests);
 
             // P1-2: 通过中间件链过滤/检查工具调用
             List<ToolExecutor.ToolCallRequest> filteredRequests = chain.applyActing(requests);
 
+            // ====== O10: 工具环护栏 —— 连续失败超限的工具拒绝执行（结果仍回注以保持 tool_call 配对）======
+            List<ToolExecutor.ToolCallRequest> guardPassed = new ArrayList<>();
+            List<ToolResult> guardBlocked = new ArrayList<>();
+            for (ToolExecutor.ToolCallRequest req : filteredRequests) {
+                int failCount = getToolFailCount(req.toolName());
+                if (failCount >= TOOL_GUARDRAIL_FAILURE_LIMIT) {
+                    log.warn("Agent [{}] 工具 [{}] 已连续失败 {} 次，护栏熔断跳过执行",
+                            getId(), req.toolName(), failCount);
+                    guardBlocked.add(ToolResult.error(req.toolCallId(), req.toolName(),
+                            "[系统护栏] 工具 '" + req.toolName() + "' 已连续失败 " + failCount
+                                    + " 次，已被熔断跳过执行。请放弃该工具调用路径，改用其他方式完成任务。",
+                            ToolResult.ErrorType.GUARDRAIL));
+                } else {
+                    guardPassed.add(req);
+                }
+            }
+
             String userId = ctx.userId() != null ? ctx.userId() : "system";
             String sessionId = ctx.sessionId() != null ? ctx.sessionId() : "session";
 
-            List<ToolResult> results = toolExecutor.executeBatch(filteredRequests, userId, sessionId);
+            List<ToolResult> results = new ArrayList<>(guardBlocked);
+            if (!guardPassed.isEmpty()) {
+                results.addAll(toolExecutor.executeBatch(guardPassed, userId, sessionId));
+            }
 
             long toolDuration = System.currentTimeMillis() - toolStart;
 
-            // P1-6: Hook - after tool call
-            for (AgentHook hook : hooks) {
-                hook.onAfterToolCall(this, ctx, results, toolDuration);
-            }
+            // P1-6 + O15: Hook - after tool call（经 HookRegistry 单一命名空间分发）
+            fireAfterToolCall(ctx, results, toolDuration);
 
             // Phase 9: Token budget event
             if (tokenBudget != null) {
@@ -376,6 +395,14 @@ public class ReActAgent extends BaseAgent {
 
             boolean allFailed = true;
             for (ToolResult result : results) {
+                // O10: per-tool 失败计数（GUARDRAIL 拦截结果为护栏自身产生，不再累计）；
+                // 成功即复位，保持"连续失败"语义
+                if (result.isError() && result.getErrorType() != ToolResult.ErrorType.GUARDRAIL) {
+                    incrementToolFailCount(result.getToolName());
+                } else if (!result.isError()) {
+                    resetToolFailCount(result.getToolName());
+                }
+
                 // P0-1: 同一 toolCallId 连续 VALIDATION 失败计数（防死循环，对齐 crewAI _max_parsing_attempts=3）
                 if (result.isError() && result.getErrorType() == ToolResult.ErrorType.VALIDATION) {
                     String counterKey = "valFailCount:" + result.getToolCallId();
@@ -477,6 +504,177 @@ public class ReActAgent extends BaseAgent {
     // ============== 以下方法从原 AgentRuntime 迁移 ==============
 
     /**
+     * O5: 模型调用入口 —— 按灰度开关 {@code aether.model.invoker.true-streaming} 选择路径。
+     *
+     * <p>true（默认）→ 真流式：textDelta 经 emitter 边收边发，取消可 dispose 模型流；
+     * false（回滚）→ 旧缓冲路径：带缓存异步 + block 超时预算收敛。
+     */
+    private ModelInvoker.ModelCallResult invokeModel(List<Message> messages, String instruction,
+            FlowableEmitter<RuntimeEvent> emitter, AtomicBoolean aborted,
+            AtomicReference<reactor.core.Disposable> activeModelSub) {
+        if (modelInvoker.isTrueStreaming()) {
+            return invokeModelStreaming(messages, instruction, emitter, aborted, activeModelSub);
+        }
+
+        // ---- 旧缓冲路径（true-streaming=false 灰度回滚，保留 callWithStreamCachedAsync）----
+        try {
+            return modelInvoker.callWithStreamCachedAsync(chatModel,
+                    messages, instruction, config.getModelRef(),
+                    config.isCacheEnabled(), config.getCacheTtlSeconds())
+                    // P0-2: 与 ModelInvoker 同源 aether.model.invoker.call-timeout-ms
+                    .block(java.time.Duration.ofMillis(modelInvoker.getCallTimeoutMs()));
+        } catch (Exception e) {
+            if (isBlockTimeout(e)) {
+                // P0-2 预算收敛：block 超时即预算耗尽，不再回退同步
+                log.warn("异步缓存调用超时（预算耗尽，不回退同步）: {}", e.getMessage());
+                return ModelInvoker.ModelCallResult.error(
+                        e.getMessage() != null ? e.getMessage() : "模型调用超时");
+            }
+            log.warn("异步缓存调用失败，回退同步: {}", e.getMessage());
+            return modelInvoker.callWithStreamCached(chatModel, messages,
+                    instruction, config.getModelRef(),
+                    config.isCacheEnabled(), config.getCacheTtlSeconds());
+        }
+    }
+
+    /**
+     * O5 真流式模型调用：订阅 {@link ModelInvoker#callWithStreamingAsync}，
+     * textDelta 实时下推 emitter；latch 等待完成（预算 = call-timeout-ms）。
+     *
+     * <p>取消语义：emitter 取消 / 中断 → dispose 订阅 → Reactor 立即停止上游模型流。
+     */
+    private ModelInvoker.ModelCallResult invokeModelStreaming(List<Message> messages, String instruction,
+            FlowableEmitter<RuntimeEvent> emitter, AtomicBoolean aborted,
+            AtomicReference<reactor.core.Disposable> activeModelSub) {
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<ModelInvoker.ModelCallResult> okRef = new AtomicReference<>();
+        AtomicReference<Throwable> errRef = new AtomicReference<>();
+        try {
+            activeModelSub.set(modelInvoker
+                    .callWithStreamingAsync(chatModel, messages, instruction, config.getModelRef(),
+                            delta -> {
+                                // 边收边发：模型 chunk 一到即下推 SSE（FlowableCreate 内部串行化，跨线程安全）
+                                // O5: 中断信号置位后停止下推（外部 interrupt() 可即时停止流输出）
+                                if (!aborted.get() && !emitter.isCancelled()
+                                        && !state.interruptControl().isInterrupted()) {
+                                    emitter.onNext(delta);
+                                }
+                            })
+                    .doOnCancel(latch::countDown)
+                    .subscribe(okRef::set, errRef::set, latch::countDown));
+
+            // P1(1.1): latch 等待可观测 —— 记录当前阻塞等待的调用线程数（容量规划）
+            ModelCallObservability.WaitHandle wait =
+                    modelCallObservability == null ? null : modelCallObservability.beginWait();
+            try {
+                boolean finished = latch.await(modelInvoker.getCallTimeoutMs(),
+                        TimeUnit.MILLISECONDS);
+                if (!finished) {
+                    disposeActiveModelSub(activeModelSub);
+                    if (modelCallObservability != null) {
+                        modelCallObservability.recordTimeout();
+                    }
+                    log.warn("真流式模型调用超时（预算耗尽）: turn={}", state.getCurrentTurn());
+                    return ModelInvoker.ModelCallResult.error("模型调用超时");
+                }
+            } finally {
+                if (wait != null) {
+                    wait.close();
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            disposeActiveModelSub(activeModelSub);
+            return ModelInvoker.ModelCallResult.error("模型调用被中断");
+        }
+
+        if (errRef.get() != null) {
+            Throwable e = errRef.get();
+            log.warn("真流式模型调用失败: {}", e.getMessage());
+            return ModelInvoker.ModelCallResult.error(
+                    e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+        }
+        if (okRef.get() == null) {
+            // doOnCancel 计数（外部取消 dispose）且无错误完成 → 已取消
+            return ModelInvoker.ModelCallResult.error("模型流已取消");
+        }
+        return okRef.get();
+    }
+
+    private void disposeActiveModelSub(AtomicReference<reactor.core.Disposable> activeModelSub) {
+        reactor.core.Disposable sub = activeModelSub.getAndSet(null);
+        if (sub != null && !sub.isDisposed()) {
+            sub.dispose();
+        }
+    }
+
+    // ============== O10: per-tool 失败护栏 ==============
+
+    /** O10: per-tool 连续失败熔断阈值（默认 3，对齐 hermes tool_guardrails 保守取值）。 */
+    private static final int TOOL_GUARDRAIL_FAILURE_LIMIT = 3;
+
+    private static final String TOOL_FAIL_COUNT_PREFIX = "toolFailCount:";
+
+    // ====== O15: LLM/工具挂点统一经 HookRegistry 分发（无注册表时降级为直接回调）======
+
+    private void fireBeforeModelCall(RuntimeContext ctx, int turnNumber) {
+        if (hookRegistry != null) {
+            hookRegistry.invokeAll(HookPoint.PRE_LLM_CALL, HookContext.builder()
+                    .agent(this).runtimeCtx(ctx).agentId(getId()).sessionId(ctx.sessionId())
+                    .turnNumber(turnNumber).build());
+        } else {
+            for (AgentHook hook : hooks) hook.onBeforeModelCall(this, ctx, turnNumber);
+        }
+    }
+
+    private void fireAfterModelCall(RuntimeContext ctx,
+            ModelInvoker.ModelCallResult result, long durationMs) {
+        if (hookRegistry != null) {
+            hookRegistry.invokeAll(HookPoint.POST_LLM_CALL, HookContext.builder()
+                    .agent(this).runtimeCtx(ctx).agentId(getId()).sessionId(ctx.sessionId())
+                    .modelCallResult(result).durationMs(durationMs).build());
+        } else {
+            for (AgentHook hook : hooks) hook.onAfterModelCall(this, ctx, result, durationMs);
+        }
+    }
+
+    private void fireBeforeToolCall(RuntimeContext ctx, List<ToolExecutor.ToolCallRequest> requests) {
+        if (hookRegistry != null) {
+            hookRegistry.invokeAll(HookPoint.PRE_TOOL_CALL, HookContext.builder()
+                    .agent(this).runtimeCtx(ctx).agentId(getId()).sessionId(ctx.sessionId())
+                    .toolRequests(requests).build());
+        } else {
+            for (AgentHook hook : hooks) hook.onBeforeToolCall(this, ctx, requests);
+        }
+    }
+
+    private void fireAfterToolCall(RuntimeContext ctx, List<ToolResult> results, long durationMs) {
+        if (hookRegistry != null) {
+            hookRegistry.invokeAll(HookPoint.POST_TOOL_CALL, HookContext.builder()
+                    .agent(this).runtimeCtx(ctx).agentId(getId()).sessionId(ctx.sessionId())
+                    .toolResults(results).durationMs(durationMs).build());
+        } else {
+            for (AgentHook hook : hooks) hook.onAfterToolCall(this, ctx, results, durationMs);
+        }
+    }
+
+    private int getToolFailCount(String toolName) {
+        if (toolName == null) return 0;
+        Object v = state.getAttribute(TOOL_FAIL_COUNT_PREFIX + toolName);
+        return v instanceof Integer i ? i : 0;
+    }
+
+    private void incrementToolFailCount(String toolName) {
+        if (toolName == null) return;
+        state.setAttribute(TOOL_FAIL_COUNT_PREFIX + toolName, getToolFailCount(toolName) + 1);
+    }
+
+    private void resetToolFailCount(String toolName) {
+        if (toolName == null) return;
+        state.setAttribute(TOOL_FAIL_COUNT_PREFIX + toolName, 0);
+    }
+
+    /**
      * 将内部 TurnMessage 转换为 Spring AI Message。
      * 原 AgentRuntime.convertToSpringMessages() 逻辑完全相同。
      */
@@ -538,6 +736,22 @@ public class ReActAgent extends BaseAgent {
         if (chatModel instanceof ResilientChatModelExecutor executor) {
             executor.setAgentState(state);
         }
+    }
+
+    /**
+     * P0-2：判断异常是否为 {@code Mono.block(Duration)} 超时。
+     * Reactor 超时抛 {@code IllegalStateException("Timeout on blocking read...")}；
+     * 递归 cause 链兼容包装（如 Reactor Exceptions 包装）。
+     */
+    private static boolean isBlockTimeout(Throwable t) {
+        Throwable cur = t;
+        while (cur != null) {
+            if (cur instanceof java.util.concurrent.TimeoutException) return true;
+            if (cur instanceof IllegalStateException && cur.getMessage() != null
+                    && cur.getMessage().contains("Timeout on blocking read")) return true;
+            cur = cur.getCause();
+        }
+        return false;
     }
 
     // ============== H4: 权限挂起/恢复协议 ==============

@@ -3,24 +3,26 @@ package cn.zcj.aether.domain.agent.service.executor;
 import cn.zcj.aether.domain.agent.model.graph.AgentEdge;
 import cn.zcj.aether.domain.agent.model.graph.AgentEdgeType;
 import cn.zcj.aether.domain.agent.model.graph.AgentGraph;
-import cn.zcj.aether.domain.agent.model.graph.AgentNodeDef;
-import cn.zcj.aether.domain.agent.service.agent.DefaultAgentFactory;
-import cn.zcj.aether.domain.agent.service.agent.core.Agent;
 import cn.zcj.aether.domain.agent.service.agent.core.AgentConfig;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.agent.hook.HookContext;
 import cn.zcj.aether.domain.agent.service.agent.hook.HookPoint;
 import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
-import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionContext;
 import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionHandler;
-import cn.zcj.aether.domain.agent.service.agent.intervention.InterventionResult;
 import cn.zcj.aether.domain.agent.service.agent.observability.AgentTracer;
 import cn.zcj.aether.domain.agent.service.agent.observability.BackgroundReviewer;
 import cn.zcj.aether.domain.agent.service.agent.observability.GraphExecutionRecorder;
+import cn.zcj.aether.domain.agent.service.agent.DefaultAgentFactory;
+import cn.zcj.aether.domain.agent.service.executor.orchestration.EventDrivenOrchestrationStrategy;
+import cn.zcj.aether.domain.agent.service.executor.orchestration.GraphFlowCoordinator;
+import cn.zcj.aether.domain.agent.service.executor.orchestration.GraphOrchestrationStrategy;
+import cn.zcj.aether.domain.agent.service.executor.orchestration.LoopOrchestrationStrategy;
+import cn.zcj.aether.domain.agent.service.executor.orchestration.OrchestrationServices;
+import cn.zcj.aether.domain.agent.service.executor.orchestration.ParallelOrchestrationStrategy;
+import cn.zcj.aether.domain.agent.service.executor.orchestration.SequentialOrchestrationStrategy;
+import cn.zcj.aether.domain.agent.service.executor.orchestration.SubAgentOrchestrationStrategy;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
-import cn.zcj.aether.domain.agent.service.subagent.ResultRefiner;
 import cn.zcj.aether.domain.agent.service.subagent.SubAgentOrchestrator;
-import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
@@ -29,29 +31,20 @@ import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.*;
+import jakarta.annotation.Resource;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
- * 多Agent图执行器。
+ * Graph lifecycle boundary and dispatcher for five orchestration strategies.
  *
- * <p>H4-步骤7 更新：集成通道差异化拦截机制。
- * <ul>
- *   <li><b>DIRECT 通道</b>（SEQUENTIAL / LOOP / SUBAGENT）：
- *       拦截异常回传调用方（Future.setException），阻断当前链路。</li>
- *   <li><b>BROADCAST 通道</b>（PARALLEL / GRAPHFLOW 并发批次）：
- *       拦截异常只记日志静默丢弃，不波及其他并发节点。
- *       对齐 AutoGen _single_threaded_agent_runtime.py L748-750。</li>
- * </ul>
- *
- * <p>SEQUENTIAL → 串行推进，{outputKey} 传递
- * <br>PARALLEL   → 多线程并发，事件实时转发到 emitter
- * <br>LOOP       → 循环直到收敛或达到 maxIterations
- * <br>GRAPHFLOW  → DAG 拓扑排序 + 就绪队列
- * <br>SUBAGENT   → 子Agent派遣
+ * <p>P2-2.3: orchestration details moved to {@code orchestration.*}; this class
+ * retains execution lifecycle (trace, hooks, MDC, error completion).</p>
  */
 @Slf4j
 @Service
@@ -66,53 +59,53 @@ public class GraphExecutor {
     @Resource
     private SubAgentOrchestrator subAgentOrchestrator;
 
-    /** H4-步骤7: 拦截处理器（可选注入，无 Bean 时为 null） */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private InterventionHandler interventionHandler;
 
-    // ── D3 图生命周期钩子（Aether 特有：图节点级 + 图完成级）──
     @Resource
     private HookRegistry hookRegistry;
 
-    /** D4: 图级 trace 录制（可选注入，镜像 interventionHandler 可空模式）。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private GraphExecutionRecorder graphExecutionRecorder;
 
-    /** D4: 后台自评审（默认关闭，@ConditionalOnProperty 启用；无 Bean 时 null → no-op）。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private BackgroundReviewer backgroundReviewer;
 
-    private final ExecutorService parallelPool = Executors.newCachedThreadPool();
+    @jakarta.annotation.Resource(name = "graphPool")
+    private ExecutorService graphPool;
 
-    /**
-     * 触发图生命周期钩子（空安全）。GraphExecutor 由 Spring 装配时 hookRegistry 非空；
-     * 此处防御非 Spring 直接构造的测试/未来 D4 场景（对齐 interventionHandler 的可空模式）。
-     */
-    private void notifyGraphHook(HookPoint point, HookContext ctx) {
-        if (hookRegistry != null) {
-            hookRegistry.invokeAll(point, ctx);
+    private ExecutorService graphPoolOrDefault() {
+        ExecutorService pool = this.graphPool;
+        if (pool == null) {
+            synchronized (this) {
+                pool = this.graphPool;
+                if (pool == null) {
+                    pool = new ThreadPoolExecutor(4, 8, 60L, TimeUnit.SECONDS,
+                            new LinkedBlockingQueue<>(200),
+                            r -> {
+                                Thread t = new Thread(r, "aether-graph");
+                                t.setDaemon(true);
+                                return t;
+                            },
+                            new ThreadPoolExecutor.CallerRunsPolicy());
+                    this.graphPool = pool;
+                }
+            }
         }
+        return pool;
     }
 
-    // ========== 主入口 ==========
-
-    public Flowable<RuntimeEvent> execute(
-            AgentGraph graph,
-            String userId,
-            String sessionId,
-            String initialMessage) {
-
+    public Flowable<RuntimeEvent> execute(AgentGraph graph, String userId, String sessionId,
+                                          String initialMessage) {
         return Flowable.create(emitter -> {
-            String graphExecutionId = null;
             String prevGraphId = MDC.get("graphExecutionId");
             String prevSessionId = MDC.get("sessionId");
+            String graphExecutionId = null;
             AgentTracer.SpanScope graphSpan = null;
             boolean graphFailed = false;
             try {
                 ExecutionState state = new ExecutionState();
                 List<AgentEdge> edges = graph.getEdges();
-                Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
-
                 boolean isGraphFlow = edges.stream().anyMatch(AgentEdge::isGraphFlow);
                 if (graphExecutionRecorder != null && isGraphFlow) {
                     graphExecutionId = graphExecutionRecorder.beginExecution(sessionId);
@@ -122,891 +115,93 @@ public class GraphExecutor {
                 }
 
                 if (edges.isEmpty() && graph.getEntryPoint() != null) {
-                    AgentNodeDef entry = agentDefs.get(graph.getEntryPoint());
-                    if (entry != null) {
-                        executeSingle(entry, userId, sessionId,
-                                initialMessage, state, emitter, "entry");
-                    }
-                    notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
+                    executeEntryOnly(graph, userId, sessionId, initialMessage, state, emitter);
+                    notifyFinalize(sessionId);
                     emitter.onComplete();
                     return;
                 }
 
-                for (AgentEdge edge : edges) {
-                    if (edge.isGraphFlow()) {
-                        executeGraphFlow(graph, userId, sessionId, initialMessage, emitter, graphExecutionId);
-                        return;
-                    }
-                    switch (edge.getType()) {
-                        case SEQUENTIAL -> executeSequential(
-                                graph, edge, userId, sessionId, state, emitter);
-                        case PARALLEL -> executeParallel(
-                                graph, edge, userId, sessionId, state, emitter);
-                        case LOOP -> executeLoop(
-                                graph, edge, userId, sessionId, state, emitter);
-                        case SUBAGENT -> executeSubAgents(
-                                graph, edge, userId, sessionId, state, emitter);
-                        case EVENT_DRIVEN -> executeEventDriven(
-                                graph, edge, userId, sessionId, state, emitter);
-                    }
+                if (dispatchEdges(graph, userId, sessionId, initialMessage, state, emitter, graphExecutionId)) {
+                    return;
                 }
 
-                // D3: ON_GRAPH_FINALIZE
-                notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
+                notifyFinalize(sessionId);
                 emitter.onComplete();
             } catch (Exception e) {
                 log.error("GraphExecutor error", e);
                 graphFailed = true;
-                if (graphSpan != null) {
-                    graphSpan.span().setStatus(StatusCode.ERROR, e.getMessage());
-                }
+                if (graphSpan != null) graphSpan.span().setStatus(StatusCode.ERROR, e.getMessage());
                 if (graphExecutionRecorder != null && graphExecutionId != null) {
                     graphExecutionRecorder.endExecution(graphExecutionId, e);
                 }
                 if (!emitter.isCancelled()) {
                     emitter.onNext(RuntimeEvent.error(e.getMessage()));
-                    // D3: ON_GRAPH_FINALIZE（异常分支）
-                    notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
+                    notifyFinalize(sessionId);
                     emitter.onComplete();
                 }
             } finally {
                 if (graphSpan != null) {
-                    if (!graphFailed) {
-                        graphSpan.span().setStatus(StatusCode.OK);
-                    }
+                    if (!graphFailed) graphSpan.span().setStatus(StatusCode.OK);
                     graphSpan.close();
                 }
-                if (graphExecutionId != null) {
-                    if (prevGraphId != null) {
-                        MDC.put("graphExecutionId", prevGraphId);
-                    } else {
-                        MDC.remove("graphExecutionId");
-                    }
-                    if (prevSessionId != null) {
-                        MDC.put("sessionId", prevSessionId);
-                    } else {
-                        MDC.remove("sessionId");
-                    }
-                }
+                restoreMdc(prevGraphId, prevSessionId, graphExecutionId);
             }
         }, BackpressureStrategy.BUFFER);
     }
 
-    // ========== SEQUENTIAL (DIRECT 通道) ==========
-
-    private void executeSequential(
-            AgentGraph graph, AgentEdge edge,
-            String userId, String sessionId,
-            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
-
-        log.info("串行执行: {} subAgents={}", edge.getWorkflowName(), edge.getSubAgents());
-
-        for (String agentName : edge.getSubAgents()) {
-            AgentNodeDef def = graph.getAgentDefs().get(agentName);
-            if (def == null) {
-                log.warn("Agent not found: {}", agentName);
-                continue;
+    private boolean dispatchEdges(AgentGraph graph, String userId, String sessionId, String initialMessage,
+                                  ExecutionState state, FlowableEmitter<RuntimeEvent> emitter,
+                                  String graphExecutionId) {
+        for (AgentEdge edge : graph.getEdges()) {
+            if (edge.isGraphFlow()) {
+                GraphFlowCoordinator coordinator = new GraphFlowCoordinator(
+                        services(), conditionEvaluator, graphExecutionRecorder, backgroundReviewer);
+                coordinator.execute(graph, userId, sessionId, initialMessage, emitter, graphExecutionId);
+                return true;
             }
+            strategyFor(edge.getType()).execute(graph, edge, userId, sessionId, state, emitter);
+        }
+        return false;
+    }
 
-            String resolvedInstruction = state.resolveTemplate(def.getInstruction());
-            AgentNodeDef resolved = AgentNodeDef.builder()
-                    .name(def.getName())
-                    .instruction(resolvedInstruction)
-                    .description(def.getDescription())
-                    .outputKey(def.getOutputKey())
-                    .toolNames(def.getToolNames())
-                    .modelRef(def.getModelRef())
-                    .agentType(def.getAgentType())
-                    .build();
+    private void executeEntryOnly(AgentGraph graph, String userId, String sessionId, String initialMessage,
+                                  ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
+        AgentEdge entry = AgentEdge.builder().workflowName("entry").subAgents(List.of(graph.getEntryPoint())).build();
+        strategyFor(AgentEdgeType.SEQUENTIAL).execute(
+                graph, entry, userId, sessionId, state, emitter);
+    }
 
-            String input = state.getLastOutput().isEmpty()
-                    ? "" : state.getLastOutput();
+    private GraphOrchestrationStrategy strategyFor(AgentEdgeType type) {
+        OrchestrationServices services = services();
+        Map<AgentEdgeType, GraphOrchestrationStrategy> strategies = new EnumMap<>(AgentEdgeType.class);
+        strategies.put(AgentEdgeType.SEQUENTIAL, new SequentialOrchestrationStrategy(services));
+        strategies.put(AgentEdgeType.PARALLEL, new ParallelOrchestrationStrategy(services));
+        strategies.put(AgentEdgeType.LOOP, new LoopOrchestrationStrategy(services));
+        strategies.put(AgentEdgeType.SUBAGENT, new SubAgentOrchestrationStrategy(services, subAgentOrchestrator));
+        strategies.put(AgentEdgeType.EVENT_DRIVEN, new EventDrivenOrchestrationStrategy(services));
+        GraphOrchestrationStrategy strategy = strategies.get(type);
+        if (strategy == null) {
+            throw new IllegalArgumentException("未支持的编排类型: " + type);
+        }
+        return strategy;
+    }
 
-            // H4-步骤7: DIRECT 通道拦截
-            InterventionContext ictx = buildInterventionContext(
-                    InterventionContext.ChannelType.DIRECT,
-                    agentName, sessionId, userId,
-                    edge.getType().name(), edge.getWorkflowName());
+    private OrchestrationServices services() {
+        return new OrchestrationServices(agentFactory, interventionHandler, hookRegistry, graphPoolOrDefault());
+    }
 
-            boolean shouldProceed = applyDirectInterception(input, ictx, emitter);
-            if (!shouldProceed) {
-                log.warn("SEQUENTIAL 节点 [{}] 被拦截阻断，终止链路", agentName);
-                break; // BLOCK 语义：终止当前 SEQUENTIAL 链路
-            }
-
-            executeSingle(resolved, userId,
-                    sessionId + "-" + agentName, input, state, emitter, agentName);
+    private void notifyFinalize(String sessionId) {
+        // Keep graph finalization local so error and success paths always use the same hook context.
+        if (hookRegistry != null) {
+            hookRegistry.invokeAll(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
         }
     }
 
-    // ========== PARALLEL (BROADCAST 通道) ==========
-
-    private void executeParallel(
-            AgentGraph graph, AgentEdge edge,
-            String userId, String sessionId,
-            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
-
-        List<String> agentNames = edge.getSubAgents();
-        int count = agentNames.size();
-        log.info("并行执行: {} subAgents={}", edge.getWorkflowName(), agentNames);
-
-        CountDownLatch latch = new CountDownLatch(count);
-        List<ExecutionState> subStates = new CopyOnWriteArrayList<>();
-        Map<String, String> mdcCtx = MDC.getCopyOfContextMap();
-
-        for (String agentName : agentNames) {
-            AgentNodeDef def = graph.getAgentDefs().get(agentName);
-            if (def == null) {
-                log.warn("Agent not found: {}", agentName);
-                latch.countDown();
-                continue;
-            }
-
-            String resolvedInstruction = state.resolveTemplate(def.getInstruction());
-            AgentNodeDef resolved = AgentNodeDef.builder()
-                    .name(def.getName())
-                    .instruction(resolvedInstruction)
-                    .description(def.getDescription())
-                    .outputKey(def.getOutputKey())
-                    .toolNames(def.getToolNames())
-                    .modelRef(def.getModelRef())
-                    .agentType(def.getAgentType())
-                    .build();
-
-            ExecutionState localState = state.forkSource();
-
-            // H4-步骤7: BROADCAST 通道拦截 — 仅记日志，不波及其他节点
-            InterventionContext ictx = buildInterventionContext(
-                    InterventionContext.ChannelType.BROADCAST,
-                    agentName, sessionId, userId,
-                    edge.getType().name(), edge.getWorkflowName());
-
-            boolean shouldProceed = applyBroadcastInterception(
-                    resolvedInstruction, ictx, agentName);
-            if (!shouldProceed) {
-                // BROADCAST 通道：DROP 语义，仅跳过当前节点
-                latch.countDown();
-                continue;
-            }
-
-            parallelPool.submit(() -> {
-                if (mdcCtx != null) {
-                    MDC.setContextMap(mdcCtx);
-                }
-                try {
-                    AgentConfig agentConfig = AgentConfig.fromNodeDef(resolved);
-                    Agent agent = agentFactory.create(agentConfig);
-                    RuntimeContext ctx = new RuntimeContext(userId,
-                            sessionId + "-" + agentName, null, null, "", null, null);
-
-                    // D3: ON_GRAPH_NODE_START（PARALLEL 线程）
-                    notifyGraphHook(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
-                            .agentId(agentName).sessionId(sessionId).graphNodeId(resolved.getOutputKey()).build());
-
-                    List<RuntimeEvent> agentEvents = new ArrayList<>();
-                    agent.execute(ctx)
-                            .blockingForEach(event -> {
-                                agentEvents.add(event);
-                                synchronized (emitter) {
-                                    if (!emitter.isCancelled()) {
-                                        emitter.onNext(event);
-                                    }
-                                }
-                                if (event.getType() == RuntimeEvent.EventType.textDelta
-                                        && event.getText() != null) {
-                                    localState.appendOutput(def.getOutputKey(), event.getText());
-                                }
-                            });
-
-                    localState.markComplete(def.getOutputKey(), localState.getText(def.getOutputKey()));
-                    subStates.add(localState);
-                    // D3: ON_GRAPH_NODE_END（PARALLEL 线程）
-                    notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
-                            .agentId(agentName).sessionId(sessionId).graphNodeId(resolved.getOutputKey())
-                            .response(localState.getText(def.getOutputKey())).build());
-                    log.info("并行Agent完成: {} events={}", agentName, agentEvents.size());
-                } catch (Exception e) {
-                    log.error("并行Agent失败: {}", agentName, e);
-                    synchronized (emitter) {
-                        if (!emitter.isCancelled()) {
-                            emitter.onNext(RuntimeEvent.error(
-                                    "[" + agentName + "] " + e.getMessage()));
-                        }
-                    }
-                } finally {
-                    MDC.clear();
-                    latch.countDown();
-                }
-            });
-        }
-
-        try {
-            boolean done = latch.await(10, TimeUnit.MINUTES);
-            if (!done) {
-                log.warn("并行执行超时，部分Agent未完成");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("并行执行被中断");
-        }
-
-        for (ExecutionState sub : subStates) {
-            for (String agentName : agentNames) {
-                AgentNodeDef def = graph.getAgentDefs().get(agentName);
-                if (def != null) {
-                    state.merge(sub, def.getOutputKey());
-                }
-            }
-        }
-
-        log.info("并行执行完成: {} 个Agent, {} 个子状态已合并",
-                agentNames.size(), subStates.size());
-    }
-
-    // ========== LOOP (DIRECT 通道) ==========
-
-    private void executeLoop(
-            AgentGraph graph, AgentEdge edge,
-            String userId, String sessionId,
-            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
-
-        int maxIter = edge.getMaxIterations() != null ? edge.getMaxIterations() : 3;
-        log.info("循环执行: {} maxIterations={}", edge.getWorkflowName(), maxIter);
-
-        String previousOutput = "";
-
-        for (int i = 0; i < maxIter; i++) {
-            String input = i == 0 ? "" : state.getLastOutput();
-
-            for (String agentName : edge.getSubAgents()) {
-                AgentNodeDef def = graph.getAgentDefs().get(agentName);
-                if (def == null) continue;
-
-                String resolvedInstruction = state.resolveTemplate(def.getInstruction());
-                AgentNodeDef resolved = AgentNodeDef.builder()
-                        .name(def.getName())
-                        .instruction(resolvedInstruction)
-                        .description(def.getDescription())
-                        .outputKey(def.getOutputKey())
-                        .toolNames(def.getToolNames())
-                        .modelRef(def.getModelRef())
-                        .agentType(def.getAgentType())
-                        .build();
-
-                // H4-步骤7: DIRECT 通道拦截
-                InterventionContext ictx = buildInterventionContext(
-                        InterventionContext.ChannelType.DIRECT,
-                        agentName, sessionId, userId,
-                        edge.getType().name(), edge.getWorkflowName());
-
-                boolean shouldProceed = applyDirectInterception(input, ictx, emitter);
-                if (!shouldProceed) {
-                    log.warn("LOOP 节点 [{}] 被拦截阻断，终止循环", agentName);
-                    return; // BLOCK 语义：终止循环
-                }
-
-                executeSingle(resolved, userId,
-                        sessionId + "-iter" + i + "-" + agentName,
-                        input, state, emitter, agentName);
-            }
-
-            String currentOutput = state.getLastOutput();
-            if (previousOutput.equals(currentOutput) && !currentOutput.isEmpty()) {
-                log.info("循环收敛于迭代 #{}", i + 1);
-                break;
-            }
-            previousOutput = currentOutput;
-        }
-    }
-
-    // ========== SUBAGENT (DIRECT 通道) ==========
-    //
-    // M2 (委派即工具): 子Agent派遣现在有两条路径:
-    //   1. 结构路径(本方法) — GraphExecutor 按 YAML 配置的 SUBAGENT edge 派遣，LLM 无感知
-    //   2. Tool 路径 — LLM 通过 tool_use 调用 SubAgentDelegationTool，
-    //      自动走 ToolExecutor → 两级校验 → 权限检查 → 执行，LLM 自主决策何时委派
-    // 两条路径互补共存，向后兼容。
-
-    private void executeSubAgents(
-            AgentGraph graph, AgentEdge edge,
-            String userId, String sessionId,
-            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
-
-        List<String> agentNames = edge.getSubAgents();
-        log.info("SUBAGENT 派遣: subAgents={}", agentNames);
-
-        for (String agentName : agentNames) {
-            AgentNodeDef def = graph.getAgentDefs().get(agentName);
-            if (def == null) {
-                log.warn("SUBAGENT: Agent not found: {}", agentName);
-                continue;
-            }
-
-            String task = def.getInstruction();
-            if (task == null || task.isBlank()) {
-                log.warn("SUBAGENT: Agent {} 无 instruction", agentName);
-                continue;
-            }
-
-            // H4-步骤7: DIRECT 通道拦截
-            InterventionContext ictx = buildInterventionContext(
-                    InterventionContext.ChannelType.DIRECT,
-                    agentName, sessionId, userId,
-                    edge.getType().name(), edge.getWorkflowName());
-
-            boolean shouldProceed = applyDirectInterception(task, ictx, emitter);
-            if (!shouldProceed) {
-                log.warn("SUBAGENT 节点 [{}] 被拦截阻断", agentName);
-                continue;
-            }
-
-            List<String> toolNames = def.getToolNames() != null
-                    ? def.getToolNames() : List.of();
-
-            ResultRefiner.SubAgentResult result = subAgentOrchestrator.dispatch(
-                    task, toolNames, null, def.getModelRef(), userId, sessionId);
-
-            String summaryText = "[子Agent: " + agentName + "] " + result.summary();
-            emitter.onNext(RuntimeEvent.text(summaryText));
-
-            String outputKey = def.getOutputKey() != null
-                    ? def.getOutputKey() : agentName;
-            state.appendOutput(outputKey, result.summary());
-            state.setFinalOutput(outputKey, result.summary());
-            state.setLastAgentName(agentName);
-
-            log.info("SUBAGENT 完成: agent={} status={}", agentName, result.status());
-        }
-    }
-
-    // ========== EVENT_DRIVEN (M1 新增：基于 cause_by/watch 订阅路由) ==========
-
-    /**
-     * 事件驱动执行模式。
-     *
-     * <p>Agent 通过声明式 {@code watch} 订阅接收消息，
-     * SubscriptionRouter 根据消息的 {@code topic} 和 {@code causeBy} 投递到订阅者邮箱。
-     * 对齐 MetaGPT 的双重过滤 + AutoGen Topic 发布订阅。
-     *
-     * <h3>执行流程</h3>
-     * <ol>
-     *   <li>构建订阅声明映射：从 edge.watch + nodeDef.subscriptions 合并</li>
-     *   <li>为每个订阅者创建有界邮箱</li>
-     *   <li>发送初始消息到匹配的订阅者邮箱</li>
-     *   <li>循环：排空订阅者邮箱 → 执行 Agent → 发布输出到下游订阅者</li>
-     *   <li>所有邮箱空且无活跃 Agent 时退出</li>
-     * </ol>
-     */
-    private void executeEventDriven(
-            AgentGraph graph, AgentEdge edge,
-            String userId, String sessionId,
-            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter) {
-
-        List<String> agentNames = edge.getSubAgents() != null
-                ? edge.getSubAgents() : List.of();
-        if (agentNames.isEmpty()) {
-            log.warn("EVENT_DRIVEN: subAgents 列表为空，跳过");
-            return;
-        }
-
-        Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
-        Map<String, List<String>> watches = buildWatchMap(graph, edge, agentNames);
-        SubscriptionRouter router = new SubscriptionRouter();
-
-        // 发送初始消息（initialMessage 作为无 topic 的广播）
-        if (edge.getCauseBy() != null || edge.getWatch() != null) {
-            MessageEnvelope initialMsg = MessageEnvelope.broadcast(
-                    "init", edge.getCauseBy() != null ? edge.getCauseBy() : "system",
-                    sessionId, "graph-executor");
-            router.route(initialMsg, state.agentMailboxes, watches);
-        }
-
-        int maxIterations = edge.getMaxIterations() != null
-                ? edge.getMaxIterations() : 10;
-        int eventTimeoutMs = edge.getEventTimeoutMs() != null
-                ? edge.getEventTimeoutMs() : 30_000;
-
-        for (int iter = 0; iter < maxIterations; iter++) {
-            boolean anyExecuted = false;
-
-            for (String agentName : agentNames) {
-                long pollTimeout = iter == 0 ? eventTimeoutMs : 1000;
-                List<MessageEnvelope> msgs = state.drainMailbox(agentName, pollTimeout);
-                if (msgs.isEmpty()) continue;
-
-                anyExecuted = true;
-                // 合并接收到的消息作为 Agent 输入
-                String combinedInput = msgs.stream()
-                        .map(m -> "[来自 " + m.causeBy() + "] " + m.content())
-                        .reduce((a, b) -> a + "\n" + b).orElse("");
-
-                AgentNodeDef def = agentDefs.get(agentName);
-                if (def == null) {
-                    log.warn("EVENT_DRIVEN: Agent 未找到: {}", agentName);
-                    continue;
-                }
-
-                log.info("EVENT_DRIVEN: 执行 agent={} messagesCount={} topic={}",
-                        agentName, msgs.size(),
-                        msgs.stream().map(MessageEnvelope::topic)
-                                .filter(Objects::nonNull).findFirst().orElse("none"));
-
-                String instruction = state.resolveTemplate(
-                        def.getInstruction() != null ? def.getInstruction() : "");
-                String input = instruction.isEmpty() ? combinedInput
-                        : instruction + "\n\n" + combinedInput;
-
-                // DIRECT 通道：拦截异常回传
-                InterventionContext ictx = new InterventionContext(
-                        InterventionContext.ChannelType.DIRECT,
-                        agentName, sessionId, userId,
-                        AgentEdgeType.EVENT_DRIVEN.name(),
-                        edge.getWorkflowName(), Map.of());
-                if (applyDirectInterception(input, ictx, emitter)) continue;
-
-                executeSingle(def, userId, sessionId, input, state, emitter, agentName);
-
-                // 执行完成后，将输出作为消息发布到匹配的订阅者
-                String output = state.getLastOutput();
-                if (output != null && !output.isBlank()) {
-                    MessageEnvelope outMsg = MessageEnvelope.create(
-                            output, agentName,
-                            def.getOutputKey(),  // 用 outputKey 作为 topic
-                            sessionId, agentName);
-                    int delivered = router.route(outMsg, state.agentMailboxes, watches);
-                    log.debug("EVENT_DRIVEN: agent={} 发布消息到 {} 个订阅者", agentName, delivered);
-                }
-            }
-
-            if (!anyExecuted) {
-                log.info("EVENT_DRIVEN: 无活跃 Agent，第 {} 轮退出", iter);
-                break;
-            }
-        }
-    }
-
-    /**
-     * 构建订阅声明映射（agentName → watch 主题列表）。
-     * 合并 AgentEdge.watch 和 AgentNodeDef.subscriptions。
-     */
-    private Map<String, List<String>> buildWatchMap(
-            AgentGraph graph, AgentEdge edge, List<String> agentNames) {
-        Map<String, List<String>> watches = new LinkedHashMap<>();
-        Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
-
-        for (String agentName : agentNames) {
-            List<String> merged = new ArrayList<>();
-
-            // 边级别的 watch（所有 subAgents 共享）
-            if (edge.getWatch() != null) {
-                merged.addAll(edge.getWatch());
-            }
-
-            // Agent 级别的 subscriptions
-            AgentNodeDef def = agentDefs.get(agentName);
-            if (def != null && def.getSubscriptions() != null) {
-                merged.addAll(def.getSubscriptions());
-            }
-
-            if (!merged.isEmpty()) {
-                watches.put(agentName, List.copyOf(merged));
-            }
-        }
-
-        log.info("EVENT_DRIVEN 订阅声明: agents={} subscribers={}",
-                agentNames, watches.keySet());
-        return watches;
-    }
-
-    // ========== GRAPHFLOW (BROADCAST 通道 per 并发批次) ==========
-
-    private void executeGraphFlow(AgentGraph graph, String userId, String sessionId,
-            String initialMessage, FlowableEmitter<RuntimeEvent> emitter, String graphExecutionId) {
-
-        List<AgentEdge> edges = graph.getEdges();
-        Map<String, AgentNodeDef> nodeDefs = graph.getAgentDefs();
-
-        // 构建邻接表
-        Map<String, List<Map.Entry<String, AgentEdge>>> children = new LinkedHashMap<>();
-        Map<String, Integer> parentCount = new LinkedHashMap<>();
-
-        for (String nodeName : nodeDefs.keySet()) {
-            parentCount.put(nodeName, 0);
-            children.put(nodeName, new ArrayList<>());
-        }
-
-        for (AgentEdge edge : edges) {
-            if (!edge.isGraphFlow()) continue;
-            String from = edge.getFrom();
-            String to = edge.getTo();
-            children.get(from).add(new AbstractMap.SimpleEntry<>(to, edge));
-            parentCount.merge(to, 1, Integer::sum);
-        }
-
-        // 找到入口节点
-        List<String> entryNodes = new ArrayList<>();
-        for (Map.Entry<String, Integer> entry : parentCount.entrySet()) {
-            if (entry.getValue() == 0) {
-                entryNodes.add(entry.getKey());
-            }
-        }
-        if (entryNodes.isEmpty()) {
-            emitter.onNext(RuntimeEvent.error("GraphFlow DAG 没有入口节点（可能存在循环依赖）"));
-            // D3: ON_GRAPH_FINALIZE（循环依赖/无入口的错误完成路径）
-            notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
-            emitter.onComplete();
-            return;
-        }
-
-        // 创建运行时状态
-        Map<String, GraphFlowState> flowStates = new ConcurrentHashMap<>();
-        for (Map.Entry<String, AgentNodeDef> entry : nodeDefs.entrySet()) {
-            flowStates.put(entry.getKey(),
-                new GraphFlowState(entry.getValue(), parentCount.get(entry.getKey())));
-        }
-
-        Map<String, String> nodeOutputs = new ConcurrentHashMap<>();
-        Map<String, String> mdcCtx = MDC.getCopyOfContextMap();
-        Queue<String> readyQueue = new ConcurrentLinkedQueue<>(entryNodes);
-        ExecutionState globalState = new ExecutionState();
-
-        int maxIterations = 50;
-        int iteration = 0;
-
-        while (!readyQueue.isEmpty() && iteration < maxIterations) {
-            iteration++;
-
-            List<String> currentBatch = new ArrayList<>();
-            String nodeName;
-            while ((nodeName = readyQueue.poll()) != null) {
-                currentBatch.add(nodeName);
-            }
-
-            if (currentBatch.isEmpty()) break;
-
-            // 并发执行本轮所有就绪节点
-            CountDownLatch batchLatch = new CountDownLatch(currentBatch.size());
-
-            for (String name : currentBatch) {
-                GraphFlowState flowState = flowStates.get(name);
-                flowState.setStatus(GraphFlowState.NodeStatus.RUNNING);
-                Instant nodeStart = Instant.now();
-                if (graphExecutionRecorder != null && graphExecutionId != null) {
-                    graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
-                            GraphFlowState.NodeStatus.RUNNING, nodeStart, null, 0, null);
-                }
-                AgentNodeDef def = flowState.getNodeDef();
-                Span nodeSpan = (graphExecutionId != null)
-                        ? AgentTracer.startGraphNode(graphExecutionId, def.getAgentType(), name) : null;
-
-                // H4-步骤7: GRAPHFLOW 并发批次 → BROADCAST 通道
-                // 每个节点在执行前做广播拦截，失败的节点静默跳过
-                InterventionContext ictx = buildInterventionContext(
-                        InterventionContext.ChannelType.BROADCAST,
-                        name, sessionId, userId,
-                        "GRAPHFLOW", "graphflow-batch-" + iteration);
-
-                List<String> parentOutputs = flowState.getAccumulatedOutputs();
-                String input = buildNodeInput(def, parentOutputs, initialMessage);
-
-                boolean shouldProceed = applyBroadcastInterception(input, ictx, name);
-                if (!shouldProceed) {
-                    // BROADCAST 通道：DROP 语义，仅跳过当前节点
-                    flowState.setStatus(GraphFlowState.NodeStatus.SKIPPED);
-                    if (graphExecutionRecorder != null && graphExecutionId != null) {
-                        graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
-                                GraphFlowState.NodeStatus.SKIPPED, nodeStart, Instant.now(), 0, null);
-                    }
-                    if (nodeSpan != null) {
-                        AgentTracer.endGraphNode(nodeSpan, true, null);
-                    }
-                    batchLatch.countDown();
-                    continue;
-                }
-
-                new Thread(() -> {
-                    if (mdcCtx != null) {
-                        MDC.setContextMap(mdcCtx);
-                    }
-                    try {
-                        ExecutionState localState = globalState.forkSource();
-                        AgentConfig agentConfig = AgentConfig.fromNodeDef(def);
-                        Agent agent = agentFactory.create(agentConfig);
-                        RuntimeContext ctx = new RuntimeContext(userId,
-                            sessionId + "-" + name, null, null, input, null, null);
-
-                        // D3: ON_GRAPH_NODE_START（GRAPHFLOW 线程）
-                        notifyGraphHook(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
-                                .agentId(name).sessionId(sessionId).graphNodeId(def.getOutputKey()).build());
-
-                        agent.execute(ctx)
-                            .blockingForEach(event -> {
-                                synchronized (emitter) {
-                                    emitter.onNext(event);
-                                }
-                                if (event.getType() == RuntimeEvent.EventType.textDelta
-                                        && event.getText() != null) {
-                                    localState.appendOutput(def.getOutputKey(), event.getText());
-                                }
-                            });
-
-                        String output = localState.getOutput(def.getOutputKey());
-                        nodeOutputs.put(name, output);
-                        flowState.setStatus(GraphFlowState.NodeStatus.COMPLETED);
-                        if (graphExecutionRecorder != null && graphExecutionId != null) {
-                            graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
-                                    GraphFlowState.NodeStatus.COMPLETED, nodeStart, Instant.now(),
-                                    Duration.between(nodeStart, Instant.now()).toMillis(), null);
-                        }
-                        if (nodeSpan != null) {
-                            AgentTracer.endGraphNode(nodeSpan, true, null);
-                        }
-
-                        // D3: ON_GRAPH_NODE_END（GRAPHFLOW 线程）
-                        notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
-                                .agentId(name).sessionId(sessionId).graphNodeId(def.getOutputKey())
-                                .response(output).build());
-
-                        // 按边条件路由到子节点
-                        synchronized (flowStates) {
-                            for (Map.Entry<String, AgentEdge> childEntry : children.get(name)) {
-                                String childName = childEntry.getKey();
-                                AgentEdge childEdge = childEntry.getValue();
-
-                                if (!conditionEvaluator.evaluate(childEdge.getCondition(), output)) {
-                                    log.debug("边 [{}→{}] 条件不满足，跳过", name, childName);
-                                    continue;
-                                }
-
-                                GraphFlowState childState = flowStates.get(childName);
-                                if (childState == null) continue;
-
-                                boolean allParentsDone = childState.recordParentCompletion(output);
-
-                                String activation = childEdge.getActivation() != null
-                                    ? childEdge.getActivation() : "all";
-                                boolean shouldActivate = "any".equalsIgnoreCase(activation)
-                                    ? true : allParentsDone;
-
-                                if (shouldActivate && childState.getStatus() == GraphFlowState.NodeStatus.PENDING) {
-                                    if (childEdge.getExitCondition() != null
-                                        && conditionEvaluator.evaluate(childEdge.getExitCondition(), output)) {
-                                        log.info("循环边 [{}→{}] 满足退出条件", name, childName);
-                                        childState.setStatus(GraphFlowState.NodeStatus.SKIPPED);
-                                    } else {
-                                        readyQueue.offer(childName);
-                                    }
-                                }
-                            }
-                        }
-
-                    } catch (Exception e) {
-                        log.error("GraphFlow 节点 [{}] 执行失败", name, e);
-                        flowState.setStatus(GraphFlowState.NodeStatus.FAILED);
-                        if (graphExecutionRecorder != null && graphExecutionId != null) {
-                            graphExecutionRecorder.recordNodeEvent(graphExecutionId, name, flowState.getNodeDef().getAgentType(),
-                                    GraphFlowState.NodeStatus.FAILED, nodeStart, Instant.now(),
-                                    Duration.between(nodeStart, Instant.now()).toMillis(), e.getMessage());
-                        }
-                        if (nodeSpan != null) {
-                            AgentTracer.endGraphNode(nodeSpan, false, e.getMessage());
-                        }
-                        synchronized (emitter) {
-                            emitter.onNext(RuntimeEvent.error("节点 [" + name + "] 失败: " + e.getMessage()));
-                        }
-                    } finally {
-                        MDC.clear();
-                        batchLatch.countDown();
-                    }
-                }, "graphflow-" + name).start();
-            }
-
-            try {
-                boolean ok = batchLatch.await(10, TimeUnit.MINUTES);
-                if (!ok) log.warn("GraphFlow 批次超时");
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-
-        for (Map.Entry<String, String> entry : nodeOutputs.entrySet()) {
-            globalState.setFinalOutput(entry.getKey(), entry.getValue());
-        }
-
-        // D4: 图执行成功结束后，可选后台自评审（best-effort；null 安全）
-        if (backgroundReviewer != null && graphExecutionId != null) {
-            String finalOutput = String.join("\n", nodeOutputs.values());
-            backgroundReviewer.submit(graphExecutionId, initialMessage, finalOutput);
-        }
-
-        emitter.onNext(RuntimeEvent.done());
-        // D3: ON_GRAPH_FINALIZE
-        notifyGraphHook(HookPoint.ON_GRAPH_FINALIZE, HookContext.builder().sessionId(sessionId).build());
-        emitter.onComplete();
-    }
-
-    // ========== 拦截辅助方法 ==========
-
-    /**
-     * DIRECT 通道拦截 —— BLOCK 结果以异常形式回传调用方。
-     *
-     * @return true=放行，false=被阻断/DROP
-     */
-    private boolean applyDirectInterception(String message, InterventionContext ctx,
-            FlowableEmitter<RuntimeEvent> emitter) {
-        if (interventionHandler == null) return true;
-
-        try {
-            InterventionResult result = interventionHandler.onSend(message, ctx);
-            return handleInterventionResult(result, ctx, emitter);
-        } catch (Exception e) {
-            log.error("DIRECT 通道拦截异常: agent={}", ctx.agentId(), e);
-            // 拦截器本身的异常：阻塞链路，回传错误
-            emitter.onNext(RuntimeEvent.error("拦截异常: " + e.getMessage()));
-            return false;
-        }
-    }
-
-    /**
-     * BROADCAST 通道拦截 —— BLOCK 降级为 DROP + 日志。
-     *
-     * @return true=放行，false=被丢弃
-     */
-    private boolean applyBroadcastInterception(String message, InterventionContext ctx,
-            String agentName) {
-        if (interventionHandler == null) return true;
-
-        try {
-            InterventionResult result = interventionHandler.onPublish(message, ctx);
-            if (result.isPass()) return true;
-
-            if (result.isBlock()) {
-                // BROADCAST 通道：BLOCK 降级为 DROP
-                log.warn("BROADCAST 通道拦截 [{}] 降级为丢弃: reason={}",
-                        agentName, result.reason());
-                return false;
-            }
-
-            if (result.isDrop()) {
-                log.info("BROADCAST 通道消息被丢弃: agent={}, reason={}",
-                        agentName, result.reason());
-                return false;
-            }
-
-            return true;
-        } catch (Exception e) {
-            // BROADCAST 通道：拦截器异常只记日志，不影响其他节点
-            log.warn("BROADCAST 通道拦截异常 [{}]（已静默）: {}", agentName, e.getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * 统一处理拦截结果。
-     */
-    private boolean handleInterventionResult(InterventionResult result,
-            InterventionContext ctx, FlowableEmitter<RuntimeEvent> emitter) {
-        if (result.isPass()) return true;
-
-        if (result.isBlock()) {
-            log.warn("DIRECT 通道拦截阻断: agent={}, reason={}", ctx.agentId(), result.reason());
-            emitter.onNext(RuntimeEvent.error(
-                    "消息被拦截阻断: " + (result.reason() != null ? result.reason() : "未知原因")));
-            return false;
-        }
-
-        if (result.isDrop()) {
-            log.info("消息被丢弃: agent={}, reason={}", ctx.agentId(), result.reason());
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * 构建干预上下文。
-     */
-    private InterventionContext buildInterventionContext(
-            InterventionContext.ChannelType channelType,
-            String agentId, String sessionId, String userId,
-            String edgeType, String workflowName) {
-        return new InterventionContext(
-                channelType, agentId, sessionId, userId,
-                edgeType, workflowName, Map.of());
-    }
-
-    // ========== 工具方法 ==========
-
-    private String buildNodeInput(AgentNodeDef def, List<String> parentOutputs, String initialMessage) {
-        StringBuilder sb = new StringBuilder();
-        if (initialMessage != null && !initialMessage.isEmpty()) {
-            sb.append("任务: ").append(initialMessage).append("\n\n");
-        }
-        for (int i = 0; i < parentOutputs.size(); i++) {
-            sb.append("上游输出").append(i + 1).append(": ").append(parentOutputs.get(i)).append("\n");
-        }
-        return sb.toString();
-    }
-
-    private void executeSingle(
-            AgentNodeDef def,
-            String userId, String sessionId, String input,
-            ExecutionState state, FlowableEmitter<RuntimeEvent> emitter,
-            String agentName) {
-
-        AgentConfig agentConfig = AgentConfig.fromNodeDef(def);
-        Agent agent = agentFactory.create(agentConfig);
-        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, input, null, null);
-
-        String nodeId = agentName != null ? agentName : def.getName();
-        // D3: ON_GRAPH_NODE_START
-        notifyGraphHook(HookPoint.ON_GRAPH_NODE_START, HookContext.builder()
-                .agentId(nodeId).sessionId(sessionId).graphNodeId(def.getOutputKey()).request(input).build());
-
-        // 收集输出用于 onResponse 回调
-        StringBuilder collectedOutput = new StringBuilder();
-
-        try {
-            agent.execute(ctx)
-                    .blockingForEach(event -> {
-                        if (event.getType() == RuntimeEvent.EventType.textDelta
-                                && event.getText() != null) {
-                            state.appendOutput(def.getOutputKey(), event.getText());
-                            collectedOutput.append(event.getText());
-                        }
-                        emitter.onNext(event);
-                    });
-        } finally {
-            // D3: ON_GRAPH_NODE_END（try/finally 保证异常路径也触发，对齐 parallel/graphflow 变体）
-            notifyGraphHook(HookPoint.ON_GRAPH_NODE_END, HookContext.builder()
-                    .agentId(nodeId).sessionId(sessionId).graphNodeId(def.getOutputKey())
-                    .response(collectedOutput.toString()).build());
-        }
-
-        // H4-步骤7: 执行完成后触发 onResponse 拦截
-        if (interventionHandler != null && collectedOutput.length() > 0) {
-            InterventionContext ictx = buildInterventionContext(
-                    InterventionContext.ChannelType.DIRECT,
-                    agentName != null ? agentName : def.getName(),
-                    sessionId, userId, def.getAgentType(), "response");
-            try {
-                InterventionResult responseResult = interventionHandler.onResponse(
-                        collectedOutput.toString(), ictx);
-                if (responseResult.isBlock()) {
-                    log.warn("DIRECT 通道响应被拦截阻断: agent={}, reason={}",
-                            agentName, responseResult.reason());
-                } else if (responseResult.isDrop()) {
-                    log.info("响应被丢弃: agent={}", agentName);
-                }
-            } catch (Exception e) {
-                log.warn("onResponse 拦截异常: agent={}", agentName, e);
-            }
-        }
-
-        state.setLastAgentName(def.getName());
-        if (def.getOutputKey() != null) {
-            state.setFinalOutput(def.getOutputKey(), state.getLastOutput());
-        }
+    private void restoreMdc(String prevGraphId, String prevSessionId, String graphExecutionId) {
+        if (graphExecutionId == null) return;
+        if (prevGraphId != null) MDC.put("graphExecutionId", prevGraphId);
+        else MDC.remove("graphExecutionId");
+        if (prevSessionId != null) MDC.put("sessionId", prevSessionId);
+        else MDC.remove("sessionId");
     }
 }

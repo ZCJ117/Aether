@@ -1,41 +1,69 @@
 server:
   port: 8091
 
-# 线程池配置
-thread:
-  pool:
-    executor:
-      config:
-        core-pool-size: 20
-        max-pool-size: 50
-        keep-alive-time: 5000
-        block-queue-size: 5000
-        policy: CallerRunsPolicy
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: Aether_HikariCP
+      minimum-idle: 15
+      idle-timeout: 180000
+      maximum-pool-size: 25
+      auto-commit: true
+      max-lifetime: 1800000
+      connection-timeout: 30000
+      connection-test-query: SELECT 1
+    type: com.zaxxer.hikari.HikariDataSource
 
-# 数据库配置；PostgreSQL（启用时取消注释）
-#spring:
-#  datasource:
-#    username: postgres
-#    password: ${DB_PASSWORD}
-#    url: jdbc:postgresql://127.0.0.1:5432/aether
-#    driver-class-name: org.postgresql.Driver
-#  hikari:
-#    pool-name: Aether_HikariCP
-#    minimum-idle: 15
-#    idle-timeout: 180000
-#    maximum-pool-size: 25
-#    auto-commit: true
-#    max-lifetime: 1800000
-#    connection-timeout: 30000
-#    connection-test-query: SELECT 1
-#  type: com.zaxxer.hikari.HikariDataSource
-
-#mybatis:
-#  mapper-locations: classpath:/mybatis/mapper/*.xml
-#  config-location:  classpath:/mybatis/config/mybatis-config.xml
+aether:
+  # ====== O16: 生产安全配置（无默认值 → 缺环境变量即 fail-fast）======
+  security:
+    jwt:
+      secret: ${JWT_SECRET}
+      access-token-expiration: 900000
+      refresh-token-expiration: 604800000
+  # ====== O16: 会话持久化（显式启用 Pg 仓储）======
+  session:
+    persistence: true
+    store: postgres
+  # ====== O16: SSRF 默认拒绝私有地址 ======
+  ssrf:
+    allow-private-urls: false
+  delegation:
+    persistence: true
+    live-log-dir: ./cache/delegation/live
+    stale-timeout: PT10M
+    stale-scan-interval-ms: 60000
 
 # 日志
 logging:
   level:
     root: info
+    cn.zcj.aether.domain.agent: info
   config: classpath:logback-spring.xml
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    tags:
+      application: aether-agent
+
+# ====== O16: OpenTelemetry（OTel Java Agent 读取）======
+otel:
+  traces:
+    exporter: otlp
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+  service:
+    name: aether-agent

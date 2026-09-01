@@ -47,4 +47,8 @@ public class MemoryRecord {
 
     /** 来源：user_manual / agent_extracted / system */
     String source;
+
+    /** P1(4.3): 生命周期状态 —— true=已被遗忘曲线归档（软删；检索默认过滤，再次写入可复活） */
+    @Builder.Default
+    boolean archived = false;
 }

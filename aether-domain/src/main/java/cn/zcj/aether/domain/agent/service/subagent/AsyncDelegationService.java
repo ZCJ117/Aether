@@ -6,7 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -34,38 +34,57 @@ public class AsyncDelegationService {
 
     /** 重执行上限：Aether 借用 hermes _MAX_DELIVERY_ATTEMPTS=8（投递预算）作为启动恢复重入队上限。 */
     static final int MAX_ATTEMPTS = 8;
-    static final Duration STALE_TIMEOUT = Duration.ofMinutes(30);
+    /**
+     * O1: stale 阈值统一走配置键 {@code aether.delegation.stale-timeout}（缺省 PT10M，与
+     * StaleDelegationScanner 同源）；本常量仅为无 Spring 环境时的缺省值。
+     */
+    static final Duration STALE_TIMEOUT = Duration.ofMinutes(10);
 
     private final SubagentLifecycleService lifecycle;
     private final CompletionBus completionBus;
     private final LeaseManager leaseManager;
     private final SpawnGate spawnGate;
     private final AsyncDelegationStore store;
+    /** O1: stale 阈值（统一配置键 aether.delegation.stale-timeout，与 StaleDelegationScanner 同源）。 */
+    private final Duration staleTimeout;
     private final AtomicBoolean recoveryDone = new AtomicBoolean(false);
 
     /**
      * Spring 构造：store 可选（持久化未启用时 getIfAvailable() 返回 null → 内存降级）。
+     * O1: stale 阈值不再硬编码 30min，与 StaleDelegationScanner 统一读 aether.delegation.stale-timeout。
      */
     @Autowired
     public AsyncDelegationService(SubagentLifecycleService lifecycle,
                                   CompletionBus completionBus,
                                   LeaseManager leaseManager,
                                   SpawnGate spawnGate,
-                                  ObjectProvider<AsyncDelegationStore> storeProvider) {
-        this(lifecycle, completionBus, leaseManager, spawnGate, storeProvider.getIfAvailable());
+                                  ObjectProvider<AsyncDelegationStore> storeProvider,
+                                  @org.springframework.beans.factory.annotation.Value("${aether.delegation.stale-timeout:PT10M}") String staleTimeout) {
+        this(lifecycle, completionBus, leaseManager, spawnGate, storeProvider.getIfAvailable(),
+                Duration.parse(staleTimeout));
     }
 
-    /** 测试/直连构造：store 可为 null（持久化未启用时内存降级）。 */
+    /** 测试/直连构造：store 可为 null（持久化未启用时内存降级），stale 阈值取缺省。 */
     AsyncDelegationService(SubagentLifecycleService lifecycle,
                            CompletionBus completionBus,
                            LeaseManager leaseManager,
                            SpawnGate spawnGate,
                            AsyncDelegationStore store) {
+        this(lifecycle, completionBus, leaseManager, spawnGate, store, STALE_TIMEOUT);
+    }
+
+    AsyncDelegationService(SubagentLifecycleService lifecycle,
+                           CompletionBus completionBus,
+                           LeaseManager leaseManager,
+                           SpawnGate spawnGate,
+                           AsyncDelegationStore store,
+                           Duration staleTimeout) {
         this.lifecycle = lifecycle;
         this.completionBus = completionBus;
         this.leaseManager = leaseManager;
         this.spawnGate = spawnGate;
         this.store = store;
+        this.staleTimeout = staleTimeout;
     }
 
     @PostConstruct
@@ -168,7 +187,7 @@ public class AsyncDelegationService {
         if (store == null) {
             return 0;
         }
-        Instant staleBefore = Instant.now().minus(STALE_TIMEOUT);
+        Instant staleBefore = Instant.now().minus(staleTimeout);
         List<DelegationRecord> stale = store.findPendingStale(staleBefore, 100);
         int recovered = 0;
         for (DelegationRecord rec : stale) {

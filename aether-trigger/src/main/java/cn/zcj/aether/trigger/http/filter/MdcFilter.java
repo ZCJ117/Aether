@@ -25,7 +25,8 @@ public class MdcFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String correlationId = request.getHeader("X-Correlation-Id");
         if (correlationId == null || correlationId.isEmpty()) {
-            correlationId = UUID.randomUUID().toString().substring(0, 8);
+            // O18: 16 位随机（8 位碰撞空间过大，跨会话串联易撞）
+            correlationId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         }
         MDC.put("correlationId", correlationId);
         MDC.put("requestUri", request.getRequestURI());

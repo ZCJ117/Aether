@@ -10,7 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 /**
  * H4-步骤7: 干预处理器配置 —— 将 PermissionInterventionHandler 注册为 Spring Bean。

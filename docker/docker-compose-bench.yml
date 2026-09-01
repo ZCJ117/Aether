@@ -1,0 +1,65 @@
+# ============================================================
+# P0(1.5): 压测栈 —— postgres + mock-llm + aether(bench profile)
+# 用法：docker compose -f docker/docker-compose-bench.yml up -d --build
+# 一键压测：cd benchmark && ./run.sh
+# ============================================================
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aether-bench-db
+    environment:
+      - POSTGRES_USER=${DB_USER:-aether}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-123456}
+      - POSTGRES_DB=aether
+    volumes:
+      - bench-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-aether} -d aether"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:55432:5432"
+
+  mock-llm:
+    build:
+      context: ../benchmark/mock-llm
+    container_name: aether-mock-llm
+    environment:
+      # 模拟真实模型节奏：TTFT 500ms，10 chunk × 450ms ≈ 总时长 4.5s
+      - TTFT_MS=${TTFT_MS:-500}
+      - CHUNK_INTERVAL_MS=${CHUNK_INTERVAL_MS:-450}
+      - CHUNK_COUNT=${CHUNK_COUNT:-10}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8011/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "127.0.0.1:8011:8011"
+
+  aether:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: aether:bench
+    container_name: aether-bench-app
+    environment:
+      - SPRING_PROFILES_ACTIVE=bench
+      - DB_HOST=postgres
+      - DB_USER=${DB_USER:-aether}
+      - DB_PASSWORD=${DB_PASSWORD:-123456}
+      - JWT_SECRET=${JWT_SECRET:-aether-bench-jwt-secret-key-min-32-chars!}
+      - ZHIPU_API_KEY=bench-not-used
+      - AETHER_MODEL_INVOKER_TRUE_STREAMING=${TRUE_STREAMING:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-llm:
+        condition: service_healthy
+    ports:
+      - "8091:8091"
+
+volumes:
+  bench-pgdata:

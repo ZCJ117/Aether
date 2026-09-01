@@ -7,7 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.Map;
 
 /**
@@ -45,20 +45,20 @@ public class SkillsToolAdapter {
 
         ToolCallback callback = toolCallbacks[0];
 
+        // O9: adapt 时从 skill ToolCallback 的 ToolDefinition 提取真实 inputSchema 并缓存
+        //（替代硬编码 {"query":string} 固定 schema），使校验与 Schema 提示对 Skills 工具真实生效
+        Map<String, Object> cachedInputSchema = extractInputSchema(callback, toolName);
+        String cachedDescription = extractDescription(callback, toolName, toolSkills);
+
         return new Tool() {
             @Override
             public String name() { return toolName; }
 
             @Override
-            public String description() {
-                return "Skills tool: " + toolSkills.getType() + " @ " + toolSkills.getPath();
-            }
+            public String description() { return cachedDescription; }
 
             @Override
-            public Map<String, Object> inputSchema() {
-                return Map.of("type", "object",
-                        "properties", Map.of("query", Map.of("type", "string")));
-            }
+            public Map<String, Object> inputSchema() { return cachedInputSchema; }
 
             @Override
             public ToolResult call(Map<String, Object> input, ToolContext context) {
@@ -88,6 +88,40 @@ public class SkillsToolAdapter {
             return type + ":" + parts[parts.length - 1];
         }
         return type;
+    }
+
+    /**
+     * O9: 从 Skills ToolCallback 的 ToolDefinition 提取真实 inputSchema。
+     * 来源缺失 / 解析失败时降级为空 schema 并告警（不阻断，保留空 schema 分支可回滚）。
+     */
+    private Map<String, Object> extractInputSchema(ToolCallback callback, String toolName) {
+        try {
+            var def = callback.getToolDefinition();
+            if (def == null || def.inputSchema() == null || def.inputSchema().isBlank()) {
+                log.warn("Skills 工具 [{}] 的 ToolDefinition 未提供 inputSchema，降级为空 schema"
+                        + "（JSON Schema 校验与 Schema 提示对该工具不生效）", toolName);
+                return Map.of("type", "object", "properties", Map.of());
+            }
+            return objectMapper.readValue(def.inputSchema(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Skills 工具 [{}] inputSchema 解析失败，降级为空 schema: {}", toolName, e.getMessage());
+            return Map.of("type", "object", "properties", Map.of());
+        }
+    }
+
+    /** O9: 优先使用 ToolDefinition 的真实 description，缺失时回退 "type @ path" 描述。 */
+    private String extractDescription(ToolCallback callback, String toolName,
+            AiAgentConfigTableVO.Module.ChatModel.ToolSkills toolSkills) {
+        try {
+            var def = callback.getToolDefinition();
+            if (def != null && def.description() != null && !def.description().isBlank()) {
+                return def.description();
+            }
+        } catch (Exception ignored) {
+            // 定义读取失败时回退占位描述
+        }
+        return "Skills tool: " + toolSkills.getType() + " @ " + toolSkills.getPath();
     }
 
     private Tool createErrorTool(String name, String errorMsg) {

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  build-test:
+    name: Build & Test (JaCoCo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build & Test (JaCoCo report at aether-app/target/site/jacoco-aggregate)
+        run: mvn -B verify
+
+      - name: Upload JaCoCo aggregate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: aether-app/target/site/jacoco-aggregate/
+          retention-days: 14
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: '**/target/surefire-reports/*.txt'
+
+  integration:
+    name: Integration Tests (Testcontainers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # P1(2.2): Testcontainers 集成测试（真实 PG/pgvector、Redis、EmbeddedKafka），
+      # 与单测分离的独立 job；-Pintegration 启用 failsafe 跑 **/*IT.java
+      - name: Run Testcontainers ITs
+        run: mvn -B verify -Pintegration -DskipTests=false
+
+      - name: Upload failsafe reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failsafe-reports
+          path: '**/target/failsafe-reports/*.txt'
+
+  qodana:
+    name: Qodana static analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Qodana Scan
+        uses: JetBrains/qodana-action@v2025.1
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}

@@ -12,11 +12,9 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.io.IOException;
-import java.net.SocketException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,7 +23,9 @@ import java.util.Map;
 /**
  * LLM模型调用封装
  *
- * 包含超时配置、连接重置重试、指数退避
+ * P0-2 重试收口：本类只做"单次调用 + 总超时"；
+ * 重试/退避/上下文压缩/凭据轮换/fallback 由 ResilientChatModelExecutor 统一负责，
+ * 避免双层重试放大（外层 4 次 × 内层 3 次 = 最坏 12 次下游调用）。
  */
 @Slf4j
 @Service
@@ -36,10 +36,18 @@ public class ModelInvoker {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    // 重试配置
-    private static final int MAX_RETRIES = 3;
-    private static final long INITIAL_BACKOFF_MS = 1000;
-    private static final long MAX_BACKOFF_MS = 15000;
+    /** 单次模型调用总超时（毫秒）；读取 aether.model.invoker.call-timeout-ms。
+     *  字段初始值保证测试直 new 时兜底（Spring 注入 @Value 后以配置为准）。 */
+    @org.springframework.beans.factory.annotation.Value("${aether.model.invoker.call-timeout-ms:120000}")
+    private long callTimeoutMs = 120_000;
+
+    /** O5 真流式开关：true 时主循环走 callWithStreamingAsync（chunk 级下发）；false 回退旧缓冲路径灰度。 */
+    @org.springframework.beans.factory.annotation.Value("${aether.model.invoker.true-streaming:true}")
+    private boolean trueStreaming = true;
+
+    public long getCallTimeoutMs() { return callTimeoutMs; }
+
+    public boolean isTrueStreaming() { return trueStreaming; }
 
     /**
      * P1-#2: 带缓存的流式调用。
@@ -115,8 +123,107 @@ public class ModelInvoker {
     }
 
     /**
+     * O5 真流式调用：textDelta 按 chunk 即时经 {@code deltaSink} 下推，服务端不再全量缓冲等待整轮完成。
+     *
+     * <p>对齐 hermes conversation_loop 逐 chunk 处理模式：
+     * <ul>
+     *   <li>text 增量 → {@code deltaSink.accept(RuntimeEvent.text(...))} 边收边发（首 token 延迟≈网络到达时间）；</li>
+     *   <li>toolCall 增量 → 汇入返回的 {@link ModelCallResult}（通常在流末到达，随结果统一下发）；</li>
+     *   <li>usage 随 chunk 滚动捕获；流末缺失时按 ≈4 chars/token 估算兜底，保证成本熔断（O7 管线）不被流式路径绕过。</li>
+     * </ul>
+     *
+     * <p>返回的 {@code ModelCallResult.events} 只含 toolCall 事件（text 已实时下发，避免重复回放）。
+     * 该路径不经过 {@link ModelCallCache}——缓存命中需整体回放事件，与实时下发语义冲突。
+     *
+     * @param deltaSink 每个 text chunk 的实时下发回调（可为 null，等价只汇总不下发）
+     */
+    public Mono<ModelCallResult> callWithStreamingAsync(
+            ChatModel chatModel,
+            List<Message> messages,
+            String systemPrompt,
+            String modelName,
+            java.util.function.Consumer<RuntimeEvent> deltaSink) {
+
+        log.info("真流式模型调用: model={}, messagesCount={}", modelName, messages.size());
+
+        List<Message> fullMessages = new ArrayList<>();
+        fullMessages.add(new org.springframework.ai.chat.messages.SystemMessage(systemPrompt));
+        fullMessages.addAll(messages);
+
+        Prompt prompt = new Prompt(fullMessages);
+
+        StringBuilder fullText = new StringBuilder();
+        List<ToolCallDef> toolCalls = new ArrayList<>();
+        List<RuntimeEvent> toolCallEvents = new ArrayList<>();
+        int[] usage = {0, 0};
+
+        return chatModel.stream(prompt)
+                .doOnNext(response -> {
+                    // usage 随 chunk 滚动捕获（通常随末尾 chunk 到达）
+                    if (response.getMetadata() != null && response.getMetadata().getUsage() != null) {
+                        var u = response.getMetadata().getUsage();
+                        if (u.getPromptTokens() > 0 || u.getCompletionTokens() > 0) {
+                            usage[0] = (int) u.getPromptTokens();
+                            usage[1] = (int) u.getCompletionTokens();
+                        }
+                    }
+                    var generations = response.getResults();
+                    if (generations == null) return;
+                    for (var gen : generations) {
+                        var output = gen.getOutput();
+                        if (output == null) continue;
+                        String text = output.getText();
+                        if (text != null && !text.isEmpty()) {
+                            fullText.append(text);
+                            // O5 核心：边收边发，首 token 不再等待整轮完成
+                            if (deltaSink != null) deltaSink.accept(RuntimeEvent.text(text));
+                        }
+                        var tcList = output.getToolCalls();
+                        if (tcList != null && !tcList.isEmpty()) {
+                            for (var tc : tcList) {
+                                Map<String, Object> parsedArgs = parseArguments(tc.arguments());
+                                toolCalls.add(ToolCallDef.builder()
+                                        .id(tc.id()).name(tc.name()).input(parsedArgs).build());
+                                toolCallEvents.add(RuntimeEvent.builder()
+                                        .type(RuntimeEvent.EventType.toolCall)
+                                        .toolCallId(tc.id()).toolName(tc.name())
+                                        .toolInput(tc.arguments()).build());
+                            }
+                        }
+                    }
+                })
+                // 只消费流信号，不在内存驻留完整 response 列表；汇总态已在 doOnNext 中滚动维护
+                .ignoreElements()
+                .then(Mono.fromSupplier(() -> {
+                    int inputTokens = usage[0];
+                    int outputTokens = usage[1];
+                    // O5 步骤4：流末统一补 usage 结算——真实 usage 缺失时以滚动文本长度估算兜底
+                    if (inputTokens <= 0) {
+                        int approxInputChars = 0;
+                        for (Message m : fullMessages) {
+                            approxInputChars += m.getText() != null ? m.getText().length() : 0;
+                        }
+                        inputTokens = approxInputChars / 4;
+                    }
+                    if (outputTokens <= 0) {
+                        outputTokens = fullText.length() / 4;
+                    }
+                    log.info("真流式模型调用完成: model={}, textLength={}, toolCalls={}, usage≈({}/{})",
+                            modelName, fullText.length(), toolCalls.size(), inputTokens, outputTokens);
+                    return ModelCallResult.builder()
+                            .events(toolCallEvents)
+                            .fullText(fullText.toString())
+                            .toolCalls(toolCalls)
+                            .inputTokens(inputTokens)
+                            .outputTokens(outputTokens)
+                            .build();
+                }));
+    }
+
+    /**
      * P1-#1: 异步流式调用 —— 返回 Mono 而非 blocking。
      * 借鉴 AgentScope Java 的 Mono.defer() + Flux.collectList() 非阻塞收集。
+     * @deprecated O5 起默认走 {@link #callWithStreamingAsync}；本缓冲路径保留作灰度回滚。
      */
     public Mono<ModelCallResult> callWithStreamAsync(
             ChatModel chatModel,
@@ -221,160 +328,76 @@ public class ModelInvoker {
 
         Prompt prompt = new Prompt(fullMessages);
 
-        Exception lastException = null;
-        long backoff = INITIAL_BACKOFF_MS;
-
-        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            if (attempt > 0) {
-                log.warn("模型调用重试 #{}/{} — 等待 {}ms", attempt, MAX_RETRIES, backoff);
-                try {
-                    Thread.sleep(backoff);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-                backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
-                // 重置收集器
-                events.clear();
-                fullText.setLength(0);
-                toolCalls.clear();
+        // P0-2 重试收口：单次调用 + 总超时。
+        // 重试/退避/上下文压缩/凭据轮换/fallback 已由 ResilientChatModelExecutor 统一负责
+        List<ChatResponse> responses;
+        try {
+            responses = chatModel.stream(prompt)
+                    .collectList()
+                    .block(Duration.ofMillis(callTimeoutMs));
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
             }
+            log.error("模型调用失败（单次调用，重试已收口至 ResilientChatModelExecutor）: "
+                    + "model={}, error={}", modelName, e.getMessage(), e);
+            // 兜底：getMessage() 可能为 null，避免 error 字段为 null 导致 hasError() 误判成功
+            return ModelCallResult.error(
+                    e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+        }
 
-            try {
-                Flux<ChatResponse> flux = chatModel.stream(prompt);
-                List<ChatResponse> responses = flux.collectList().block();
+        if (responses != null) {
+            for (ChatResponse response : responses) {
+                List<Generation> generations = response.getResults();
+                if (generations == null) continue;
 
-                if (responses != null) {
-                    for (ChatResponse response : responses) {
-                        List<Generation> generations = response.getResults();
-                        if (generations == null) continue;
+                for (Generation gen : generations) {
+                    AssistantMessage output = gen.getOutput();
+                    if (output == null) continue;
 
-                        for (Generation gen : generations) {
-                            AssistantMessage output = gen.getOutput();
-                            if (output == null) continue;
+                    String text = output.getText();
+                    if (text != null && !text.isEmpty()) {
+                        fullText.append(text);
+                        events.add(RuntimeEvent.text(text));
+                    }
 
-                            String text = output.getText();
-                            if (text != null && !text.isEmpty()) {
-                                fullText.append(text);
-                                events.add(RuntimeEvent.text(text));
-                            }
-
-                            List<AssistantMessage.ToolCall> tcList = output.getToolCalls();
-                            if (tcList != null && !tcList.isEmpty()) {
-                                for (AssistantMessage.ToolCall tc : tcList) {
-                                    Map<String, Object> parsedArgs = parseArguments(tc.arguments());
-                                    toolCalls.add(ToolCallDef.builder()
-                                            .id(tc.id()).name(tc.name()).input(parsedArgs).build());
-                                    events.add(RuntimeEvent.builder()
-                                            .type(RuntimeEvent.EventType.toolCall)
-                                            .toolCallId(tc.id()).toolName(tc.name())
-                                            .toolInput(tc.arguments()).build());
-                                    log.info("解析到工具调用: id={} name={}", tc.id(), tc.name());
-                                }
-                            }
+                    List<AssistantMessage.ToolCall> tcList = output.getToolCalls();
+                    if (tcList != null && !tcList.isEmpty()) {
+                        for (AssistantMessage.ToolCall tc : tcList) {
+                            Map<String, Object> parsedArgs = parseArguments(tc.arguments());
+                            toolCalls.add(ToolCallDef.builder()
+                                    .id(tc.id()).name(tc.name()).input(parsedArgs).build());
+                            events.add(RuntimeEvent.builder()
+                                    .type(RuntimeEvent.EventType.toolCall)
+                                    .toolCallId(tc.id()).toolName(tc.name())
+                                    .toolInput(tc.arguments()).build());
+                            log.info("解析到工具调用: id={} name={}", tc.id(), tc.name());
                         }
                     }
                 }
-
-                // 成功 — 退出重试循环
-                log.info("模型调用完成: attempt={} textLength={} toolCalls={}",
-                        attempt + 1, fullText.length(), toolCalls.size());
-
-                // Phase 9: 提取 token 使用量
-                int inputTokens = 0, outputTokens = 0;
-                if (responses != null && !responses.isEmpty()) {
-                    var lastResp = responses.get(responses.size() - 1);
-                    var metadata = lastResp.getMetadata();
-                    if (metadata != null && metadata.getUsage() != null) {
-                        inputTokens = (int) metadata.getUsage().getPromptTokens();
-                        outputTokens = (int) metadata.getUsage().getCompletionTokens();
-                    }
-                }
-
-                return ModelCallResult.builder()
-                        .events(events)
-                        .fullText(fullText.toString())
-                        .toolCalls(toolCalls)
-                        .inputTokens(inputTokens)
-                        .outputTokens(outputTokens)
-                        .build();
-
-            } catch (Exception e) {
-                lastException = e;
-                if (!isRetryable(e, modelName)) {
-                    log.error("不可重试的模型调用错误: {}", e.getMessage());
-                    log.error("异常完整链路: type={}, cause={}, causeMsg={}",
-                            e.getClass().getName(),
-                            e.getCause() != null ? e.getCause().getClass().getName() : "null",
-                            e.getCause() != null ? e.getCause().getMessage() : "null");
-                    // 递归打印所有嵌套异常
-                    Throwable nested = e.getCause();
-                    int depth = 0;
-                    while (nested != null && depth < 10) {
-                        log.error("  nested[{}]: {} — {}", depth,
-                                nested.getClass().getName(), nested.getMessage());
-                        nested = nested.getCause();
-                        depth++;
-                    }
-                    break;
-                }
-                log.warn("可重试错误 (attempt {}/{}): {} — {}",
-                        attempt + 1, MAX_RETRIES + 1,
-                        e.getClass().getSimpleName(), e.getMessage());
             }
         }
 
-        log.error("模型调用最终失败 (已重试{}次): {}", MAX_RETRIES,
-                lastException != null ? lastException.getMessage() : "unknown");
-        return ModelCallResult.error(
-                lastException != null ? lastException.getMessage() : "模型调用失败");
-    }
+        log.info("模型调用完成: textLength={} toolCalls={}", fullText.length(), toolCalls.size());
 
-    /**
-     * 判断异常是否可重试
-     * Connection reset / broken pipe / timeout → 重试
-     * 503 / 502 / 429 → 重试
-     * 400 → 重试（非标准 API 瞬时错误）
-     * 401 / 403 / 404 → 不重试
-     */
-    boolean isRetryable(Exception e, String modelRef) {
-        String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-
-        // IO/网络层错误 → 重试
-        if (e instanceof IOException) return true;
-        if (e instanceof java.net.SocketException) return true;
-        if (e instanceof java.util.concurrent.TimeoutException) return true;
-
-        // SocketException 子类
-        Throwable cause = e.getCause();
-        while (cause != null) {
-            if (cause instanceof java.net.SocketException) return true;
-            if (cause instanceof java.io.IOException) return true;
-            cause = cause.getCause();
+        // Phase 9: 提取 token 使用量
+        int inputTokens = 0, outputTokens = 0;
+        if (responses != null && !responses.isEmpty()) {
+            var lastResp = responses.get(responses.size() - 1);
+            var metadata = lastResp.getMetadata();
+            if (metadata != null && metadata.getUsage() != null) {
+                inputTokens = (int) metadata.getUsage().getPromptTokens();
+                outputTokens = (int) metadata.getUsage().getCompletionTokens();
+            }
         }
 
-        // 消息中包含典型网络错误关键词
-        if (msg.contains("connection reset")) return true;
-        if (msg.contains("broken pipe")) return true;
-        if (msg.contains("timeout")) return true;
-        if (msg.contains("connect timed out")) return true;
-        if (msg.contains("read timed out")) return true;
-
-        // 503 / 502 / 429 → 重试
-        if (msg.contains("503") || msg.contains("502") || msg.contains("429")) return true;
-
-        // 401 / 403 / 404 → 不重试
-        // 注意：400 对非标准 API（如 api.xiaomimimo.com）可能为瞬时错误（MCP 工具定义未就绪），纳入重试
-        if (msg.contains("401") || msg.contains("403") || msg.contains("404"))
-            return false;
-
-        // 400 → 仅小觅 API（api.xiaomimimo.com）可重试
-        // 其他 Provider 的 400 为真正的客户端错误，不应重试
-        if (msg.contains("400")) {
-            return modelRef != null && modelRef.toLowerCase().contains("mimo");
-        }
-
-        return false;
+        return ModelCallResult.builder()
+                .events(events)
+                .fullText(fullText.toString())
+                .toolCalls(toolCalls)
+                .inputTokens(inputTokens)
+                .outputTokens(outputTokens)
+                .build();
     }
 
     @SuppressWarnings("unchecked")

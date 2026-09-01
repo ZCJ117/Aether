@@ -62,9 +62,9 @@ class ReActAgentApiHookTest {
         // 让 queryLoop 越过 context 管理阶段（压缩管道不触发）
         when(contextManager.applyToolResultBudget(anyList())).thenAnswer(inv -> inv.getArgument(0));
         when(contextManager.microCompact(anyList())).thenAnswer(inv -> inv.getArgument(0));
-        when(contextManager.autoCompactIfNeeded(anyList(), anyString(), anyString()))
+        when(contextManager.autoCompactIfNeeded(anyList(), anyString(), anyString(), any(TokenBudget.class)))
                 .thenReturn(cn.zcj.aether.domain.agent.service.context.AutoCompactResult.notNeeded());
-        when(contextManager.runCompactionPipeline(anyList(), anyString(), anyString(), anyInt()))
+        when(contextManager.runCompactionPipeline(anyList(), anyString(), anyString(), anyInt(), any(TokenBudget.class)))
                 .thenAnswer(inv -> {
                     @SuppressWarnings("unchecked")
                     java.util.List<cn.zcj.aether.domain.agent.service.runtime.TurnMessage> msgs =

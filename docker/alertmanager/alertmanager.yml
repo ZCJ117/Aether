@@ -1,0 +1,47 @@
+# ============================================================
+# P1(3.3): Alertmanager 路由与通知通道
+# 默认通道：webhook → alert-echo（本仓自带回显服务，可实测告警触达）
+# 生产通道：邮件 SMTP / 钉钉 / 企业微信，示例见文末注释（放开并填入真实凭据）
+# ============================================================
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: ops-webhook
+  group_by: [alertname, severity]
+  group_wait: 30s        # 同组告警聚合等待
+  group_interval: 5m     # 同组新告警通知间隔
+  repeat_interval: 4h    # 未恢复告警重发间隔
+  routes:
+    - matchers: [ 'severity="critical"' ]
+      receiver: ops-webhook
+      repeat_interval: 1h   # critical 更快重发
+
+receivers:
+  # 默认通道：webhook 回显服务（演示/联调用；生产替换为钉钉/企微 webhook 地址）
+  - name: ops-webhook
+    webhook_configs:
+      - url: http://alert-echo:8080/alerts
+        send_resolved: true
+
+  # 生产示例：邮件通道（取消注释并填入 SMTP 凭据；配合 route.routes 挂载）
+  # - name: ops-email
+  #   email_configs:
+  #     - to: "ops@example.com"
+  #       from: "alertmanager@example.com"
+  #       smarthost: "smtp.example.com:465"
+  #       auth_username: "alertmanager@example.com"
+  #       auth_password: "${SMTP_PASSWORD}"   # 建议用 amtool/环境变量模板注入
+  #       send_resolved: true
+
+  # 生产示例：钉钉机器人（部署 prometheus-webhook-dingtalk 后指向其 /dingtalk/send）
+  # - name: ops-dingtalk
+  #   webhook_configs:
+  #     - url: http://dingtalk-webhook:8060/dingtalk/aether/send
+  #       send_resolved: true
+
+inhibit_rules:
+  # 实例宕机时抑制其上所有业务告警（根因优先）
+  - source_matchers: [ 'alertname="AetherInstanceDown"' ]
+    target_matchers: [ 'severity=~"warning|critical"' ]
+    equal: []

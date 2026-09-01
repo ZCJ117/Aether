@@ -3,7 +3,6 @@ package cn.zcj.aether.domain.agent.service.model.impl;
 import cn.zcj.aether.domain.agent.service.model.ModelConfig;
 import cn.zcj.aether.domain.agent.service.model.ModelProvider;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -18,6 +17,21 @@ import org.springframework.stereotype.Component;
 @Component
 public class DashScopeProvider implements ModelProvider {
 
+    private final int connectTimeoutMs;
+    private final int readTimeoutMs;
+
+    public DashScopeProvider(
+            @org.springframework.beans.factory.annotation.Value("${aether.model.invoker.connect-timeout-ms:30000}") int connectTimeoutMs,
+            @org.springframework.beans.factory.annotation.Value("${aether.model.invoker.read-timeout-ms:120000}") int readTimeoutMs) {
+        this.connectTimeoutMs = connectTimeoutMs;
+        this.readTimeoutMs = readTimeoutMs;
+    }
+
+    @Override
+    public int connectTimeoutMs() { return connectTimeoutMs; }
+    @Override
+    public int readTimeoutMs() { return readTimeoutMs; }
+
     @Override
     public String providerName() { return "dashscope"; }
 
@@ -31,12 +45,8 @@ public class DashScopeProvider implements ModelProvider {
 
     @Override
     public ChatModel createChatModel(ModelConfig config) {
-        OpenAiApi openAiApi = OpenAiApi.builder()
-            .baseUrl(config.getBaseUrl())
-            .apiKey(config.getApiKey())
-            .completionsPath(StringUtils.isNotBlank(config.getCompletionsPath())
-                ? config.getCompletionsPath() : "compatible-mode/v1/chat/completions")
-            .build();
+        // O12: 统一走 buildOpenAiApi
+        OpenAiApi openAiApi = buildOpenAiApi(config);
 
         ChatModel chatModel = OpenAiChatModel.builder()
             .openAiApi(openAiApi)
@@ -45,7 +55,8 @@ public class DashScopeProvider implements ModelProvider {
                 .build())
             .build();
 
-        log.info("DashScopeProvider 创建 ChatModel: model={}, baseUrl={}", config.getModelId(), config.getBaseUrl());
+        log.info("DashScopeProvider 创建 ChatModel: model={}, baseUrl={} (connect={}ms, read={}ms)",
+                config.getModelId(), config.getBaseUrl(), connectTimeoutMs, readTimeoutMs);
         return chatModel;
     }
 

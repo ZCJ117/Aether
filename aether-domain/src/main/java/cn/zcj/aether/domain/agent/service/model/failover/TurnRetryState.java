@@ -11,7 +11,7 @@ import java.util.Map;
  * 去重并限次，输出下一个恢复动作 {@link RecoveryDirective}。</p>
  *
  * <p>分支限次：CREDENTIAL_ROTATION=1、CONTEXT_COMPRESSION=2、
- * ADAPTIVE_RATE_LIMIT_BACKOFF / JITTERED_BACKOFF=maxAttempts、
+ * ADAPTIVE_RATE_LIMIT_BACKOFF / JITTERED_BACKOFF / TIMEOUT_RECONNECT=maxAttempts、
  * PROVIDER_FALLBACK=fallback 链长度。</p>
  */
 public class TurnRetryState {
@@ -77,8 +77,18 @@ public class TurnRetryState {
             return exhaustedBranch(RecoveryBranch.PROVIDER_FALLBACK, e);
         }
 
-        // ── 服务端错误 / 超时 / 未知 → 抖动退避 → fallback/终止 ──
-        if (r == FailoverReason.SERVER_ERROR || r == FailoverReason.TIMEOUT || r == FailoverReason.UNKNOWN) {
+        // ── 超时 → 固定 1s 重建连接（上限 maxAttempts）→ fallback/终止 ──
+        if (r == FailoverReason.TIMEOUT) {
+            int attempt = count(RecoveryBranch.TIMEOUT_RECONNECT) + 1;
+            if (attempt <= maxAttempts) {
+                return RecoveryDirective.retry(RecoveryBranch.TIMEOUT_RECONNECT,
+                        1.0, "超时重建连接: " + r);
+            }
+            return exhaustedBranch(RecoveryBranch.TIMEOUT_RECONNECT, e);
+        }
+
+        // ── 服务端错误 / 未知 → 抖动退避 → fallback/终止 ──
+        if (r == FailoverReason.SERVER_ERROR || r == FailoverReason.UNKNOWN) {
             int attempt = count(RecoveryBranch.JITTERED_BACKOFF) + 1;
             if (attempt <= maxAttempts) {
                 return RecoveryDirective.retry(RecoveryBranch.JITTERED_BACKOFF,

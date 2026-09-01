@@ -73,9 +73,23 @@ public abstract class BaseAgent implements Agent {
     @Override
     public AgentState getState() { return state; }
 
+    /**
+     * O5: 外部中断入口——置位 {@link InterruptControl}，主循环在下一轮检查点退出。
+     *
+     * <p>中断信号存于 AgentState 的 transient 字段，永不序列化落盘。
+     */
+    public void interrupt() {
+        state.interruptControl().interrupt();
+    }
+
+    /** O4: 当前状态 schema 版本。v1 = 无版本号的存量 JSON；v2 = 引入 schemaVersion 后的带版本格式。 */
+    public static final int STATE_SCHEMA_VERSION = 2;
+
     @Override
     public Map<String, Object> saveState() {
         Map<String, Object> map = new LinkedHashMap<>();
+        // O4: 版本号置顶——loadState 据此选择迁移路径，字段演进不再依赖"旧版兼容"逐字段 if
+        map.put("schemaVersion", STATE_SCHEMA_VERSION);
         map.put("agentId", getId());
         map.put("currentTurn", state.getCurrentTurn());
         map.put("rollingSummary", state.getRollingSummary());
@@ -94,6 +108,17 @@ public abstract class BaseAgent implements Agent {
     @SuppressWarnings("unchecked")
     @Override
     public void loadState(Map<String, Object> stateMap) {
+        // O4: 按版本迁移——旧 JSON（无 schemaVersion）视为 v1；不支持的版本响亮失败
+        int version = resolveSchemaVersion(stateMap);
+        if (version > STATE_SCHEMA_VERSION) {
+            throw new cn.zcj.aether.types.exception.StateRestoreException(
+                    "State restore failed: unsupported schemaVersion " + version
+                            + " (supported up to " + STATE_SCHEMA_VERSION + ")");
+        }
+        if (version < STATE_SCHEMA_VERSION) {
+            migrate(stateMap, version, STATE_SCHEMA_VERSION);
+        }
+
         // H5-步骤1: 全字段必需校验——缺字段响亮报错（对齐 autogen "恢复失败要响亮地失败"）
         requireKeys(stateMap, "currentTurn", "rollingSummary", "status", "messages");
 
@@ -173,6 +198,36 @@ public abstract class BaseAgent implements Agent {
                 state.getToolContext().setActiveToolGroup(ag);
             }
         }
+    }
+
+    /**
+     * O4: 解析状态 schema 版本。
+     * 缺失 / 非法 schemaVersion 视为 v1（存量无版本 JSON 兼容语义，回滚安全）。
+     */
+    private int resolveSchemaVersion(Map<String, Object> stateMap) {
+        Object v = stateMap.get("schemaVersion");
+        if (v instanceof Number n) {
+            return n.intValue();
+        }
+        if (v instanceof String s) {
+            try {
+                return Integer.parseInt(s.trim());
+            } catch (NumberFormatException ignored) {
+                // fall through → v1
+            }
+        }
+        return 1;
+    }
+
+    /**
+     * O4: 版本迁移钩子——fromVersion 升级到当前版本的字段归一化。
+     *
+     * <p>v1 → v2：v2 仅新增版本号，槽位字段与 v1 同构，无需字段变换；
+     * 此处保留显式迁移点，后续新增槽位（如 toolContext 扩展键）在此按版本补默认值，
+     * 避免 loadState 主体随字段演进膨胀。
+     */
+    protected void migrate(Map<String, Object> stateMap, int fromVersion, int toVersion) {
+        log.info("状态迁移: schemaVersion {} → {}（当前版本无字段变换）", fromVersion, toVersion);
     }
 
     /**

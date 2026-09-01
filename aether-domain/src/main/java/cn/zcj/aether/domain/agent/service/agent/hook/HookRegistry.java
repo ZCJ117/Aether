@@ -6,8 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.Resource;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Resource;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -33,6 +33,10 @@ public class HookRegistry {
         Map<String, AgentHook> hookBeans = applicationContext.getBeansOfType(AgentHook.class);
         globalHooks.addAll(hookBeans.values());
         globalHooks.sort(Comparator.comparingInt(AgentHook::priority));
+        // O15: 将 AgentHook 的 LLM/工具拦截点桥接进唯一生命周期钩子表（单一命名空间）
+        for (AgentHook hook : globalHooks) {
+            registerBridge(hook);
+        }
 
         log.info("HookRegistry 初始化完成，发现 {} 个全局 Hook: {}",
             globalHooks.size(),
@@ -58,7 +62,21 @@ public class HookRegistry {
     public void register(AgentHook hook) {
         globalHooks.add(hook);
         globalHooks.sort(Comparator.comparingInt(AgentHook::priority));
+        registerBridge(hook);
         log.info("注册 Hook: {} (priority={})", hook.getClass().getSimpleName(), hook.priority());
+    }
+
+    /**
+     * O15: 把 AgentHook 桥接为 {@link AgentHookBridge} 注册进 lifecycleHooks 唯一表，
+     * 使 PRE/POST_LLM_CALL、PRE/POST_TOOL_CALL 挂点的触发对两类 Hook 可见。
+     */
+    private void registerBridge(AgentHook hook) {
+        AgentHookBridge bridge = new AgentHookBridge(hook);
+        for (HookPoint point : bridge.points()) {
+            List<LifecycleHook> list = lifecycleHooks.computeIfAbsent(point, k -> new CopyOnWriteArrayList<>());
+            list.add(bridge);
+            list.sort(Comparator.comparingInt(LifecycleHook::order));
+        }
     }
 
     // ── D3 全局生命周期钩子（对齐 hermes plugins.py _hooks: Dict[str, List[Callable]]）──

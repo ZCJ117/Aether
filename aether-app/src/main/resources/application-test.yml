@@ -39,3 +39,13 @@ logging:
   level:
     root: info
   config: classpath:logback-spring.xml
+
+# ====== O16: 测试专用 JWT 密钥（基座无默认回退后必须显式提供）======
+aether:
+  security:
+    jwt:
+      secret: test-only-jwt-secret-key-min-32-chars!!
+  # ====== O16: 测试环境 embedding 对 ZHIPU_API_KEY 提供空默认（不要求真实 Key）======
+  memory:
+    embedding:
+      api-key: ${ZHIPU_API_KEY:}

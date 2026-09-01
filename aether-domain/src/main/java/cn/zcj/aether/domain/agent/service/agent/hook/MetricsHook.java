@@ -6,7 +6,7 @@ import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.agent.observability.AgentMetrics;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 /**
  * 基于 Agent 钩子的自动 Metric 采集。

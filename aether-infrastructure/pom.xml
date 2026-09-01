@@ -39,6 +39,12 @@
             <version>6.10.0.202406032230-r</version>
         </dependency>
 
+        <!-- P1(1.2): Redis（分布式限流 / RedisSessionRepository 激活前提；Lettuce 客户端） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- 系统模块 -->
         <dependency>
             <groupId>cn.zcj.aether</groupId>
@@ -49,6 +55,25 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- P1(2.2): Testcontainers —— 真实 PG/pgvector 集成测试（-Pintegration，CI 独立 job） -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Testcontainers 2.x shaded Jackson binds to docker-java's jackson-annotations 2.20;
+             keep this test-only override ahead of Spring Boot's 2.18.2 BOM. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.20</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -72,6 +97,18 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
+                    <classpathDependencyExcludes>
+                        <classpathDependencyExclude>cn.bugstack.wrench:xfg-wrench-starter-design-framework</classpathDependencyExclude>
+                    </classpathDependencyExcludes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <!-- Keep integration tests on the same clean classpath as surefire;
+                         the xfg-wrench fat-jar shadows the newer Jackson annotations
+                         required by Testcontainers 2.x. -->
                     <classpathDependencyExcludes>
                         <classpathDependencyExclude>cn.bugstack.wrench:xfg-wrench-starter-design-framework</classpathDependencyExclude>
                     </classpathDependencyExcludes>

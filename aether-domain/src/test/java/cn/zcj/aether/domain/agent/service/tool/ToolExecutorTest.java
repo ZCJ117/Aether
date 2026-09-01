@@ -113,6 +113,30 @@ class ToolExecutorTest {
         assertEquals("failed", error.getContent());
     }
 
+    @Test
+    void shouldHardblockDangerousCommandInGateTwo() {
+        injectField(executor, "dangerousToolRule",
+                new cn.zcj.aether.domain.agent.service.agent.permission.DangerousToolRule());
+        registry.register(createTool("Bash", false));
+        List<ToolExecutor.ToolCallRequest> requests = List.of(
+                new ToolExecutor.ToolCallRequest("c1", "Bash", Map.of("command", "rm -rf /")));
+        List<ToolResult> results = executor.executeBatch(requests, "user1", "session1");
+        assertEquals(1, results.size());
+        assertTrue(results.get(0).isError());
+        assertEquals(ToolResult.ErrorType.PERMISSION, results.get(0).getErrorType());
+    }
+
+    @Test
+    void shouldNotHardblockSafeCommand() {
+        injectField(executor, "dangerousToolRule",
+                new cn.zcj.aether.domain.agent.service.agent.permission.DangerousToolRule());
+        registry.register(createTool("Bash", false));
+        List<ToolExecutor.ToolCallRequest> requests = List.of(
+                new ToolExecutor.ToolCallRequest("c1", "Bash", Map.of("command", "ls -la")));
+        List<ToolResult> results = executor.executeBatch(requests, "user1", "session1");
+        assertFalse(results.get(0).isError());
+    }
+
     // ----- helpers -----
 
     private Tool createTool(String name, boolean concurrencySafe) {

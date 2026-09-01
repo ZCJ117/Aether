@@ -48,6 +48,15 @@ public class MemoryProperties {
     /** 存量向量回填 */
     private Backfill backfill = new Backfill();
 
+    /** P1(4.3): 遗忘曲线（衰减归档） */
+    private Decay decay = new Decay();
+
+    /** P1(4.3): 写入质量门槛 */
+    private WriteGate writeGate = new WriteGate();
+
+    /** P1(4.3): 冲突合并策略 */
+    private Conflict conflict = new Conflict();
+
     /** 检索参数子配置 */
     @Data
     public static class Recall {
@@ -89,5 +98,38 @@ public class MemoryProperties {
         private int batchSize = 50;
         /** 单次启动回填上限 */
         private int maxPerRun = 500;
+    }
+
+    /** P1(4.3): 遗忘曲线子段 —— 保留分 = 0.5×新近度 + 0.3×频次 + 0.2×重要性，低于阈值软删 */
+    @Data
+    public static class Decay {
+        /** 衰减开关（需 pgvector 后端；文件后端不执行） */
+        private boolean enabled = true;
+        /** 扫描间隔（分钟），<=0 禁用 */
+        private int intervalMinutes = 60;
+        /** 新近度半衰期（天）—— last_accessed_at 距今每过 half-life-days，新近分减 1 */
+        private double halfLifeDays = 30.0;
+        /** 保留分阈值，低于则归档（archived=true） */
+        private double minRetentionScore = 0.2;
+        /** 单轮归档上限（批处理保护） */
+        private int maxArchivePerRun = 1000;
+        /** 批大小 */
+        private int batchSize = 200;
+    }
+
+    /** P1(4.3): 写入门槛子段 —— LLM 打分 importance < minImportance 的候选记忆不入库 */
+    @Data
+    public static class WriteGate {
+        /** 门槛开关（仅在 LLM 成功打分时生效，无 LLM 时不拦） */
+        private boolean enabled = true;
+        /** 最低重要性（0-1；0.6 ≈ 3/5，对齐路线图"≥3 才入库"） */
+        private float minImportance = 0.6f;
+    }
+
+    /** P1(4.3): 冲突合并子段 —— 同主题相似度超阈值时的处理策略 */
+    @Data
+    public static class Conflict {
+        /** concat=拼接保留新旧（原行为） | new-wins=新胜旧 | llm=LLM 合并/替换（失败回退 concat） */
+        private String strategy = "concat";
     }
 }

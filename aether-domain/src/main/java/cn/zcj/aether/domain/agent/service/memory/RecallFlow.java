@@ -1,11 +1,13 @@
 package cn.zcj.aether.domain.agent.service.memory;
 
+import cn.zcj.aether.domain.agent.service.retrieval.rag.RetrievalDocument;
+import cn.zcj.aether.domain.agent.service.retrieval.rag.RetrievalPipeline;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -24,8 +26,9 @@ public class RecallFlow {
     @Resource
     private VectorStore vectorStore;
 
-    /** 可选：无 EmbeddingModel 时回退关键词匹配 */
+    /** 可选：无 EmbeddingModel 时回退关键词匹配（O11: 统一限定 memoryEmbeddingModel 装配来源） */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.beans.factory.annotation.Qualifier("memoryEmbeddingModel")
     private EmbeddingModel embeddingModel;
 
     /** 可选：ChatModel 动态注册，无 LLM 时回退简单搜索 */
@@ -36,6 +39,13 @@ public class RecallFlow {
     @org.springframework.beans.factory.annotation.Value("${aether.memory.recall.vector-dimension:1024}")
     private int vectorDimension = 1024;
 
+    /** P1(4.2): RAG 三级管道（aether.rag.enabled=true 且 Bean 装配时接管 shallow 召回） */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private RetrievalPipeline retrievalPipeline;
+
+    @org.springframework.beans.factory.annotation.Value("${aether.rag.enabled:false}")
+    private boolean ragEnabled;
+
     private final ExecutorService searchExecutor = Executors.newFixedThreadPool(8);
 
     /**
@@ -45,6 +55,19 @@ public class RecallFlow {
             String query, MemoryFacade.RecallOptions options) {
 
         return CompletableFuture.supplyAsync(() -> {
+            // P1(4.2): RAG 三级管道（改写 → 混合 RRF → 重排）优先；空结果/异常回退原路径
+            if (ragEnabled && retrievalPipeline != null) {
+                try {
+                    var result = retrievalPipeline.retrieve(query, options.scopes(), options.maxResults());
+                    if (!result.documents().isEmpty()) {
+                        return toSearchResults(result.documents(), options.maxResults());
+                    }
+                    log.debug("RAG 管道空结果，回退原检索路径");
+                } catch (Exception e) {
+                    log.debug("RAG 管道失败，回退原检索路径: {}", e.getMessage());
+                }
+            }
+
             // 1. Query → Embedding
             float[] queryVector = embed(query);
 
@@ -55,6 +78,25 @@ public class RecallFlow {
             // 3. 加权排序（语义 + 时间衰减 + 重要性）
             return rerankByWeight(results, query, options);
         }, searchExecutor);
+    }
+
+    /** P1(4.2): 管道文档 → 记忆搜索结果（分数沿用融合/重排得分）。 */
+    private List<MemorySearchResult> toSearchResults(
+            List<RetrievalDocument> docs, int maxResults) {
+        List<MemorySearchResult> mapped = new ArrayList<>();
+        for (var doc : docs) {
+            MemoryRecord record = MemoryRecord.builder()
+                    .id(doc.id())
+                    .content(doc.content())
+                    .scope(new MemoryScope("", false))
+                    .importance(0.5f)
+                    .createdAt(Instant.now())
+                    .lastAccessedAt(Instant.now())
+                    .source("rag:" + doc.source())
+                    .build();
+            mapped.add(new MemorySearchResult(record, doc.score()));
+        }
+        return mapped.size() > maxResults ? new ArrayList<>(mapped.subList(0, maxResults)) : mapped;
     }
 
     /**

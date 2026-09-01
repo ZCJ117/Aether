@@ -72,7 +72,7 @@ public final class CodeExplorer implements Tool {
 
         Map<String, Object> globProp = new LinkedHashMap<>();
         globProp.put("type", "string");
-        globProp.put("description", "文件过滤 glob 模式，例如 *.java。默认为 *.java");
+        globProp.put("description", "文件过滤 glob 模式，例如 **/*.java。默认为 **/*.java");
         properties.put("glob", globProp);
 
         schema.put("properties", properties);
@@ -98,7 +98,8 @@ public final class CodeExplorer implements Tool {
             return ToolResult.error(context.toolCallId(), TOOL_NAME, "无效的正则表达式: " + e.getMessage());
         }
 
-        String globStr = (String) input.getOrDefault("glob", "*.java");
+        // glob * 不跨目录段，默认需 "**/*.java" 才能匹配 src 深层路径（Files.walk 产生多段路径）
+        String globStr = (String) input.getOrDefault("glob", "**/*.java");
         PathMatcher globMatcher = FileSystems.getDefault().getPathMatcher("glob:" + globStr);
 
         List<MatchEntry> results = new ArrayList<>();

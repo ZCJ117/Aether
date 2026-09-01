@@ -2,7 +2,78 @@
 
 > 生产级多 Agent AI 运行时后端 —— 基于 Spring Boot 3 + Spring AI 的自研 Agent 编排框架
 
-Aether 是一个采用 **DDD 六边形（Ports & Adapters）分层 + 模块化单体** 架构的 Java 后端项目，提供了一套完整的 AI Agent 运行时：从 YAML 声明式配置「装配」出可运行的智能体，支持单 Agent 的 ReAct 推理-行动循环、多 Agent 工作流（`loop` / `parallel` / `sequential`）编排、MCP 工具接入、记忆系统、模型容错/凭据轮换、工具权限审批（Human-in-the-loop）、会话持久化与恢复，以及基于 JWT 的认证与审计体系。
+![CI](https://github.com/zuo-changjian/ai-agent-scaffold-lite/actions/workflows/ci.yml/badge.svg)
+![Java](https://img.shields.io/badge/Java-17-orange)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.3-brightgreen)
+![Tests](https://img.shields.io/badge/tests-676%20passing-success)
+![Coverage](https://img.shields.io/badge/coverage-51.4%25%20line-brightgreen)
+
+## 量化数字（路线图交付）
+
+| 指标 | 数值 | 来源 |
+|------|------|------|
+| 测试用例 | **676**（0 失败） | `mvn -B verify` |
+| 行覆盖率（全项目 / domain） | **51.4% / 55.4%**（全项目达标 ≥40%；domain 距 60% 目标持续攻坚中） | [docs/coverage-baseline.md](docs/coverage-baseline.md) |
+| Eval 评测通过率（确定性模式） | **100%**（50 例：工具选择 20 / 多步编排 15 / 上下文保持 10 / 权限协议 5） | [docs/eval-report.md](docs/eval-report.md) |
+| A/B 回归捕获 | 基线 100% → 变异后 98%，失败用例精确定位 | `scripts/eval-ab-demo.sh` |
+| 并发容量 | **50 VU × 10 轮流式对话，0 错误**，轮 p95 稳定 ~4.6s（mock 节奏） | [docs/benchmark-report.md](docs/benchmark-report.md) |
+| 容错混沌恢复 | 429×3 → 500×2 → 成功，恢复 **197s**，最终成功率 **100%** | `benchmark/run.sh` |
+| LLM 响应缓存 | 冷调用 4,577ms → 命中后 p95 **14ms**（**331x**） | `aether.cache.llm.hitrate` |
+| 真流式 A/B | TTFT 真流式 ≈ 缓冲（Δ<2%）——收益被容错包装层中和，已定位为 P1 修复项 | [docs/benchmark-report.md](docs/benchmark-report.md) |
+| 多实例线性度（P2-1.4） | 单实例 1,144 RPS → 双实例 2,036 RPS = **1.78x**，64 并发 0 错误，PASS | [docs/scaling-benchmark-report.md](docs/scaling-benchmark-report.md) |
+
+## 5 条命令快速开始
+
+```bash
+git clone https://gitee.com/zuo-changjian/ai-agent-scaffold-lite.git && cd ai-agent-scaffold-lite/aether
+export DB_PASSWORD=123456 JWT_SECRET=aether-dev-jwt-secret-key-min-32-chats!!
+docker compose -f docker/docker-compose-secure.yml up -d --build
+curl -fsS http://localhost:8091/actuator/health
+# 冒烟（注册 → 登录 → chat）：见 QUICKSTART.md
+```
+
+更多路径（压测栈、Python 四服务、无 Docker 本地验证）：[QUICKSTART.md](QUICKSTART.md)
+
+## P1 生产化能力速览（2026-08 交付）
+
+| 能力 | 说明 | 入口 |
+|---|---|---|
+| 分布式限流 | 令牌桶算法，`memory`/`redis` 双模式配置切换（`aether.security.rate-limit.mode`），Redis 故障自动降级内存 + 告警指标 | [docs/capacity-planning.md](docs/capacity-planning.md) |
+| 消息队列解耦 | Kafka 双链路：审计削峰批量落库 + 会话统计聚合（`dashboard_stats`）；幂等去重、手动 ack、重试→DLT（`aether.kafka.enabled`） | `types/messaging` + `trigger/listener` |
+| 监控告警 | Prometheus + Grafana + Alertmanager 全栈一键起（含 7 条告警规则 + 12 面板），通知通道可实测 | [docs/monitoring-guide.md](docs/monitoring-guide.md) |
+| 高并发可观测 | 模型等待线程 Gauge / 超时率 / 全部线程池队列利用率指标 + 容量规划公式 | [docs/capacity-planning.md](docs/capacity-planning.md) |
+| RAG 三级检索 | 查询改写 → 混合召回（pgvector + PG 全文 bigram-GIN，RRF 单 SQL）→ Python 重排，逐级降级开关（`aether.rag.*`） | [docs/rag-pipeline.md](docs/rag-pipeline.md) |
+| 记忆生命周期 | 遗忘曲线（保留分软删/复活）+ 写入重要性门槛 + 冲突合并三策略 | [docs/memory-lifecycle.md](docs/memory-lifecycle.md) |
+| 集成测试 | Testcontainers（pgvector/Redis/Kafka）`mvn verify -Pintegration`，CI 独立 job | `.github/workflows/ci.yml` |
+
+全栈（业务 + Redis/Kafka + 监控栈）一键体验：
+
+```bash
+cp docker/.env.example docker/.env   # 填 JASYPT_MASTER_PASSWORD / DB_PASSWORD / JWT_SECRET
+docker compose -f docker/docker-compose-fullstack.yml --env-file docker/.env up -d
+# Grafana: http://localhost:3000 | Prometheus: 9090 | Alertmanager: 9093 | 告警回显: curl localhost:8081/alerts
+```
+
+## P2 生产化能力速览（2026-09 交付）
+
+| 能力 | 说明 | 入口 |
+|---|---|---|
+| 水平扩展 | LLM 缓存 Caffeine L1 + Redis L2（`aether.cache.llm.redis-enabled`，Redis 异常自动降级 L1-only）；`RedisSessionRepository` 补齐全部仓储接口（软删语义与 PG 对齐） | [docs/horizontal-scaling-design.md](docs/horizontal-scaling-design.md) |
+| 多实例部署 | 双实例 + Nginx：携带会话头走一致性哈希粘性路由，新建会话 `least_conn` 分流 | `docker/docker-compose-scale.yml` + `docker/nginx/` |
+| 编排重构 | `GraphExecutor` 收敛为统一生命周期（trace / MDC / 钩子 / 异常完成），编排下沉为 Sequential / Parallel / Loop / SubAgent / EventDriven 五种策略 + `GraphFlowCoordinator`（最大类 262 行） | [docs/p2-roadmap-delivery.md](docs/p2-roadmap-delivery.md) |
+| 规划能力 | `PlanActAgent` 中途重规划（连续工具失败 / 检查点评估不达标触发，保留已完成步骤）+ 任务后反思沉淀 notes；指标 `aether.agent.plan.replans / completions / reflections.total` | [docs/p2-roadmap-delivery.md](docs/p2-roadmap-delivery.md) |
+| 日志排障 | prod 日志收紧 INFO；三步排障手册（关联 ID → JSON 日志 / MDC / graph trace → 审计表） | [docs/log-troubleshooting.md](docs/log-troubleshooting.md) |
+| 数据库迁移链 | `V1__baseline.sql` 幂等基线（用户 / 令牌 / 审计 / session / pgvector+HNSW）→ V5 完整链路 | `data/sql/` |
+
+```bash
+# 多实例演示 + 线性度压测（1.78x PASS）
+docker compose -f docker/docker-compose-scale.yml up -d
+python scripts/scaling-benchmark.py --mode all --manage-stack --duration 60
+```
+
+---
+
+Aether 是一个采用 **DDD 六边形（Ports & Adapters）分层 + 模块化单体** 架构的 Java 后端项目，提供了一套完整的 AI Agent 运行时：从 YAML 声明式配置「装配」出可运行的智能体，支持单 Agent 的 ReAct 推理-行动循环、多 Agent 工作流（sequential / parallel / loop / subagent / eventdriven 五种编排策略）编排、MCP 工具接入、记忆系统、模型容错/凭据轮换、工具权限审批（Human-in-the-loop）、会话持久化与恢复，以及基于 JWT 的认证与审计体系。
 
 ---
 
@@ -71,8 +142,9 @@ Aether 是一个六模块的 Maven 多模块工程（`groupId=cn.zcj.aether`，`
 
 - 统一 `Agent` 接口 + `BaseAgent` 抽象基类，内置钩子（Hook）与状态（State）管理。
 - 标准 **ReAct（Reasoning + Acting）** 循环实现 `ReActAgent`，支持最大轮次 `MAX_TURNS = 100`，以及 `PlanActAgent`。
+- `PlanActAgent` 支持中途重规划（连续工具失败或步骤评估不达标时保留已完成步骤、生成替代后续计划）与任务后反思（LLM 自评沉淀 `ExternalNotes`，`BackgroundReviewer` 二次复盘）。
 - 基于 **RxJava 3 `Flowable<RuntimeEvent>`** 的事件流式输出（`textDelta`、`toolCall`、`toolResult`、`compactBoundary`、`permissionAsking`、`agentPaused`、`checkpoint`、`turnComplete`、`done`、`error` 等）。
-- **多 Agent 工作流**：`loop`（循环）、`parallel`（并行）、`sequential`（串行）三种编排类型（`AgentTypeEnum`），由 `GraphExecutor` 执行。
+- **多 Agent 工作流**：`sequential` / `parallel` / `loop` / `subagent` / `eventdriven` 编排，由 `GraphExecutor` 统一生命周期执行（trace / MDC / 生命周期钩子 / 异常完成），具体编排下沉为五种 `GraphOrchestrationStrategy` 策略实现，GRAPHFLOW DAG 由 `GraphFlowCoordinator` 协调。
 
 ### 3. 模型 Provider SPI 与容错
 
@@ -134,7 +206,9 @@ Aether 是一个六模块的 Maven 多模块工程（`groupId=cn.zcj.aether`，`
 | AI | Spring AI（`spring-ai-openai`、`spring-ai-mcp`、`spring-ai-starter-mcp-client-webflux`）、LangChain4j、Google ADK（依赖管理，部分注释） |
 | 响应式 / 流式 | RxJava 3（`3.1.9`）、Spring WebFlux / Reactor Netty |
 | 数据库 | PostgreSQL（含 `pgvector`，`pgvector/pgvector:pg16`） |
-| 缓存 | Caffeine |
+| 缓存 | Caffeine（LLM 响应 L1）+ Redis（L2 / 限流 / 会话存储可选，`spring-boot-starter-data-redis`） |
+| 消息队列 | spring-kafka（审计削峰 + 会话统计聚合，`aether.kafka.enabled` 开关） |
+| 集成测试 | Testcontainers 2.0.2（pgvector / Redis / Kafka，`-Pintegration` 独立 profile） |
 | 安全 | Spring Security 6、JJWT `0.12.5`、Jasypt `3.0.5`、BCrypt |
 | 可观测 | OpenTelemetry `1.41.0`、Micrometer、Prometheus、logstash-logback-encoder |
 | 序列化 / 工具 | fastjson `2.0.28`、commons-lang3、Guava、Lombok |
@@ -172,11 +246,11 @@ aether/
 │           ├── context/            # ContextManager / TokenBudget / compaction
 │           ├── curation/           # 结果策展
 │           ├── event/              # AgentEventPublisher
-│           ├── executor/           # GraphExecutor
+│           ├── executor/           # GraphExecutor + orchestration/（五种编排策略）
 │           ├── memory/             # MemoryFacade / VectorStore / core
 │           ├── model/              # ModelProvider SPI + failover
-│           ├── notes/              # ExternalNotes
-│           ├── retrieval/          # CodeExplorer / IdentifierRegistry
+│           ├── notes/              # ExternalNotes（EXPERIMENTAL，见 docs/notes-experimental.md）
+│           ├── retrieval/          # CodeExplorer / IdentifierRegistry / rag（三级检索管道）
 │           ├── runtime/            # AgentRuntime / ModelInvoker / RuntimeEvent
 │           ├── security/           # JwtService
 │           ├── session/            # SessionEntity / SessionRepository
@@ -214,9 +288,13 @@ aether/
 │           ├── schema.sql          # 数据库初始化（spring.sql.init.mode=always）
 │           ├── logback-spring.xml
 │           └── agent/              # 智能体 YAML 配置 + skills + prompts
-├── docker/
-│   └── docker-compose-secure.yml   # 生产安全部署（aether + pgvector postgres）
-├── data/sql/                       # 迁移脚本（V2 用户/令牌、V3 审计日志）
+├── docker/                         # Dockerfile（多阶段构建）+ compose 栈与 prometheus/grafana/
+│                                   #   alertmanager/nginx/alert-echo 配置（secure / fullstack / bench / scale）
+├── benchmark/                      # 压测设施（k6 脚本 / mock-llm / TTFT 探针 / run.sh / generate_report.py）
+├── scripts/                        # coverage-summary.py / eval-ab-demo.sh / scaling-benchmark.py
+├── data/sql/                       # 迁移脚本（V1 基线 → V5 消息/记忆）
+├── .github/workflows/ci.yml        # CI（build-test + Qodana + integration job）
+├── QUICKSTART.md                   # 5 条命令快速开始
 └── docs/                           # 文档（含架构方案与前端工程）
 ```
 
@@ -300,6 +378,20 @@ java -jar aether-app/target/aether-app.jar \
 | `aether.graph.trace.persistence` | dev 为 `true` | 图级 trace 是否异步落盘 |
 | `aether.cors.allowed-origins` | `*` | CORS 白名单（逗号分隔） |
 
+### P1/P2 新增配置速查
+
+| 配置键 | 默认值 | 说明 |
+|--------|--------|------|
+| `aether.security.rate-limit.mode` | `memory` | 限流实现：`memory` / `redis`（Redis 令牌桶，不可用自动降级并打点） |
+| `aether.kafka.enabled` | `false` | Kafka 双链路总开关（审计削峰 + 会话统计聚合，超时降级直写） |
+| `aether.dashboard.stats-source` | `live` | 仪表盘统计来源：`live` 实时查询 / `kafka` 读聚合表 |
+| `aether.rag.enabled` | `false` | RAG 三级检索总开关（`aether.rag.rewrite` / `hybrid` / `rerank` 逐级开关降级） |
+| `aether.cache.llm.redis-enabled` | `false` | LLM 响应缓存 Redis L2（缺省仅 Caffeine L1，Redis 异常自动降级） |
+| `aether.session.store` | `postgres` | 会话存储：`postgres` / `redis` / `none` |
+| `aether.model.invoker.true-streaming` | `true` | 真流式模型调用开关（压测 A/B 维度） |
+| `aether.memory.decay.*` / `write-gate.*` / `conflict.*` | 见 yml | 记忆生命周期：遗忘曲线 / 写入重要性门槛 / 冲突合并策略 |
+| `aether.graph.background-review.*` | 关闭 | BackgroundReviewer 后台复盘开关与超时参数 |
+
 ### 数据源与线程池（`application-dev.yml`）
 
 ```yaml
@@ -333,12 +425,14 @@ thread:
 
 `schema.sql` 通过 `spring.sql.init.mode=always` 自动执行，创建以下表：
 
-- `t_user` —— 用户表
-- `t_refresh_token` —— 刷新令牌表
-- `t_audit_log` —— 审计日志表
-- `t_async_delegation` —— 异步委派表
+- `t_user` / `t_refresh_token` —— 用户与刷新令牌
+- `t_audit_log` —— 审计日志
+- `t_async_delegation` —— 异步委派
+- `aether_session` —— Agent 会话状态
+- `dashboard_stats` —— 会话统计聚合（Kafka 消费写入）
+- `aether_processed_event` —— 事件幂等去重
 
-> `data/sql/` 下还提供了 Flyway 风格的迁移脚本 `V2__user_and_token.sql`、`V3__audit_log.sql`（独立迁移，可作为参考）。
+> `data/sql/` 提供 Flyway 风格完整迁移链：`V1__baseline.sql`（幂等基线，含 pgvector / HNSW）→ `V5__p1_messaging_and_memory.sql`。
 
 ### 智能体 YAML 配置结构
 
@@ -517,3 +611,22 @@ runner:
 ## 许可证
 
 本项目在父 `pom.xml` 中声明采用 **Apache License, Version 2.0**（`<licenses>` 段，URL：https://www.apache.org/licenses/LICENSE-2.0）。仓库当前未包含独立的 `LICENSE` 文件。
+
+<a id="engineering-cicd-benchmark-eval"></a>
+## 工程化闭环（P0 路线图交付）
+
+```bash
+mvn -B verify                                        # 构建 + 676 测试 + JaCoCo（aether-app/target/site/jacoco-aggregate/）
+python scripts/coverage-summary.py --write docs/coverage-baseline.md   # 覆盖率汇总/盲区
+docker compose -f docker/docker-compose-bench.yml up -d --build        # 压测栈（PG + mock-llm + aether bench）
+cd benchmark && ./run.sh                             # 一键压测 → docs/benchmark-report.md
+mvn -B -pl aether-app -am test -Dtest=EvalRunnerTest # Eval 50 例 → aether-app/target/eval-report.json
+bash scripts/eval-ab-demo.sh                         # A/B 回归演示 → docs/eval-report.md
+python scripts/scaling-benchmark.py --mode all --manage-stack --duration 60   # 双实例线性度压测 → docs/scaling-benchmark-report.md
+```
+
+- **CI**：`.github/workflows/ci.yml` —— push/PR 触发 build-test（含 JaCoCo 报告 artifact）与 Qodana 双 job
+- **压测**：`benchmark/run.sh` —— 冒烟 → 并发容量（10/30/50 VU × 10 轮）→ 混沌容错（429×3→500×2→成功）→ 真流式 A/B（true/false 重启切换）→ 缓存收益 → 自动生成 `docs/benchmark-report.md`（第 7 节含 mermaid 并发曲线图）；TTFT 由独立 SSE 探针测量
+- **Eval**：`aether-app/src/test/resources/eval/cases.jsonl` 四类 50 例；确定性模式（mock 决策核，CI 可跑）+ 真实模式（`AETHER_EVAL_MODE=real` + `DEEPSEEK_API_KEY`）；A/B 演示注入"工具描述回归"并捕获通过率下降
+- **指标**：`aether.cache.llm.hitrate` / `aether.compaction.tokens.pre|post|count` / `aether.model.recovery.branch{branch=}` / `aether.model.fallback.switches` / `aether.agent.plan.replans|completions|reflections.total`（`/actuator/prometheus`）
+- **P2**：水平扩展（[设计文档](docs/horizontal-scaling-design.md) + 双实例压测 1.78x PASS）、编排策略化重构、PlanActAgent 重规划/反思、日志排障手册——详见 [docs/p2-roadmap-delivery.md](docs/p2-roadmap-delivery.md)

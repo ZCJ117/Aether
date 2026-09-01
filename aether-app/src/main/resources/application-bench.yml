@@ -1,0 +1,56 @@
+# ============================================================
+# P0(1.5): 压测 profile —— 与 docker-compose-bench.yml 配套
+# 本地无 Docker 验证：SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/aether \
+#   SPRING_CONFIG_IMPORT='optional:classpath:agent/bench-agents.yml,file:benchmark/local/bench-local.yml'
+# （bench-local.yml 将 ai-api.base-url 覆写为 http://localhost:8011）
+# ============================================================
+server:
+  port: 8091
+
+spring:
+  config:
+    import:
+      - classpath:agent/bench-agents.yml
+  datasource:
+    username: ${DB_USER:aether}
+    password: ${DB_PASSWORD:123456}
+    url: jdbc:postgresql://${DB_HOST:postgres}:5432/${DB_NAME:aether}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: Aether_Bench_HikariCP
+      minimum-idle: 5
+      maximum-pool-size: 25
+      connection-timeout: 30000
+  sql:
+    init:
+      mode: always
+
+aether:
+  # 压测面聚焦 模型链路+会话持久化：记忆/限流关闭
+  memory:
+    enabled: false
+  security:
+    rate-limit:
+      enabled: false
+    jwt:
+      secret: ${JWT_SECRET:aether-bench-jwt-secret-key-min-32-chars!}
+  session:
+    persistence: true
+  # mock-llm 是内网地址，必须放行 SSRF 保护
+  ssrf:
+    allow-private-urls: true
+  model:
+    invoker:
+      # 真流式 A/B：compose/run.sh 通过 AETHER_MODEL_INVOKER_TRUE_STREAMING 重启切换
+      true-streaming: ${AETHER_MODEL_INVOKER_TRUE_STREAMING:true}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    root: WARN
+    cn.zcj.aether: WARN

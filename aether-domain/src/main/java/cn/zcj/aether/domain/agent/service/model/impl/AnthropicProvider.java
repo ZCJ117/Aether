@@ -3,7 +3,6 @@ package cn.zcj.aether.domain.agent.service.model.impl;
 import cn.zcj.aether.domain.agent.service.model.ModelConfig;
 import cn.zcj.aether.domain.agent.service.model.ModelProvider;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -19,6 +18,24 @@ import org.springframework.stereotype.Component;
 @Component
 public class AnthropicProvider implements ModelProvider {
 
+    private final int connectTimeoutMs;
+    private final int readTimeoutMs;
+
+    public AnthropicProvider(
+            @org.springframework.beans.factory.annotation.Value("${aether.model.invoker.connect-timeout-ms:30000}") int connectTimeoutMs,
+            @org.springframework.beans.factory.annotation.Value("${aether.model.invoker.read-timeout-ms:120000}") int readTimeoutMs) {
+        this.connectTimeoutMs = connectTimeoutMs;
+        this.readTimeoutMs = readTimeoutMs;
+    }
+
+    @Override
+    public int connectTimeoutMs() { return connectTimeoutMs; }
+    @Override
+    public int readTimeoutMs() { return readTimeoutMs; }
+
+    @Override
+    public String defaultCompletionsPath() { return "v1/messages"; }
+
     @Override
     public String providerName() { return "anthropic"; }
 
@@ -33,12 +50,8 @@ public class AnthropicProvider implements ModelProvider {
 
     @Override
     public ChatModel createChatModel(ModelConfig config) {
-        OpenAiApi openAiApi = OpenAiApi.builder()
-            .baseUrl(config.getBaseUrl())
-            .apiKey(config.getApiKey())
-            .completionsPath(StringUtils.isNotBlank(config.getCompletionsPath())
-                ? config.getCompletionsPath() : "v1/messages")
-            .build();
+        // O12: 统一走 buildOpenAiApi（RestClient/WebClient 双通道显式超时）
+        OpenAiApi openAiApi = buildOpenAiApi(config);
 
         ChatModel chatModel = OpenAiChatModel.builder()
             .openAiApi(openAiApi)
@@ -47,7 +60,8 @@ public class AnthropicProvider implements ModelProvider {
                 .build())
             .build();
 
-        log.info("AnthropicProvider 创建 ChatModel: model={}, baseUrl={}", config.getModelId(), config.getBaseUrl());
+        log.info("AnthropicProvider 创建 ChatModel: model={}, baseUrl={} (connect={}ms, read={}ms)",
+                config.getModelId(), config.getBaseUrl(), connectTimeoutMs, readTimeoutMs);
         return chatModel;
     }
 }

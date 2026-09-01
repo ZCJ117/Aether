@@ -5,8 +5,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -27,16 +27,23 @@ public class StaleDelegationScanner {
     private final Duration staleTimeout;
     private final long scanIntervalMs;
     private final ScheduledExecutorService scheduler;
+    /** 是否为自建调度器：自建才由本类关闭；注入的共享 scheduledPool 由容器统一关闭。 */
+    private final boolean ownsScheduler;
 
-    /** Spring 构造。 */
+    /** Spring 构造：注入共享 scheduledPool（P0-1 统一线程资源管理）。 */
     @Autowired
     public StaleDelegationScanner(SubagentLifecycleService lifecycle,
             @Value("${aether.delegation.stale-timeout:PT10M}") String staleTimeout,
-            @Value("${aether.delegation.stale-scan-interval-ms:60000}") long scanIntervalMs) {
-        this(lifecycle, Duration.parse(staleTimeout), scanIntervalMs);
+            @Value("${aether.delegation.stale-scan-interval-ms:60000}") long scanIntervalMs,
+            @org.springframework.beans.factory.annotation.Qualifier("scheduledPool") ScheduledExecutorService scheduler) {
+        this.lifecycle = lifecycle;
+        this.staleTimeout = Duration.parse(staleTimeout);
+        this.scanIntervalMs = scanIntervalMs;
+        this.scheduler = scheduler;
+        this.ownsScheduler = false;
     }
 
-    /** 测试构造：不启动 Spring。 */
+    /** 测试构造：不启动 Spring，自建单线程调度器。 */
     StaleDelegationScanner(SubagentLifecycleService lifecycle, Duration staleTimeout, long scanIntervalMs) {
         this.lifecycle = lifecycle;
         this.staleTimeout = staleTimeout;
@@ -46,6 +53,7 @@ public class StaleDelegationScanner {
             t.setDaemon(true);
             return t;
         });
+        this.ownsScheduler = true;
     }
 
     @PostConstruct
@@ -76,6 +84,8 @@ public class StaleDelegationScanner {
 
     @PreDestroy
     public void shutdown() {
-        scheduler.shutdownNow();
+        if (ownsScheduler) {
+            scheduler.shutdownNow();
+        }
     }
 }

@@ -8,7 +8,7 @@ import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 @Slf4j
 @Service

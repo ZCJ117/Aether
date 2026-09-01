@@ -1,0 +1,37 @@
+# ============================================================
+# P1(3.3): Prometheus 抓取配置 —— aether 应用指标 + 系统指标
+# 启动：docker compose -f docker/docker-compose-fullstack.yml up -d prometheus
+# ============================================================
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: aether-local
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # Aether 主应用：Spring Boot Actuator 指标端点
+  # （Agent 业务指标 / JVM / Hikari / Tomcat / 线程池 / 限流 / Kafka 消费 lag）
+  - job_name: aether
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["aether:8091"]
+        labels:
+          service: aether-agent
+
+  # 主机系统指标（CPU/内存/磁盘/网络）
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Prometheus 自监控
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

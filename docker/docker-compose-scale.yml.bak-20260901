@@ -1,0 +1,96 @@
+﻿# ============================================================
+# P2(1.4) Horizontal scaling demo: shared Redis L2/session state
+#          plus Nginx sessionId-sticky entrypoint.
+# Start: cd aether && docker compose -f docker/docker-compose-scale.yml up -d
+# Verify: curl -s -H "X-Session-Id: demo-session" http://localhost:8090/actuator/health
+# ============================================================
+name: aether-scale
+
+services:
+  aether-1:
+    image: aether:latest
+    ports:
+      - "127.0.0.1:8091:8091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - SPRING_PROFILES_ACTIVE=bench
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/aether
+      - SPRING_DATASOURCE_USERNAME=aether
+      - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD:-aether}
+      - DB_HOST=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-aether}
+      - JWT_SECRET=${JWT_SECRET:-dev-only-jwt-secret-key-min-32-chars!!}
+      - REDIS_HOST=redis
+      - AETHER_LLM_CACHE_REDIS_ENABLED=true
+      - AETHER_SESSION_STORE=postgres
+      - AETHER_SECURITY_RATE_LIMIT_MODE=redis
+    restart: unless-stopped
+
+  aether-2:
+    image: aether:latest
+    ports:
+      - "127.0.0.1:8092:8091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - SPRING_PROFILES_ACTIVE=bench
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/aether
+      - SPRING_DATASOURCE_USERNAME=aether
+      - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD:-aether}
+      - DB_HOST=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-aether}
+      - JWT_SECRET=${JWT_SECRET:-dev-only-jwt-secret-key-min-32-chars!!}
+      - REDIS_HOST=redis
+      - AETHER_LLM_CACHE_REDIS_ENABLED=true
+      - AETHER_SESSION_STORE=postgres
+      - AETHER_SECURITY_RATE_LIMIT_MODE=redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_USER=aether
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-aether}
+      - POSTGRES_DB=aether
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aether -d aether"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - aether-1
+      - aether-2
+    volumes:
+      - ./nginx/aether-scale.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

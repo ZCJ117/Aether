@@ -29,18 +29,33 @@ public class MemoryEmbeddingBackfillRunner {
     private final ObjectProvider<EmbeddingModel> embeddingModelProvider;
     private final MemoryProperties props;
 
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "memory-backfill");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ExecutorService executor;
 
+    /** 测试构造：自建单线程兜底池（不启动 Spring）。 */
     public MemoryEmbeddingBackfillRunner(VectorStore vectorStore,
                                          ObjectProvider<EmbeddingModel> embeddingModelProvider,
                                          MemoryProperties props) {
+        this(vectorStore, embeddingModelProvider, props, defaultExecutor());
+    }
+
+    /** Spring 构造：注入共享 memoryIoPool（P0-1 统一线程资源管理）。 */
+    @org.springframework.beans.factory.annotation.Autowired
+    public MemoryEmbeddingBackfillRunner(VectorStore vectorStore,
+                                         ObjectProvider<EmbeddingModel> embeddingModelProvider,
+                                         MemoryProperties props,
+                                         @org.springframework.beans.factory.annotation.Qualifier("memoryIoPool") ExecutorService executor) {
         this.vectorStore = vectorStore;
         this.embeddingModelProvider = embeddingModelProvider;
         this.props = props;
+        this.executor = executor;
+    }
+
+    private static ExecutorService defaultExecutor() {
+        return Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "memory-backfill");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     @EventListener(ApplicationReadyEvent.class)

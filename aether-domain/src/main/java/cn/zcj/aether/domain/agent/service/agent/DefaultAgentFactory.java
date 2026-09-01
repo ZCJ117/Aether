@@ -7,9 +7,12 @@ import cn.zcj.aether.domain.agent.service.agent.hook.AgentHook;
 import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.impl.PlanActAgent;
 import cn.zcj.aether.domain.agent.service.agent.impl.ReActAgent;
+import cn.zcj.aether.domain.agent.service.agent.observability.AgentMetrics;
+import cn.zcj.aether.domain.agent.service.agent.observability.BackgroundReviewer;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
 import cn.zcj.aether.domain.agent.service.context.TokenBudget;
 import cn.zcj.aether.domain.agent.service.context.TokenEstimator;
+import cn.zcj.aether.domain.agent.observability.ModelCallObservability;
 import cn.zcj.aether.domain.agent.service.curation.CurationPipeline;
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
 import cn.zcj.aether.domain.agent.service.notes.ExternalNotes;
@@ -20,7 +23,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -56,7 +59,15 @@ public class DefaultAgentFactory {
     @Resource
     private HookRegistry hookRegistry;
 
-    /** 工厂注册表：agentType -> AgentFactory */
+    /** P1(1.1): 模型调用等待可观测（actuator 存在时装配，否则 null → Agent 侧 no-op） */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ModelCallObservability modelCallObservability;
+
+    /** O15: 配置/Bean 驱动的类型注册表（优先于内置工厂） */
+    @Resource
+    private AgentTypeRegistry agentTypeRegistry;
+
+    /** 内置工厂注册表：agentType -> AgentFactory */
     private final Map<String, AgentFactory> factoryMap = new ConcurrentHashMap<>();
 
     public DefaultAgentFactory() {
@@ -80,6 +91,8 @@ public class DefaultAgentFactory {
                 if (hookRegistry != null) {
                     agent.setHookRegistry(hookRegistry);
                 }
+                // P1(1.1): 注入模型等待可观测（waiting-threads gauge + 超时计数）
+                agent.setModelCallObservability(modelCallObservability);
                 return agent;
             }
         });
@@ -93,9 +106,11 @@ public class DefaultAgentFactory {
                 ChatModel chatModel = resolveChatModel(config);
                 AgentEventPublisher publisher = resolveBean(AgentEventPublisher.class);
                 CheckpointCollector collector = resolveBean(CheckpointCollector.class);
+                BackgroundReviewer reviewer = resolveBean(BackgroundReviewer.class);
+                AgentMetrics metrics = resolveBean(AgentMetrics.class);
                 return new PlanActAgent(config, chatModel, modelInvoker,
                         toolExecutor, contextManager, publisher, collector,
-                        createTokenBudget(config), curationPipeline, externalNotes);
+                        createTokenBudget(config), curationPipeline, externalNotes, reviewer, metrics);
             }
         });
     }
@@ -113,9 +128,11 @@ public class DefaultAgentFactory {
      */
     public Agent create(AgentConfig config) {
         String type = config.getAgentType() != null ? config.getAgentType() : "react";
-        AgentFactory factory = factoryMap.get(type);
+        // O15: 先查 AgentTypeRegistry（Bean/配置驱动，可覆盖内置），回退内置工厂
+        AgentFactory factory = agentTypeRegistry.resolve(type).orElseGet(() -> factoryMap.get(type));
         if (factory == null) {
-            throw new IllegalArgumentException("未知的 Agent 类型: " + type + "，可用: " + factoryMap.keySet());
+            throw new IllegalArgumentException("未知的 Agent 类型: " + type
+                    + "，可用: " + agentTypeRegistry.registeredTypes());
         }
         return factory.create(config);
     }

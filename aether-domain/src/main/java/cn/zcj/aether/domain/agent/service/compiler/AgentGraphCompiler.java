@@ -8,7 +8,7 @@ import cn.zcj.aether.domain.agent.model.valobj.AiAgentConfigTableVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.stream.Collectors;
@@ -36,6 +36,9 @@ public class AgentGraphCompiler {
 
     @Resource
     private HookConfigLoader hookConfigLoader;
+
+    @Resource
+    private cn.zcj.aether.domain.agent.service.tool.ToolRegistry toolRegistry;
 
     public AgentGraph compile(AiAgentConfigTableVO config) {
         validateConfigSchema(config);
@@ -118,11 +121,27 @@ public class AgentGraphCompiler {
     /**
      * 编译 Agent 的工具名列表。
      * null/空 = 全部工具（语义："*"）。
+     *
+     * <p>O15: 编译时接入 {@link ToolDescriptionValidator}（原孤儿构件），
+     * 对已在 ToolRegistry 注册的工具描述做模糊词校验；
+     * 未注册（如 MCP 动态工具）跳过。违规降级为 WARN，不阻断编译。
      */
     private List<String> compileToolNames(AiAgentConfigTableVO.Module.Agent agentConfig) {
         List<String> rawNames = agentConfig.getToolNames();
         if (rawNames == null || rawNames.isEmpty()) {
             return List.of("*");
+        }
+        for (String name : rawNames) {
+            var tool = toolRegistry != null ? toolRegistry.get(name) : null;
+            if (tool == null) {
+                log.debug("工具 [{}] 未注册（可能为 MCP/Skills 动态工具），跳过描述校验", name);
+                continue;
+            }
+            try {
+                ToolDescriptionValidator.validate(name, tool.description());
+            } catch (AgentCompileException e) {
+                log.warn("工具描述校验未通过（建议精确化描述）: {}", e.getMessage());
+            }
         }
         return List.copyOf(rawNames);
     }
@@ -140,6 +159,8 @@ public class AgentGraphCompiler {
 
             if (type == AgentEdgeType.GRAPHFLOW) {
                 // P1-1: GraphFlow 模式 — 编译 nodes + edges 列表
+                // O19: condition/exitCondition 为外部可控表达式，信任边界 = 仅可信管理员可编辑 ai.agent.config；
+                // 运行期由 ConditionEvaluator 在白名单沙箱内求值（禁 T(...)/new/bean 引用/非白名单方法），fail-closed。
                 if (wf.getEdges() != null) {
                     List<AgentEdge> flowEdges = wf.getEdges().stream()
                         .map(yamlEdge -> AgentEdge.builder()

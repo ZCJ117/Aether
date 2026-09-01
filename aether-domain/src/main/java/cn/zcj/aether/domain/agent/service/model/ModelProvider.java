@@ -38,25 +38,38 @@ public interface ModelProvider {
     ChatModel createChatModel(ModelConfig config);
 
     /**
-     * 构建带显式 HTTP 超时的 {@link OpenAiApi}。
-     *
-     * <p>关键：模型服务端不响应时，底层同步阻塞的 HTTP 调用会无限挂起，
-     * 前端表现为"思考中"卡死（Reactor 的 block(timeout) 无法中断同线程阻塞调用）。
-     * 所有 OpenAiApi 构造（含带工具的路径）必须走此方法，确保有连接/读取超时兜底。</p>
+     * O12: 超时钩子。默认常量；Provider 可覆盖为从 aether.model.invoker.* 读取的配置值。
+     */
+    default int connectTimeoutMs() { return CONNECT_TIMEOUT_MS; }
+    default int readTimeoutMs() { return READ_TIMEOUT_MS; }
+
+    /**
+     * O12: 可测试接缝 —— 构造带显式超时的 RestClient 请求工厂。
+     */
+    default SimpleClientHttpRequestFactory httpRequestFactory(int connectTimeoutMs, int readTimeoutMs) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(connectTimeoutMs);
+        factory.setReadTimeout(readTimeoutMs);
+        return factory;
+    }
+
+    /**
+     * 构建带显式 HTTP 超时的 {@link OpenAiApi}（使用 Provider 超时钩子）。
      */
     default OpenAiApi buildOpenAiApi(ModelConfig config) {
-        // 两条 HTTP 通道都必须配置显式超时：
-        // 1. RestClient —— OpenAiChatModel.call() 非流式路径（ResilientChatModelExecutor 包装）
-        // 2. WebClient —— OpenAiChatModel.stream() 流式路径（ReActAgent 经 ModelInvoker 实际使用）
-        //    流式路径此前无任何超时：模型服务端不响应时无限挂起 → 前端"思考中"永久卡死。
-        SimpleClientHttpRequestFactory httpFactory = new SimpleClientHttpRequestFactory();
-        httpFactory.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        httpFactory.setReadTimeout(READ_TIMEOUT_MS);
+        return buildOpenAiApi(config, connectTimeoutMs(), readTimeoutMs());
+    }
+
+    /**
+     * 构建带显式 HTTP 超时的 {@link OpenAiApi}（参数化）。
+     */
+    default OpenAiApi buildOpenAiApi(ModelConfig config, int connectTimeoutMs, int readTimeoutMs) {
+        SimpleClientHttpRequestFactory httpFactory = httpRequestFactory(connectTimeoutMs, readTimeoutMs);
         RestClient.Builder restClientBuilder = RestClient.builder().requestFactory(httpFactory);
 
         HttpClient nettyHttpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS)
-                .responseTimeout(Duration.ofMillis(READ_TIMEOUT_MS));
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, connectTimeoutMs)
+                .responseTimeout(Duration.ofMillis(readTimeoutMs));
         WebClient.Builder webClientBuilder = WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(nettyHttpClient));
 

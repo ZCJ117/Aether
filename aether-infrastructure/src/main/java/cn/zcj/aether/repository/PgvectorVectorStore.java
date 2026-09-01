@@ -4,6 +4,7 @@ import cn.zcj.aether.domain.agent.service.memory.MemoryRecord;
 import cn.zcj.aether.domain.agent.service.memory.MemoryScope;
 import cn.zcj.aether.domain.agent.service.memory.MemorySearchResult;
 import cn.zcj.aether.domain.agent.service.memory.VectorStore;
+import cn.zcj.aether.domain.agent.service.retrieval.rag.CjkBigram;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -12,8 +13,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.Resource;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Resource;
 import javax.sql.DataSource;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -24,7 +25,6 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -69,10 +69,13 @@ public class PgvectorVectorStore implements VectorStore {
     private int vectorDimension = DEFAULT_DIMENSION;
 
     private final JdbcTemplate jdbc;
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    /** P0-1 统一线程资源管理：注入共享 memoryIoPool（aether.thread-pools.memory-io，默认 2/4/queue500）。 */
+    private final ExecutorService executor;
 
-    public PgvectorVectorStore(DataSource dataSource) {
+    public PgvectorVectorStore(DataSource dataSource,
+            @org.springframework.beans.factory.annotation.Qualifier("memoryIoPool") ExecutorService executor) {
         this.jdbc = new JdbcTemplate(dataSource);
+        this.executor = executor;
         log.info("PgvectorVectorStore 已初始化，向量维度: {}", DEFAULT_DIMENSION);
     }
 
@@ -86,18 +89,22 @@ public class PgvectorVectorStore implements VectorStore {
                 String metadataJson = record.getMetadata() != null
                     ? objectMapper.writeValueAsString(record.getMetadata()) : "{}";
 
-                // 当 embedding 为 null 时直接存 TEXT，不依赖 pgvector 扩展
+                // pgvector 1.x 要求显式把 JDBC 字符串参数转换为 vector 类型；
+                // NULL 会跳过转换语义，仍可安全插入。
                 jdbc.update(conn -> {
                     PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO aether_memories (id, content, embedding, scope_path, scope_private, " +
-                        "   categories, importance, metadata, source, created_at, last_accessed_at, access_count) " +
-                        "VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?) " +
+                        "   categories, importance, metadata, source, created_at, last_accessed_at, access_count, content_bigram) " +
+                        "VALUES (?, ?, ?::vector, ?, ?, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?, ?) " +
                         "ON CONFLICT (id) DO UPDATE SET " +
                         "   content = EXCLUDED.content, " +
                         "   embedding = EXCLUDED.embedding, " +
                         "   importance = EXCLUDED.importance, " +
                         "   last_accessed_at = EXCLUDED.last_accessed_at, " +
-                        "   access_count = aether_memories.access_count + 1");
+                        "   access_count = aether_memories.access_count + 1, " +
+                        "   content_bigram = EXCLUDED.content_bigram, " +
+                        // P1(4.3): 复活 —— 归档记忆被再次写入时重新进入召回
+                        "   archived = false");
                     ps.setString(1, id);
                     ps.setString(2, record.getContent());
                     ps.setString(3, embeddingStr);
@@ -114,6 +121,8 @@ public class PgvectorVectorStore implements VectorStore {
                         ? java.sql.Timestamp.from(record.getLastAccessedAt())
                         : new java.sql.Timestamp(System.currentTimeMillis()));
                     ps.setInt(12, record.getAccessCount());
+                    // P1(4.2): 中文词法召回支撑 —— content bigram（GIN tsvector 索引）
+                    ps.setString(13, CjkBigram.bigram(record.getContent()));
                     return ps;
                 });
             } catch (Exception e) {
@@ -128,12 +137,14 @@ public class PgvectorVectorStore implements VectorStore {
         return CompletableFuture.supplyAsync(() -> {
             // 无效查询向量（null/全零）→ 回退按最后访问时间排序
             if (isInvalidQueryVector(queryVector)) {
-                return searchByRecency(topK, scopes);
+                List<MemorySearchResult> results = searchByRecency(topK, scopes);
+                touch(results, false);
+                return results;
             }
             try {
                 String sql = buildCosineSearchSql(scopes);
                 String queryVecStr = vectorToDbString(queryVector);
-                return jdbc.query(sql, ps -> {
+                List<MemorySearchResult> results = jdbc.query(sql, ps -> {
                     int idx = 1;
                     ps.setString(idx++, queryVecStr);
                     if (scopes != null) {
@@ -144,10 +155,15 @@ public class PgvectorVectorStore implements VectorStore {
                     ps.setString(idx++, queryVecStr);
                     ps.setInt(idx, topK);
                 }, this::mapRow);
+                // P1(4.3): 访问回填 —— access_count/last_accessed_at 是遗忘曲线的输入信号
+                touch(results, true);
+                return results;
             } catch (Exception e) {
                 log.warn("Pgvector 余弦搜索失败（列可能未迁移为 vector），回退时间排序: {}",
                     e.getMessage());
-                return searchByRecency(topK, scopes);
+                List<MemorySearchResult> results = searchByRecency(topK, scopes);
+                touch(results, false);
+                return results;
             }
         }, executor);
     }
@@ -209,7 +225,7 @@ public class PgvectorVectorStore implements VectorStore {
         return CompletableFuture.runAsync(() -> {
             try {
                 if (vector == null || vector.length == 0) return;
-                jdbc.update("UPDATE aether_memories SET embedding = ? WHERE id = ?",
+                    jdbc.update("UPDATE aether_memories SET embedding = ?::vector WHERE id = ?",
                     vectorToDbString(vector), id);
             } catch (Exception e) {
                 log.warn("回填向量更新失败: id={}, error={}", id, e.getMessage());
@@ -232,10 +248,11 @@ public class PgvectorVectorStore implements VectorStore {
             }
             scopeFilter.append(")");
         }
+        // P1(4.3): archived=false —— 遗忘曲线归档的记忆不再进入召回
         return "SELECT id, content, scope_path, scope_private, categories, importance, source, " +
             "created_at, last_accessed_at, access_count, " +
             "1 - (embedding <=> ?::vector) AS similarity " +
-            "FROM aether_memories WHERE embedding IS NOT NULL" + scopeFilter +
+            "FROM aether_memories WHERE embedding IS NOT NULL AND archived = false" + scopeFilter +
             " ORDER BY embedding <=> ?::vector LIMIT ?";
     }
 
@@ -243,15 +260,16 @@ public class PgvectorVectorStore implements VectorStore {
     private List<MemorySearchResult> searchByRecency(int topK, List<MemoryScope> scopes) {
         StringBuilder scopeFilter = new StringBuilder();
         if (scopes != null && !scopes.isEmpty()) {
-            scopeFilter.append(" WHERE ");
+            scopeFilter.append(" AND (");
             for (int i = 0; i < scopes.size(); i++) {
                 if (i > 0) scopeFilter.append(" OR ");
                 scopeFilter.append("scope_path LIKE ?");
             }
+            scopeFilter.append(")");
         }
         String sql = "SELECT id, content, scope_path, scope_private, categories, importance, source, " +
             "created_at, last_accessed_at, access_count, 0.5 AS similarity " +
-            "FROM aether_memories" + scopeFilter +
+            "FROM aether_memories WHERE archived = false" + scopeFilter +
             " ORDER BY last_accessed_at DESC LIMIT ?";
         return jdbc.query(sql, ps -> {
             int idx = 1;
@@ -282,6 +300,36 @@ public class PgvectorVectorStore implements VectorStore {
             log.info("HNSW 向量索引已就绪");
         } catch (Exception e) {
             log.warn("HNSW 索引创建失败（需 embedding 列为 vector 类型）: {}", e.getMessage());
+        }
+        // P1(4.3): 生命周期列自愈（archived 软删列 + 活跃扫描索引），幂等可重复执行
+        try {
+            jdbc.execute("ALTER TABLE aether_memories ADD COLUMN IF NOT EXISTS archived " +
+                "BOOLEAN NOT NULL DEFAULT false");
+            jdbc.execute("CREATE INDEX IF NOT EXISTS idx_memories_active " +
+                "ON aether_memories (archived, last_accessed_at DESC)");
+            log.info("记忆生命周期列（archived）已就绪");
+        } catch (Exception e) {
+            log.warn("记忆生命周期列创建失败: {}", e.getMessage());
+        }
+    }
+
+    /** P1(4.3): 命中记忆访问回填（access_count/last_accessed_at 是遗忘曲线输入信号；best-effort）。 */
+    private void touch(List<MemorySearchResult> results, boolean refreshLastAccessed) {
+        if (results == null || results.isEmpty()) {
+            return;
+        }
+        try {
+            String[] ids = results.stream().map(r -> r.getRecord().getId()).toArray(String[]::new);
+            jdbc.update((java.sql.Connection conn) -> {
+                java.sql.PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE aether_memories SET access_count = access_count + 1" +
+                    (refreshLastAccessed ? ", last_accessed_at = NOW()" : "") +
+                    " WHERE id = ANY(?::text[])");
+                ps.setArray(1, conn.createArrayOf("text", ids));
+                return ps;
+            });
+        } catch (Exception e) {
+            log.debug("记忆访问回填失败（忽略）: {}", e.getMessage());
         }
     }
 

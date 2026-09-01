@@ -1,0 +1,30 @@
+{"id": 1, "theme": "ratelimit", "query": "帮我看看限流那个怎么弄的", "relevantDocs": ["分布式限流采用 Redis 令牌桶算法原子扣减"], "note": "口语化→改写：限流 令牌桶 Redis"}
+{"id": 2, "theme": "ratelimit", "query": "Redis 令牌桶 限流算法", "relevantDocs": ["分布式限流采用 Redis 令牌桶算法原子扣减"]}
+{"id": 3, "theme": "ratelimit", "query": "集群限流 降级", "relevantDocs": ["集群限流阈值配置与降级策略说明"]}
+{"id": 4, "theme": "ratelimit", "query": "登录接口防暴力破解怎么配", "relevantDocs": ["限流中间件按客户端 IP 计数固定窗口"]}
+{"id": 5, "theme": "ratelimit", "query": "限流触发太多说明什么", "relevantDocs": ["集群限流阈值配置与降级策略说明"]}
+{"id": 6, "theme": "rag", "query": "检索重排那块咋做的", "relevantDocs": ["RAG 三级检索管道重排模型召回融合"]}
+{"id": 7, "theme": "rag", "query": "同义变体 召回", "relevantDocs": ["查询改写生成同义变体扩展召回"]}
+{"id": 8, "theme": "rag", "query": "pgvector 向量索引", "relevantDocs": ["pgvector HNSW 索引余弦相似度检索"]}
+{"id": 9, "theme": "rag", "query": "中文分词 全文检索", "relevantDocs": ["查询改写生成同义变体扩展召回"], "note": "bigram 方案"}
+{"id": 10, "theme": "rag", "query": "RRF 融合排序", "relevantDocs": ["RAG 三级检索管道重排模型召回融合"]}
+{"id": 11, "theme": "memory", "query": "记忆衰减怎么算保留分", "relevantDocs": ["记忆衰减遗忘曲线保留分归档"]}
+{"id": 12, "theme": "memory", "query": "用户偏好改了旧记忆咋办", "relevantDocs": ["记忆衰减遗忘曲线保留分归档"], "note": "冲突合并场景"}
+{"id": 13, "theme": "memory", "query": "写入门槛 importance", "relevantDocs": ["记忆衰减遗忘曲线保留分归档"]}
+{"id": 14, "theme": "mq", "query": "审计日志削峰", "relevantDocs": ["审计日志批量写入削峰解耦"]}
+{"id": 15, "theme": "mq", "query": "消息重复消费怎么办", "relevantDocs": ["Kafka 消费者手动确认幂等去重死信队列"]}
+{"id": 16, "theme": "mq", "query": "死信队列 DLT", "relevantDocs": ["Kafka 消费者手动确认幂等去重死信队列"]}
+{"id": 17, "theme": "mq", "query": "会话内消息顺序", "relevantDocs": ["消息按会话 ID 分区保证有序"]}
+{"id": 18, "theme": "mq", "query": "发送失败消息会丢吗", "relevantDocs": ["生产端发送失败降级直写数据库"]}
+{"id": 19, "theme": "mq", "query": "统计聚合仪表盘", "relevantDocs": ["统计聚合消费端增量更新仪表盘"]}
+{"id": 20, "theme": "thread", "query": "会话存储序列化格式", "relevantDocs": ["会话存储使用 PostgreSQL JSONB 序列化"]}
+{"id": 21, "theme": "thread", "query": "线程池怎么管理的", "relevantDocs": ["线程池统一注册管理有界队列"]}
+{"id": 22, "theme": "thread", "query": "并发会话上限多少", "relevantDocs": ["线程池统一注册管理有界队列"]}
+{"id": 23, "theme": "monitor", "query": "告警规则有哪些", "relevantDocs": ["监控告警规则指标抓取面板"]}
+{"id": 24, "theme": "monitor", "query": "队列饱和度告警", "relevantDocs": ["线程池统一注册管理有界队列"]}
+{"id": 25, "theme": "rag", "query": "重排模型部署", "relevantDocs": ["RAG 三级检索管道重排模型召回融合"]}
+{"id": 26, "theme": "mq", "query": "消费延迟怎么监控", "relevantDocs": ["监控告警规则指标抓取面板"]}
+{"id": 27, "theme": "memory", "query": "归档记忆还能恢复吗", "relevantDocs": ["记忆衰减遗忘曲线保留分归档"]}
+{"id": 28, "theme": "thread", "query": "模型等待线程是什么", "relevantDocs": ["线程池统一注册管理有界队列"]}
+{"id": 29, "theme": "ratelimit", "query": "X-RateLimit 头在哪加的", "relevantDocs": ["限流中间件按客户端 IP 计数固定窗口"]}
+{"id": 30, "theme": "rag", "query": "混合召回为啥比纯向量好", "relevantDocs": ["pgvector HNSW 索引余弦相似度检索"]}

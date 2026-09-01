@@ -1,6 +1,11 @@
 package cn.zcj.aether.domain.agent.service.model;
 
+import cn.zcj.aether.domain.agent.service.model.impl.AnthropicProvider;
+import cn.zcj.aether.domain.agent.service.model.impl.DashScopeProvider;
+import cn.zcj.aether.domain.agent.service.model.impl.OpenAIProvider;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -75,5 +80,59 @@ class ModelProviderTest {
         String str = config.toString();
         assertTrue(str.contains("gpt-4o"));
         // apiKey 应该在 toString 中隐藏（取决于 Lombok @Value 实现）
+    }
+
+    private ModelConfig sampleConfig() {
+        return ModelConfig.builder()
+                .modelId("claude-sonnet-4-6")
+                .baseUrl("https://api.anthropic.com")
+                .apiKey("sk-test")
+                .build();
+    }
+
+    @Test
+    void httpRequestFactorySeamAppliesTimeouts() throws Exception {
+        OpenAIProvider provider = new OpenAIProvider(1111, 2222);
+        SimpleClientHttpRequestFactory f = provider.httpRequestFactory(1111, 2222);
+        assertEquals(1111, intField(f, "connectTimeout"));
+        assertEquals(2222, intField(f, "readTimeout"));
+    }
+
+    /** 读取 SimpleClientHttpRequestFactory 私有 int 字段（Spring 6.2 无 getter） */
+    private static int intField(Object target, String name) throws Exception {
+        java.lang.reflect.Field f = target.getClass().getDeclaredField(name);
+        f.setAccessible(true);
+        return f.getInt(target);
+    }
+
+    @Test
+    void buildOpenAiApiWithTimeoutsReturnsApi() {
+        OpenAIProvider provider = new OpenAIProvider(1111, 2222);
+        OpenAiApi api = provider.buildOpenAiApi(sampleConfig(), 1111, 2222);
+        assertNotNull(api);
+    }
+
+    @Test
+    void anthropicProviderUsesConfiguredTimeouts() {
+        AnthropicProvider p = new AnthropicProvider(1111, 2222);
+        assertEquals(1111, p.connectTimeoutMs());
+        assertEquals(2222, p.readTimeoutMs());
+        assertNotNull(p.createChatModel(sampleConfig()));
+    }
+
+    @Test
+    void dashScopeProviderUsesConfiguredTimeouts() {
+        DashScopeProvider p = new DashScopeProvider(1111, 2222);
+        assertEquals(1111, p.connectTimeoutMs());
+        assertEquals(2222, p.readTimeoutMs());
+        assertNotNull(p.createChatModel(sampleConfig()));
+    }
+
+    @Test
+    void openAiProviderUsesConfiguredTimeouts() {
+        OpenAIProvider p = new OpenAIProvider(1111, 2222);
+        assertEquals(1111, p.connectTimeoutMs());
+        assertEquals(2222, p.readTimeoutMs());
+        assertNotNull(p.createChatModel(sampleConfig()));
     }
 }

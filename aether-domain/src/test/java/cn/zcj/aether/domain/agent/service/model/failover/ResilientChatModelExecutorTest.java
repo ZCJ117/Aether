@@ -12,6 +12,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -154,5 +155,49 @@ class ResilientChatModelExecutorTest {
 
         assertEquals("ok", resp.getResult().getOutput().getText());
         verify(chatModel, times(2)).call(any(Prompt.class));
+    }
+
+    @Test
+    void timeoutReconnectsWithFixedOneSecondThenSuccess() {
+        when(chatModel.call(any(Prompt.class)))
+                .thenThrow(new RuntimeException("read timeout"))
+                .thenReturn(ok());
+        when(classifier.classify(any(), any(), any())).thenReturn(
+                ClassifiedError.of(FailoverReason.TIMEOUT, null, "openai", "gpt-4o", "timeout"));
+        ModelConfig cfg = ModelConfig.builder().modelId("gpt-4o").apiKey("key1").build();
+
+        ResilientChatModelExecutor executor = build(cfg, List.of());
+        List<Double> backoffs = new ArrayList<>();
+        executor.setBackoffWaiter(backoffs::add);
+
+        ChatResponse resp = executor.call(new Prompt("hi"));
+
+        assertEquals("ok", resp.getResult().getOutput().getText());
+        verify(chatModel, times(2)).call(any(Prompt.class));
+        // TIMEOUT_RECONNECT 固定 1s 重建连接等待
+        assertEquals(List.of(1.0), backoffs);
+    }
+
+    @Test
+    void timeoutExhaustedFallsBackThenTerminates() {
+        when(chatModel.call(any(Prompt.class))).thenThrow(new RuntimeException("read timeout"));
+        when(classifier.classify(any(), any(), any())).thenReturn(
+                ClassifiedError.of(FailoverReason.TIMEOUT, null, "openai", "gpt-4o", "timeout"));
+        // fallback 路由也超时：重建连接上限(maxAttempts=1)用尽 → fallback → 其模型同样超时 → 终止
+        ModelProvider fbProvider = mock(ModelProvider.class);
+        when(fbProvider.providerName()).thenReturn("anthropic");
+        ChatModel fbModel = mock(ChatModel.class);
+        when(fbModel.call(any(Prompt.class))).thenThrow(new RuntimeException("still timeout"));
+        when(fbProvider.createChatModel(any())).thenReturn(fbModel);
+        when(registry.resolve("claude-sonnet")).thenReturn(fbProvider);
+
+        ModelRoute fb = ModelRoute.builder().modelId("claude-sonnet").provider("anthropic").build();
+        ModelConfig cfg = ModelConfig.builder().modelId("gpt-4o").apiKey("key1").maxAttempts(1).build();
+
+        ResilientChatModelExecutor executor = build(cfg, List.of(fb));
+        executor.setBackoffWaiter(sec -> { });
+
+        assertThrows(ResilientChatModelExecutor.ResilientCallException.class,
+                () -> executor.call(new Prompt("hi")));
     }
 }

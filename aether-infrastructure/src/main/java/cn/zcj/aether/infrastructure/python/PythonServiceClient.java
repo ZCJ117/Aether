@@ -106,4 +106,22 @@ public class PythonServiceClient implements PythonServicePort {
         body.set("content", content);
         return post(docUrl, "/create", body);
     }
+
+    // ── RAG Rerank（P1-4.2）────────────────────────────────────
+
+    @Override
+    public JsonNode rerank(String query, java.util.List<String> documents) {
+        if (query == null || query.isBlank() || documents == null || documents.isEmpty()) {
+            return null;
+        }
+        try {
+            ObjectNode body = mapper.createObjectNode()
+                    .put("query", query);
+            body.set("documents", mapper.valueToTree(documents));
+            return post(docUrl, "/rerank", body);
+        } catch (Exception e) {
+            log.warn("Python rerank 调用失败（调用方降级原序）: {}", e.getMessage());
+            return null;
+        }
+    }
 }

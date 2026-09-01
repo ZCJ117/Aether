@@ -1,13 +1,15 @@
 package cn.zcj.aether.domain.agent.service.tool;
 
 import cn.zcj.aether.domain.agent.service.agent.checkpoint.CheckpointCollector;
+import cn.zcj.aether.domain.agent.service.agent.permission.DangerousToolRule;
+import cn.zcj.aether.domain.agent.service.agent.permission.PermissionContext;
 import cn.zcj.aether.domain.agent.service.tool.validation.SchemaHintBuilder;
 import cn.zcj.aether.domain.agent.service.tool.validation.ToolInputValidator;
 import cn.zcj.aether.domain.agent.service.tool.validation.ValidationResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +46,13 @@ public class ToolExecutor {
 
     @Resource
     private ToolRegistry toolRegistry;
+
+    /**
+     * O14: 危险工具硬封锁规则（关卡 2 二次校验，工具执行前无条件执行）。
+     * 字段注入（可空）：测试直 new 时不注入则跳过该关卡。
+     */
+    @Resource
+    private DangerousToolRule dangerousToolRule;
 
     /**
      * P0-1：有界线程池，替代原 {@code Executors.newCachedThreadPool()}。
@@ -158,24 +167,34 @@ public class ToolExecutor {
     }
 
     private List<ToolResult> executeConcurrently(List<ToolCallRequest> requests, ToolContext ctx) {
+        return executeConcurrently(requests, ctx, 60);
+    }
+
+    /** O10: 超时可注入的重载（生产固定 60s；测试可缩短以验证超时配对）。 */
+    List<ToolResult> executeConcurrently(List<ToolCallRequest> requests, ToolContext ctx, long timeoutSeconds) {
         List<CompletableFuture<ToolResult>> futures = requests.stream()
                 .map(req -> CompletableFuture.supplyAsync(() -> executeOne(req, ctx), executor))
                 .toList();
 
-        return futures.stream()
-                .map(f -> {
-                    try {
-                        return f.get(60, TimeUnit.SECONDS);
-                    } catch (TimeoutException e) {
-                        // P0-1：超时使用 TIMEOUT 错误类型
-                        return ToolResult.error("", "",
-                                "Tool timeout: " + e.getMessage(),
-                                ToolResult.ErrorType.TIMEOUT);
-                    } catch (Exception e) {
-                        return ToolResult.error("", "", "Tool execution failed: " + e.getMessage());
-                    }
-                })
-                .toList();
+        // O10: 超时/异常分支必须携带原 toolCallId/toolName——空 ID 回注后无法与
+        // assistant 的 tool_call 配对，会造成模型侧上下文污染
+        List<ToolResult> results = new ArrayList<>(futures.size());
+        for (int i = 0; i < futures.size(); i++) {
+            ToolCallRequest req = requests.get(i);
+            CompletableFuture<ToolResult> f = futures.get(i);
+            try {
+                results.add(f.get(timeoutSeconds, TimeUnit.SECONDS));
+            } catch (TimeoutException e) {
+                // P0-1：超时使用 TIMEOUT 错误类型；O10：携带原 toolCallId/toolName
+                results.add(ToolResult.error(req.toolCallId(), req.toolName(),
+                        "Tool timeout: " + e.getMessage(),
+                        ToolResult.ErrorType.TIMEOUT));
+            } catch (Exception e) {
+                results.add(ToolResult.error(req.toolCallId(), req.toolName(),
+                        "Tool execution failed: " + e.getMessage()));
+            }
+        }
+        return results;
     }
 
     private List<ToolResult> executeSerially(List<ToolCallRequest> requests, ToolContext ctx) {
@@ -221,6 +240,9 @@ public class ToolExecutor {
                         ToolResult.ErrorType.EXECUTION);
             }
 
+            // ====== O9: schema 暴露面可见 ======
+            logEmptySchemaIfNeeded(tool, request.toolName);
+
             // ====== P0-1 关卡 1：JSON Schema 校验 ======
             ValidationResult schemaResult = toolInputValidator.validate(
                     tool.inputSchema(), request.input());
@@ -243,6 +265,20 @@ public class ToolExecutor {
                         "Tool '" + request.toolName + "' custom validation failed: "
                                 + customResult.errorMessage(),
                         ToolResult.ErrorType.VALIDATION);
+            }
+
+            // ====== O14 关卡 2b：危险工具硬封锁（BYPASS 模式亦不可绕过）======
+            if (dangerousToolRule != null && dangerousToolRule.isHardblocked(
+                    PermissionContext.builder()
+                            .toolName(request.toolName)
+                            .toolInput(request.input)
+                            .userId(ctx.userId())
+                            .build())) {
+                return ToolResult.error(
+                        request.toolCallId,
+                        request.toolName,
+                        "Tool hard-blocked: command matches dangerous pattern",
+                        ToolResult.ErrorType.PERMISSION);
             }
 
             if (!tool.checkPermissions(request.input())) {
@@ -271,6 +307,25 @@ public class ToolExecutor {
     }
 
     public record ToolCallRequest(String toolCallId, String toolName, Map<String, Object> input) {}
+
+    /**
+     * O9: inputSchema 为空（无 properties）的工具打 debug 日志——
+     * 使"校验/Schema 提示不生效"的暴露面在日志中可见，便于发现 schema 缺失的适配器。
+     */
+    private void logEmptySchemaIfNeeded(Tool tool, String toolName) {
+        try {
+            Map<String, Object> schema = tool.inputSchema();
+            boolean hasProperties = schema != null
+                    && schema.get("properties") instanceof Map<?, ?> props
+                    && !props.isEmpty();
+            if (!hasProperties) {
+                log.debug("工具 [{}] 未提供有效 inputSchema（O9 暴露面可见）: "
+                        + "JSON Schema 校验与 SchemaHintBuilder 对其不生效", toolName);
+            }
+        } catch (Exception ignored) {
+            // 日志仅为可见性辅助，不影响工具执行
+        }
+    }
 
     // ============ H5-步骤5: 写操作前快照触发 ============
 

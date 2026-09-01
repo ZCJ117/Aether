@@ -41,13 +41,16 @@ public class ToolResult {
      *   <li>PERMISSION — 权限不足，可能需要人工审批</li>
      *   <li>EXECUTION — 工具运行时异常</li>
      *   <li>TIMEOUT — 执行超时</li>
+     *   <li>GUARDRAIL — O10 新增：工具环护栏熔断（同工具连续失败被拒绝执行）</li>
      * </ul>
      */
     public enum ErrorType {
         VALIDATION,
         PERMISSION,
         EXECUTION,
-        TIMEOUT
+        TIMEOUT,
+        /** O10: 工具环护栏熔断（per-tool 连续失败超限，跳过执行并回喂放弃提示）。 */
+        GUARDRAIL
     }
 
     public static ToolResult success(String toolCallId, String toolName, String content) {

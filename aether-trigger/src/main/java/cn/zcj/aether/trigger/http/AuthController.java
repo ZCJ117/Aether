@@ -63,7 +63,7 @@ public class AuthController {
         entity.setPassword(passwordEncoder.encode(request.getPassword()));
         entity.setEmail(request.getEmail());
         entity.setRole(UserRole.VIEWER.getCode());
-        userRepository.save(entity);
+        entity = userRepository.save(entity);
 
         return buildAuthResponse(entity);
     }

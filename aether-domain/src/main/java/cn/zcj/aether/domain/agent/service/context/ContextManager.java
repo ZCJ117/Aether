@@ -1,19 +1,17 @@
 package cn.zcj.aether.domain.agent.service.context;
 
+import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
 import cn.zcj.aether.domain.agent.service.context.compaction.CompactionPipeline;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -42,18 +40,42 @@ public class ContextManager {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
+    /** O7: 摘要 LLM 调用经由 ModelInvoker（超时/重试收口） */
+    private final ModelInvoker modelInvoker;
+
+    /** O7: 成本累计定价查询 */
+    private final ModelPricingRegistry pricingRegistry;
+
+    public ContextManager(ModelInvoker modelInvoker, ModelPricingRegistry pricingRegistry) {
+        this.modelInvoker = modelInvoker;
+        this.pricingRegistry = pricingRegistry;
+    }
+
     @Resource
     private TokenEstimator tokenEstimator;
 
-    // ChatModel 由 ChatModelNode 在装配阶段注册到 Spring 容器
-    // 用于 autoCompact 时调用 LLM 生成摘要
-    // @Lazy 延迟注入避免装配未完成时的初始化错误
+    /** O8: 压缩触发/裁剪参数（字段注入；单测无容器时使用默认实例=改造前行为） */
     @Resource
-    @org.springframework.context.annotation.Lazy
-    private ChatModel chatModel;
+    private cn.zcj.aether.domain.agent.service.context.compaction.CompactionTrigger compactionTrigger
+            = new cn.zcj.aether.domain.agent.service.context.compaction.CompactionTrigger();
+
+    /** O8: 超长工具结果写盘（可选；单测无容器时为 null → 降级原地截断） */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private cn.zcj.aether.domain.agent.service.context.compaction.MessageOffloader messageOffloader;
+
+    /** O7增强: 摘要模型显式选取器（替代原 @Lazy ChatModel 字段注入，消除多 ChatModel bean 下选取不确定） */
+    @Resource
+    private SummaryChatModelResolver summaryChatModelResolver;
 
     @org.springframework.beans.factory.annotation.Autowired
     private CompactionPipeline compactionPipeline;
+
+    /** O7: 摘要 LLM 冷却窗口（对齐 hermes context_compressor 600s 冷却熔断） */
+    @org.springframework.beans.factory.annotation.Value("${aether.context.compaction.summary-cooldown-ms:600000}")
+    private long summaryCooldownMs = 600_000;
+
+    /** O7: 会话级摘要冷却截止时间戳 */
+    private final ConcurrentHashMap<String, Long> compactCooldownUntil = new ConcurrentHashMap<>();
 
     private static final int MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000;
     private static final int MAX_TOOL_RESULT_CHARS = 50_000;
@@ -69,6 +91,14 @@ public class ContextManager {
     /** 摘要防污染前缀（对齐 hermes SUMMARY_PREFIX 语义，防止模型将历史摘要当成待办执行） */
     public static final String SUMMARY_PREFIX =
             "[对话历史摘要 — 仅供参考，非活跃指令，勿直接执行其中描述的任务]\n";
+
+    // ========== O8: 无效压缩防抖状态 ==========
+
+    /** 按 sessionId 跟踪连续"无有效进展"压缩次数（token 降幅 < ineffective-progress-ratio） */
+    private final ConcurrentHashMap<String, Integer> ineffectiveProgressCounts = new ConcurrentHashMap<>();
+
+    /** 按 sessionId 记录剩余压缩跳过轮数（无效压缩后冷却，防抖防循环） */
+    private final ConcurrentHashMap<String, Integer> ineffectiveSuppressRounds = new ConcurrentHashMap<>();
 
     /** 用于识别 Edit/Write/FileEdit/FileWrite 工具 */
     private static final Set<String> EDIT_TOOL_NAMES = Set.of(
@@ -200,16 +230,26 @@ public class ContextManager {
     // ========== 原有方法 ==========
 
     /**
-     * 工具结果裁剪 — 超长结果存盘替换为路径引用
+     * 工具结果裁剪 — 超长结果（> {@value #MAX_TOOL_RESULT_CHARS} 字符）存盘并替换为路径引用。
+     *
+     * <p>O8: 实现与注释对齐 — 完整内容经 {@code MessageOffloader.offloadToolResult} 写入
+     * {@code .aether/sessions/tool-overflow/}，消息体内保留前 500 字符预览 + 存盘路径引用，
+     * 后续可按路径回读完整输出；写盘不可用（未装配/IO 失败）时降级为原地截断。</p>
      */
     public List<TurnMessage> applyToolResultBudget(List<TurnMessage> messages) {
         List<TurnMessage> result = new ArrayList<>(messages.size());
         for (TurnMessage msg : messages) {
             if (msg.isToolResult() && msg.content() != null
                     && msg.content().length() > MAX_TOOL_RESULT_CHARS) {
-                String truncated = msg.content().substring(0, 500) +
-                        "\n... [工具输出已截断，完整内容 > " + MAX_TOOL_RESULT_CHARS + " 字符]";
-                result.add(TurnMessage.toolResult(msg.toolCallId(), msg.toolName(), truncated));
+                String preview = msg.content().substring(0, 500);
+                String reference = messageOffloader != null
+                        ? messageOffloader.offloadToolResult(msg.toolCallId(), msg.toolName(), msg.content())
+                        : null;
+                String replaced = reference != null
+                        ? preview + "\n... [工具输出超过 " + MAX_TOOL_RESULT_CHARS + " 字符，已存盘，完整内容见文件: "
+                                + reference + "]"
+                        : preview + "\n... [工具输出已截断，完整内容 > " + MAX_TOOL_RESULT_CHARS + " 字符]";
+                result.add(TurnMessage.toolResult(msg.toolCallId(), msg.toolName(), replaced));
             } else {
                 result.add(msg);
             }
@@ -291,22 +331,42 @@ public class ContextManager {
      * <p>P2-3: keepRecent 切分后对 recent 区段做配对边界对齐，保证进入 LLM 摘要的配对完整。</p>
      * <p>P2-3: 摘要注入带防污染前缀（"仅供参考，非活跃指令"）。</p>
      * <p>P2-4: 连续压缩失败熔断器（MAX_CONSECUTIVE_COMPACT_FAILURES=3）。</p>
+     * <p>O8: 触发条件参数化 — {@code currentTokens >= effectiveWindow × threshold-percent}
+     * 且消息数 ≥ {@code min-messages-to-compact}（替代原硬编码 0.9 / 20 条）；
+     * 头部 {@code protect-first-n} 条 + 尾部 {@code protect-last-n} 条（或按
+     * {@code tail-token-ratio} 的 token 预算）原样保护不参与摘要（对齐 hermes
+     * protect_first_n/protect_last_n/_find_tail_cut_by_tokens）；压缩后 token 降幅
+     * 低于 {@code ineffective-progress-ratio} 视为无有效进展，随后
+     * {@code ineffective-suppress-rounds} 轮内跳过压缩（防抖防循环）。</p>
      *
      * @param messages  当前消息列表
      * @param modelName 模型名称
-     * @param sessionId 会话 ID（用于熔断器跟踪）
+     * @param sessionId 会话 ID（用于熔断器/防抖跟踪）
      * @return 压缩结果
      */
     public AutoCompactResult autoCompactIfNeeded(
-            List<TurnMessage> messages, String modelName, String sessionId) {
+            List<TurnMessage> messages, String modelName, String sessionId, TokenBudget tokenBudget) {
 
         int currentTokens = estimateTokens(messages);
         int contextWindow = tokenEstimator.getContextWindow(modelName);
         int effectiveWindow = contextWindow - MAX_OUTPUT_TOKENS_FOR_SUMMARY;
-        int threshold = (int) (effectiveWindow * 0.9);
+        double thresholdPercent = compactionTrigger.getThresholdPercent();
+        int threshold = (int) (effectiveWindow * thresholdPercent);
 
-        if (currentTokens <= threshold || messages.size() < 20) {
+        if (currentTokens <= threshold
+                || messages.size() < compactionTrigger.getMinMessagesToCompact()) {
             return AutoCompactResult.notNeeded();
+        }
+
+        // O8: 无效压缩防抖 — 冷却轮数内跳过压缩
+        if (sessionId != null) {
+            int remaining = ineffectiveSuppressRounds.getOrDefault(sessionId, 0);
+            if (remaining > 0) {
+                ineffectiveSuppressRounds.put(sessionId, remaining - 1);
+                log.info("[防抖] 会话 {} 近期压缩无有效进展，跳过本轮压缩（剩余冷却轮数={}）",
+                        sessionId, remaining - 1);
+                return AutoCompactResult.notNeeded();
+            }
         }
 
         // P2-4: 熔断器检查
@@ -320,14 +380,19 @@ public class ContextManager {
             }
         }
 
-        log.info("触发自动压缩: currentTokens={} threshold={} messages={}",
-                currentTokens, threshold, messages.size());
+        log.info("触发自动压缩: currentTokens={} threshold={} ({}% of {}) messages={}",
+                currentTokens, threshold, thresholdPercent * 100, effectiveWindow, messages.size());
 
-        int keepRecent = Math.min(15, messages.size());
+        // O8: 头尾保护切分 — head 原样保留，tail 原样保留，中段进摘要
+        int protectFirst = Math.max(0, Math.min(
+                compactionTrigger.getProtectFirstN(), messages.size() / 2));
+        int protectLast = computeProtectLast(messages, protectFirst, contextWindow);
+        List<TurnMessage> head = new ArrayList<>(
+                messages.subList(0, protectFirst));
         List<TurnMessage> recent = new ArrayList<>(
-                messages.subList(Math.max(0, messages.size() - keepRecent), messages.size()));
+                messages.subList(messages.size() - protectLast, messages.size()));
         List<TurnMessage> toCompact = new ArrayList<>(
-                messages.subList(0, Math.max(0, messages.size() - keepRecent)));
+                messages.subList(protectFirst, messages.size() - protectLast));
 
         // P2-3: 切分点对齐 — 对 recent 区段开头做配对守卫
         // 若 recent 开头是孤儿 tool_result，将其移入 toCompact 一并摘要
@@ -346,20 +411,31 @@ public class ContextManager {
             log.info("切分点对齐: 将 {} 条孤儿 tool_result 从 recent 移入 toCompact", movedToCompact);
         }
 
-        // C2: 调用 LLM 生成摘要（包裹计时 + 事件记录），失败时降级
-        long llmStart = System.currentTimeMillis();
-        String summary = generateSummary(toCompact);
-        long llmDuration = System.currentTimeMillis() - llmStart;
-        boolean llmSuccess = summary != null && !summary.isBlank();
+        // C2 + O7: 摘要 LLM 调用（冷却窗口内跳过）
+        boolean llmSuccess = false;
+        String summary = null;
+        long llmDuration = 0;
+        boolean inCooldown = sessionId != null && isInSummaryCooldown(sessionId);
+        if (inCooldown) {
+            log.warn("[冷却] 会话 {} 处于摘要冷却窗口 ({}ms)，跳过 LLM 摘要调用，直接降级",
+                    sessionId, summaryCooldownMs);
+        } else {
+            long llmStart = System.currentTimeMillis();
+            summary = generateSummary(toCompact, modelName, tokenBudget);
+            llmDuration = System.currentTimeMillis() - llmStart;
+            llmSuccess = summary != null && !summary.isBlank();
+        }
 
-        // P2-4: 熔断器计数更新
+        // P2-4 + O7: 熔断计数 + 冷却窗口维护
         if (sessionId != null) {
-            if (llmSuccess) {
-                // 成功 → 重置计数器
+            if (inCooldown) {
+                log.debug("会话 {} 冷却期内压缩被跳过，不重复计失败", sessionId);
+            } else if (llmSuccess) {
                 compactFailureCounts.remove(sessionId);
+                compactCooldownUntil.remove(sessionId);
             } else {
-                // 失败 → 计数 +1
                 int newCount = compactFailureCounts.merge(sessionId, 1, Integer::sum);
+                compactCooldownUntil.put(sessionId, System.currentTimeMillis() + summaryCooldownMs);
                 if (newCount >= MAX_CONSECUTIVE_COMPACT_FAILURES) {
                     log.error("[熔断触发] 会话 {} 连续压缩失败 {} 次，已触发熔断，本会话不再尝试压缩。",
                             sessionId, newCount);
@@ -375,6 +451,8 @@ public class ContextManager {
         }
 
         List<TurnMessage> compacted = new ArrayList<>();
+        // O8: 头部保护消息原样保留在最前
+        compacted.addAll(head);
         // P2-3: 摘要注入带防污染前缀（对齐 hermes SUMMARY_PREFIX）
         compacted.add(TurnMessage.user(SUMMARY_PREFIX + summary));
         compacted.addAll(recent);
@@ -383,12 +461,80 @@ public class ContextManager {
         log.info("压缩完成: {} → {} tokens (LLM={}ms, success={})",
                 currentTokens, postTokens, llmDuration, llmSuccess);
 
+        // O8: 压缩有效进展检测 — token 降幅不足时进入冷却（防抖防循环）
+        if (sessionId != null && compactionTrigger.getIneffectiveProgressRatio() > 0) {
+            double drop = (currentTokens - postTokens) / (double) Math.max(1, currentTokens);
+            if (drop < compactionTrigger.getIneffectiveProgressRatio()) {
+                int ineffectiveCount = ineffectiveProgressCounts.merge(sessionId, 1, Integer::sum);
+                ineffectiveSuppressRounds.put(sessionId,
+                        Math.max(1, compactionTrigger.getIneffectiveSuppressRounds()));
+                log.warn("[防抖] 会话 {} 压缩进展不足（token 降幅 {}% < {}%），第 {} 次，"
+                                + "后续 {} 轮跳过压缩",
+                        sessionId, String.format("%.1f", drop * 100),
+                        compactionTrigger.getIneffectiveProgressRatio() * 100,
+                        ineffectiveCount, compactionTrigger.getIneffectiveSuppressRounds());
+            } else {
+                ineffectiveProgressCounts.remove(sessionId);
+            }
+        }
+
         // C2: 创建内部 LLM 调用事件
         RuntimeEvent llmCallEvent = RuntimeEvent.internalLlmCall(
                 "context-compaction", modelName, llmDuration, llmSuccess);
 
         return AutoCompactResult.compacted(summary, compacted,
                 currentTokens, postTokens, llmCallEvent);
+    }
+
+    /**
+     * O8: 计算尾部保护条数。
+     *
+     * <p>{@code tail-token-ratio > 0} 时按 token 预算确定尾部（contextWindow × ratio，
+     * 上限 tail-token-max，对齐 hermes {@code _find_tail_cut_by_tokens} 的
+     * {@code context*5% 上限 10K} 语义，且保证至少保留 1 条）；否则按
+     * {@code protect-last-n} 条数保护（默认 15 = 改造前 keepRecent）。</p>
+     */
+    private int computeProtectLast(List<TurnMessage> messages, int protectFirst, int contextWindow) {
+        int byCount = Math.max(1, Math.min(
+                compactionTrigger.getProtectLastN(), messages.size() - protectFirst));
+        int tailBudget = compactionTrigger.tailTokenBudget(contextWindow);
+        if (tailBudget <= 0) {
+            return byCount;
+        }
+        int acc = 0;
+        int count = 0;
+        for (int i = messages.size() - 1; i >= protectFirst; i--) {
+            int t = tokenEstimator.estimate(messages.get(i).content());
+            if (count > 0 && acc + t > tailBudget) {
+                break;
+            }
+            acc += t;
+            count++;
+        }
+        return Math.max(count, 1);
+    }
+
+    /**
+     * O8: 会话剩余压缩冷却轮数（监控/测试用）。
+     */
+    public int getIneffectiveSuppressRounds(String sessionId) {
+        return ineffectiveSuppressRounds.getOrDefault(sessionId, 0);
+    }
+
+    /**
+     * O8: 重置会话防抖状态（测试/手动恢复）。
+     */
+    public void resetIneffectiveSuppress(String sessionId) {
+        ineffectiveProgressCounts.remove(sessionId);
+        ineffectiveSuppressRounds.remove(sessionId);
+    }
+
+    /**
+     * 向后兼容：无 TokenBudget 的自动压缩（熔断器/防抖跟踪仍生效）。
+     */
+    public AutoCompactResult autoCompactIfNeeded(
+            List<TurnMessage> messages, String modelName, String sessionId) {
+        return autoCompactIfNeeded(messages, modelName, sessionId, null);
     }
 
     /**
@@ -415,16 +561,46 @@ public class ContextManager {
     public CompactionPipeline.CompactionResult runCompactionPipeline(
             List<TurnMessage> messages, String modelName,
             String sessionId, int startTurn) {
-        return compactionPipeline.compactIfNeeded(messages, modelName, sessionId, startTurn);
+        return runCompactionPipeline(messages, modelName, sessionId, startTurn, null);
+    }
+
+    public CompactionPipeline.CompactionResult runCompactionPipeline(
+            List<TurnMessage> messages, String modelName,
+            String sessionId, int startTurn, TokenBudget tokenBudget) {
+        return compactionPipeline.compactIfNeeded(messages, modelName, sessionId, startTurn, tokenBudget);
+    }
+
+    /**
+     * O7: 会话是否处于摘要冷却窗口。
+     */
+    public boolean isInSummaryCooldown(String sessionId) {
+        Long until = compactCooldownUntil.get(sessionId);
+        return until != null && System.currentTimeMillis() < until;
+    }
+
+    /**
+     * O7: 重置会话摘要冷却（测试/手动恢复）。
+     */
+    public void resetSummaryCooldown(String sessionId) {
+        compactCooldownUntil.remove(sessionId);
     }
 
     // ============ private helpers ============
 
     /**
-     * 调用 LLM 生成对话摘要
+     * 调用 LLM 生成对话摘要 —— O7: 经 ModelInvoker.callWithStream（超时收口），
+     * 成功后将 tokens 计入 TokenBudget 成本熔断；tokenBudget 为 null 时跳过累计（旧 3 参路径）。
      */
-    private String generateSummary(List<TurnMessage> toCompact) {
+    private String generateSummary(List<TurnMessage> toCompact, String modelName, TokenBudget tokenBudget) {
         try {
+            // O7增强: 摘要模型显式选取（配置 aether.context.compaction.summary-model 优先，回退 chatModel）
+            ChatModel chatModel = summaryChatModelResolver != null
+                    ? summaryChatModelResolver.resolve() : null;
+            if (chatModel == null) {
+                log.warn("LLM摘要: 无可用 ChatModel（SummaryChatModelResolver 未注入），降级为字符串拼接");
+                return null;
+            }
+
             StringBuilder conversation = new StringBuilder();
             for (TurnMessage msg : toCompact) {
                 String content = msg.content() != null ? msg.content() : "";
@@ -435,24 +611,25 @@ public class ContextManager {
                         .append(preview).append("\n");
             }
 
-            String promptText = """
+            String instruction = """
                     请将以下对话历史压缩为简洁的摘要（不超过500字）。
                     保留关键决策、重要结论、文件修改操作和未完成的任务。
                     使用中文输出。
+                    """;
 
-                    对话历史：
-                    %s
-                    """.formatted(conversation.toString());
+            ModelInvoker.ModelCallResult result = modelInvoker.callWithStream(
+                    chatModel,
+                    List.of(new UserMessage(conversation.toString())),
+                    instruction,
+                    modelName);
 
-            List<Message> llmMessages = List.of(new UserMessage(promptText));
-            ChatResponse response = chatModel.call(new Prompt(llmMessages));
-
-            if (response != null && response.getResult() != null
-                    && response.getResult().getOutput() != null) {
-                String text = response.getResult().getOutput().getText();
-                if (text != null && !text.isBlank()) {
-                    return text.trim();
+            if (result != null && !result.hasError()
+                    && result.getFullText() != null && !result.getFullText().isBlank()) {
+                if (tokenBudget != null && pricingRegistry != null) {
+                    tokenBudget.accumulateCost(result.getInputTokens(), result.getOutputTokens(),
+                            pricingRegistry.lookup(modelName));
                 }
+                return result.getFullText().trim();
             }
         } catch (Exception e) {
             log.warn("LLM摘要生成失败，降级为字符串拼接", e);

@@ -41,13 +41,17 @@ public class PermissionEngine {
     /** H4 新增：注入防护规则引用 */
     private final InjectionGuardRule injectionGuardRule;
 
-    public PermissionEngine() {
+    /** O14: 危险工具硬封锁规则（BYPASS 模式仍须执行） */
+    private final DangerousToolRule dangerousToolRule;
+
+    public PermissionEngine(DangerousToolRule dangerousToolRule) {
+        this.dangerousToolRule = dangerousToolRule;
         this.toolAllowlistRule = new ToolAllowlistRule();
         this.injectionGuardRule = new InjectionGuardRule();
 
         // ====== deny 组（优先级排序后统一求值） ======
         // P2: 危险工具硬封锁规则（p=0，deny 组最高优先级）
-        registerDenyRule(new DangerousToolRule());
+        registerDenyRule(dangerousToolRule);
         // M3: 子Agent审批自动拒绝（p=5），防线程池死锁
         registerDenyRule(new SubAgentDenyApprovalRule());
         registerDenyRule(new PlanModeDenyWriteRule());      // p=20: Plan 模式禁止写入
@@ -115,14 +119,20 @@ public class PermissionEngine {
      * @return 权限决策
      */
     public PermissionDecision check(PermissionContext ctx, PermissionMode mode) {
-        // 0. BYPASS 模式跳过所有检查
+        // 0. BYPASS 仍须执行 deny 组（硬封锁不可绕过，对齐 hermes tool_guardrails 正交语义）
         if (mode == PermissionMode.BYPASS) {
-            log.debug("权限绕过: tool={}, userId={}", ctx.getToolName(), ctx.getUserId());
+            PermissionDecision deny = evaluateDenyGroup(denyRules, ctx);
+            if (deny != null) {
+                log.debug("BYPASS 模式 deny 组命中: tool={}, userId={}, decision={}",
+                        ctx.getToolName(), ctx.getUserId(), deny);
+                return deny;
+            }
+            log.debug("权限绕过(deny 组未命中): tool={}, userId={}", ctx.getToolName(), ctx.getUserId());
             return PermissionDecision.ALLOW;
         }
 
         // 1. deny 组（最高优先）
-        PermissionDecision denyResult = evaluateGroup(denyRules, ctx);
+        PermissionDecision denyResult = evaluateDenyGroup(denyRules, ctx);
         if (denyResult != null) {
             log.debug("deny 组命中: tool={}, userId={}, rule={}",
                     ctx.getToolName(), ctx.getUserId(), denyResult);
@@ -175,10 +185,38 @@ public class PermissionEngine {
                     return decision;
                 }
             } catch (Exception e) {
-                log.warn("权限规则 [{}] 评估异常（跳过）: {}", rule.name(), e.getMessage());
+                // O14: 规则异常 fail-closed，绝不静默放行
+                log.error("权限规则 [{}] 评估异常，fail-closed 拒绝: {}", rule.name(), e.getMessage(), e);
+                return PermissionDecision.DENY;
             }
         }
         return null;
+    }
+
+    /**
+     * 评估 deny 组 —— deny-first 正交语义：单个规则 ALLOW 不短路全组，
+     * 仅当任一规则 DENY 或抛异常（fail-closed）才拒绝；全部未命中才放行。
+     * O14: 修复 deny 组被无害的 ALLOW 提前短路、从而漏掉异常规则的隐患。
+     */
+    private PermissionDecision evaluateDenyGroup(List<PermissionRule> group, PermissionContext ctx) {
+        boolean anyAllow = false;
+        for (PermissionRule rule : group) {
+            try {
+                PermissionDecision decision = rule.evaluate(ctx);
+                if (decision == PermissionDecision.DENY) {
+                    return PermissionDecision.DENY;
+                }
+                if (decision == PermissionDecision.ALLOW) {
+                    anyAllow = true;
+                }
+                // null / ASK_USER 视作该规则未否定 → 继续评估其余 deny 规则
+            } catch (Exception e) {
+                // O14: 规则异常 fail-closed，绝不静默放行
+                log.error("权限规则 [{}] 评估异常，fail-closed 拒绝: {}", rule.name(), e.getMessage(), e);
+                return PermissionDecision.DENY;
+            }
+        }
+        return anyAllow ? PermissionDecision.ALLOW : null;
     }
 
     // =========================================================

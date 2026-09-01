@@ -21,7 +21,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.*;
 
 /**
@@ -50,6 +50,18 @@ public class AgentServiceController implements IAgentService {
     /** H4: 直接注入 ChatService 实现以访问 handleConfirm 方法 */
     @Resource
     private ChatService chatServiceImpl;
+
+    /** O2: 会话生命周期（列表/删除/消息提取）由 SessionService 承接 */
+    @Resource
+    private cn.zcj.aether.domain.agent.service.session.SessionService sessionService;
+
+    /** O2: 模型目录由 ModelCatalogService 承接 */
+    @Resource
+    private cn.zcj.aether.domain.agent.service.model.ModelCatalogService modelCatalogService;
+
+    /** O2: 仪表盘统计由 DashboardService 承接 */
+    @Resource
+    private cn.zcj.aether.domain.agent.service.chat.DashboardService dashboardService;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -182,7 +194,7 @@ public class AgentServiceController implements IAgentService {
             @RequestParam("userId") String userId) {
         try {
             log.info("查询会话列表 agentId={} userId={}", agentId, userId);
-            List<SessionEntity> entities = chatServiceImpl.listSessions(agentId, userId);
+            List<SessionEntity> entities = sessionService.listSessions(agentId, userId);
             List<SessionItemDTO> dtos = entities.stream()
                     .map(e -> SessionItemDTO.builder()
                             .sessionId(e.getSessionId())
@@ -231,7 +243,7 @@ public class AgentServiceController implements IAgentService {
     public Response<List<SessionMessageDTO>> getSessionMessages(@RequestParam("sessionId") String sessionId) {
         try {
             log.info("查询会话消息 sessionId={}", sessionId);
-            var rawMessages = chatServiceImpl.getSessionMessages(sessionId);
+            var rawMessages = sessionService.getSessionMessages(sessionId);
             var dtos = rawMessages.stream()
                     .map(m -> SessionMessageDTO.builder()
                             .role(m.get("role"))
@@ -256,7 +268,7 @@ public class AgentServiceController implements IAgentService {
     public Response<List<ModelConfigDTO>> getModels() {
         try {
             log.info("查询模型列表");
-            var raw = chatServiceImpl.getConfiguredModels();
+            var raw = modelCatalogService.getConfiguredModels();
             var dtos = raw.stream()
                     .map(m -> ModelConfigDTO.builder()
                             .id(m.get("id"))
@@ -285,7 +297,7 @@ public class AgentServiceController implements IAgentService {
     public Response<DashboardStatsDTO> dashboardStats() {
         try {
             log.info("查询仪表盘统计");
-            java.util.Map<String, Object> raw = chatServiceImpl.getDashboardRawStats();
+            java.util.Map<String, Object> raw = dashboardService.getDashboardRawStats();
             int totalAgents = (int) raw.get("totalAgents");
             int activeSessions = (int) raw.get("activeSessions");
             var rawAgentStats = (java.util.List<java.util.Map<String, Object>>) raw.get("agentStats");

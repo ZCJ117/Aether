@@ -40,6 +40,10 @@ spring:
 
 # ====== P0-4: 会话持久化（PostgreSQL） ======
 aether:
+  # ====== O5: 真流式开关（显式声明，便于灰度对比：true=chunk 级下发，false=旧缓冲路径）======
+  model:
+    invoker:
+      true-streaming: true
   session:
     persistence: true
   # ====== D1: 异步委派持久化（PostgreSQL，激活 PgAsyncDelegationStore）======
@@ -55,6 +59,9 @@ aether:
   memory:
     pgvector:
       enabled: true
+    embedding:
+      # 2026-09-01: 环境变量优先，硬编码回退（本地开发便利）；注意 Key 已在 git 历史中泄露过，待轮换
+      api-key: ${ZHIPU_API_KEY:***REMOVED-CREDENTIAL***}
   # 开发环境允许访问本地 Python 微服务 (localhost:8001-8003)
   ssrf:
     allow-private-urls: true
@@ -62,6 +69,9 @@ aether:
   security:
     jwt:
       secret: ${JWT_SECRET:aether-dev-jwt-secret-key-min-32-chars!!}
+  # O16: CORS 白名单——未配置时拒绝所有跨域；Vite 代理转发会保留浏览器 Origin，dev 前端(5173)必须入列
+  cors:
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173
 
 # MyBatis 配置【如需使用记得打开】
 #mybatis:

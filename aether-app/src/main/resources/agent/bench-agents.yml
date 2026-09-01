@@ -1,0 +1,66 @@
+# ============================================================
+# P0(1.5): 压测专用 Agent 表 —— 模型指向 mock-llm(8011)，不依赖外网
+#   AgentBenchMain (201): 正常流式/缓冲路径（capacity / A/B / cache 场景）
+#   AgentBenchChaos (200): api-key 走混沌脚本 429,429,429,500,500,ok
+#                          + fallbackModels 兜底链（验证 ResilientChatModelExecutor）
+# 注意：runner 需嵌在 module 内（与 agents.yml 同构）
+# ============================================================
+ai:
+  agent:
+    config:
+      tables:
+        AgentBenchMain:
+          app-name: AgentBenchMain
+          agent:
+            agent-id: "201"
+            agent-name: 压测主智能体
+            agent-desc: mock LLM 压测智能体（正常路径）
+          module:
+            ai-api:
+              base-url: http://mock-llm:8011
+              api-key: bench-ok
+              completions-path: v1/chat/completions
+              embeddings-path: v1/embeddings
+            chat-model:
+              model: mock-bench-model
+            agents:
+              - name: AgentBenchMain
+                description: 压测智能体
+                # per-agent model 覆盖：强制 registerPerAgentChatModel 创建独立 Bean，
+                # 避免多表装配时全局 chatModel Bean 被后装配表覆盖（生产装配缺陷，见 benchmark 报告）
+                model:
+                  model-id: mock-bench-model
+                instruction: |
+                  你是压测智能体。直接回答用户问题，不要调用任何工具。
+                output-key: result
+            runner:
+              agent-name: AgentBenchMain
+
+        AgentBenchChaos:
+          app-name: AgentBenchChaos
+          agent:
+            agent-id: "200"
+            agent-name: 压测混沌智能体
+            agent-desc: mock LLM 故障注入压测智能体
+          module:
+            ai-api:
+              base-url: http://mock-llm:8011
+              # 混沌协议：mock-llm 按该 key 的请求序号依次返回 429,429,429,500,500，之后恢复正常
+              api-key: "bench:429,429,429,500,500,ok"
+              completions-path: v1/chat/completions
+              embeddings-path: v1/embeddings
+            chat-model:
+              model: mock-bench-primary
+              # 主模型持续失败时切换到兜底模型（仍指向 mock-llm，凭据序列共用）
+              fallbackModels:
+                - mock-bench-fb
+            agents:
+              - name: AgentBenchChaos
+                description: 混沌压测智能体
+                model:
+                  model-id: mock-bench-primary
+                instruction: |
+                  你是混沌压测智能体。直接回答用户问题，不要调用任何工具。
+                output-key: result
+            runner:
+              agent-name: AgentBenchChaos

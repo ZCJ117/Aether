@@ -6,6 +6,10 @@
 services:
   aether:
     image: aether:latest
+    # P0(3.2): 镜像来自仓库内多阶段构建（docker/Dockerfile），不再依赖来源不明的镜像
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: aether-secure
     user: "10000:10000"
 

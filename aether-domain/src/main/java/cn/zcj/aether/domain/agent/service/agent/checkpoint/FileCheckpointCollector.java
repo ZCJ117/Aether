@@ -30,6 +30,17 @@ public class FileCheckpointCollector implements CheckpointCollector {
     private static final String CKPT_PREFIX = "ckpt-";
     private static final String CKPT_SUFFIX = ".json";
 
+    /** 检查点根目录（默认相对进程 CWD；包级构造器供测试注入临时目录） */
+    private final Path baseDir;
+
+    public FileCheckpointCollector() {
+        this(Paths.get(BASE_DIR));
+    }
+
+    FileCheckpointCollector(Path baseDir) {
+        this.baseDir = baseDir;
+    }
+
     @Override
     public void save(CheckpointData checkpoint) {
         Path dir = getSessionDir(checkpoint.getSessionId());
@@ -100,14 +111,15 @@ public class FileCheckpointCollector implements CheckpointCollector {
     // ====== 内部方法 ======
 
     private Path getSessionDir(String sessionId) {
-        return Paths.get(BASE_DIR, sessionId);
+        return baseDir.resolve(sessionId);
     }
 
     private CheckpointData readCheckpoint(Path file) {
         try {
             String json = Files.readString(file, StandardCharsets.UTF_8);
             return CheckpointData.fromJson(json);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
+            // 解析失败（损坏文件）返回 null，由调用方过滤——契约即"坏文件不阻断加载"
             log.warn("读取检查点文件失败: {}", file, e);
             return null;
         }

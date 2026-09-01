@@ -4,17 +4,72 @@ spring:
   profiles:
 #   NOTE 2.在项目启动时优先加载application.yml, 在第六行激活 dev 因此它会加载 application-dev.yml 作为补充配置
     active: dev
+  # ====== P1(1.2): Redis（mode=redis 分布式限流 / session.store=redis 时使用；Lettuce 懒连接，未部署不影响启动）======
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000
+  # ====== P1(1.3): Kafka 客户端（aether.kafka.enabled=true 时生效；String 序列化 + 消息契约见 types.messaging）======
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+
+# ====== P1(1.2): 未部署 Redis 时 health 不因 redis 组件 DOWN；redis 模式部署用 env MANAGEMENT_HEALTH_REDIS_ENABLED=true 覆盖 ======
+management:
+  health:
+    redis:
+      enabled: false
+
+# ====== P1(1.1): HTTP 承载层容量 —— SSE 长连接由 Tomcat 线程/连接器承载 ======
+# 容量公式与调优记录见 docs/capacity-planning.md：
+#   最大并发会话 ≈ min(graphPool.max+queue, tomcat.threads.max/每会话1线程, hikari.maximum-pool-size/每会话DB占用)
+server:
+  tomcat:
+    threads:
+      max: 200          # 工作线程上限：SSE 推送阻塞少量线程即可，10 倍于 graphPool 预留余量
+      min-spare: 20
+    max-connections: 8192
+    accept-count: 100
+
+# ====== O17: Agent 自动装配总开关（D17：原实现从不读取该字段；false 时启动不装配任何 Agent）======
+ai:
+  agent:
+    config:
+      enabled: true
 
 # ====== P0: Security Configuration ======
 aether:
+  cache:
+    llm:
+      # ====== P2(1.4): Caffeine L1 + Redis L2；Redis 不可用时 L2 读取/写入自动降级为 L1-only ======
+      redis-enabled: ${AETHER_LLM_CACHE_REDIS_ENABLED:false}
   # SSRF 防护：生产环境必须为 false；开发环境在 application-dev.yml 中覆盖为 true
   ssrf:
     allow-private-urls: false
   security:
     jwt:
-      secret: ${JWT_SECRET:aether-dev-jwt-secret-key-min-32-chars!!}
+      secret: ${JWT_SECRET}
       access-token-expiration: 900000
       refresh-token-expiration: 604800000
+    # ====== P1(1.2): 限流 —— 令牌桶（原固定窗口升级），实现可切换 ======
+    rate-limit:
+      enabled: true
+      mode: memory                # memory（默认，单机）| redis（集群部署；不可用自动降级 memory 并打点）
+      default-capacity: 100       # 默认桶容量（最大突发）
+      default-refill-per-minute: 100
+      login-capacity: 5           # 登录接口防暴力破解
+      login-refill-per-minute: 5
   # ====== 记忆系统（对齐 hermes cli-config.yaml memory 段）======
   memory:
     enabled: true                # 记忆系统总开关（hermes memory.memory_enabled）
@@ -30,9 +85,9 @@ aether:
       importance-weight: 0.1     # 重要性权重
       consolidation-threshold: 0.85  # 相似度合并阈值
       vector-dimension: 1024     # 向量维度（pgvector，与 embedding 模型一致）
-    embedding:                   # 记忆向量生成（未配置 base-url 则语义检索降级）
+    embedding:                   # 记忆向量生成（未配置 base-url/api-key 则语义检索降级）
       base-url: https://open.bigmodel.cn
-      api-key: ***REMOVED-CREDENTIAL***
+      api-key: ${ZHIPU_API_KEY}  # O16: 硬编码凭据移除——无默认回退，未设环境变量即启动失败(fail-fast)
       path: api/paas/v4/embeddings
       model: embedding-2
       dimension: 1024
@@ -40,6 +95,80 @@ aether:
       enabled: true
       batch-size: 50
       max-per-run: 500
+    # ====== P1(4.3): 记忆生命周期（遗忘曲线 / 写入门槛 / 冲突合并）======
+    decay:                       # 遗忘曲线：保留分 = 0.5×新近度(半衰) + 0.3×频次 + 0.2×重要性，低于阈值软删
+      enabled: true
+      interval-minutes: 60       # 扫描间隔；<=0 禁用（仅 pgvector 后端生效）
+      half-life-days: 30         # 新近度半衰期
+      min-retention-score: 0.2   # 保留分阈值（archived=true）
+      max-archive-per-run: 1000
+      batch-size: 200
+    write-gate:                  # 写入门槛：LLM 打分 importance < minImportance 的候选不入库
+      enabled: true
+      min-importance: 0.6        # ≈ 3/5（对齐路线图"≥3 才入库"）
+    conflict:
+      strategy: concat           # concat（默认，兼容）| new-wins | llm（LLM 合并/替换，失败回退 concat）
+  # ====== P1(4.2): RAG 三级检索管道（改写 → 混合召回 RRF → 重排；逐级降级）======
+  rag:
+    enabled: false               # 总开关：true 时记忆召回走三级管道（false=完全旁路，零行为变化）
+    rewrite:                     # 一级：LLM 查询改写 + 同义变体（需 ChatModel）
+      enabled: false
+      timeout-ms: 800
+      variants: 2
+    hybrid:                      # 二级：pgvector 语义 + PG 全文(bigram GIN) RRF 融合，单 SQL
+      enabled: true
+      vector-top-k: 30
+      lexical-top-k: 30
+      candidate-limit: 50
+      rrf-k: 60
+    rerank:                      # 三级：Python /rerank 重排（document-service；RERANK_MODEL 可选模型）
+      enabled: false
+      timeout-ms: 800
+      top-n: 10
+  # ====== P1(1.3): 消息队列解耦 —— Kafka 双链路（审计削峰 + 会话统计聚合）======
+  kafka:
+    enabled: false              # 总开关：true 需 Kafka broker（docker-compose-fullstack.yml 含 kafka）
+    produce-timeout-ms: 2000    # 同步确认等待；超时即降级直写（审计不丢）
+  dashboard:
+    stats-source: live          # live=实时查询（默认）| kafka=读 dashboard_stats 聚合表
+  # ====== P0-3: 会话持久化（默认安全：零配置即有 Pg 仓储，会话跨重启可恢复）======
+  session:
+    persistence: true      # 默认 true：PgSessionRepository matchIfMissing=true，有 pg 驱动即启用（本键可省略）
+    store: postgres        # postgres(默认) | redis | none（none=关闭持久化；redis 需引入 spring-data-redis）
+  # ====== P0-2: 模型调用超时（ModelProvider.buildOpenAiApi 统一接入，三 Provider 一致）======
+  model:
+    invoker:
+      call-timeout-ms: 120000      # 单次模型调用总超时（ModelInvoker 与 ReActAgent 同源）
+      connect-timeout-ms: 30000    # 建连超时（RestClient + WebClient 双通道）
+      read-timeout-ms: 120000      # 读取超时（RestClient + WebClient 双通道）
+  # ====== O7/O8: 上下文压缩（摘要 LLM 冷却熔断 + 触发/裁剪参数化，对齐 hermes context_compressor）======
+  context:
+    compaction:
+      summary-cooldown-ms: 600000        # 摘要失败后冷却窗口（O7，对齐 hermes 600s）
+      summary-model: ""                  # O7增强: 摘要所用模型；空=默认 chatModel bean，填模型名则选 chatModel-<name>
+      threshold-percent: 0.9             # O8: 触发阈值 currentTokens >= effectiveWindow × 该值（hermes 0.50，默认维持现状 0.9）
+      min-messages-to-compact: 20        # O8: 消息条数下限（替代原硬编码 <20 跳过）
+      protect-first-n: 0                 # O8: 头部保护条数（hermes protect_first_n=3，默认 0 维持现状）
+      protect-last-n: 15                 # O8: 尾部保护条数（原 keepRecent=15）
+      tail-token-ratio: 0.0              # O8: 尾部改按 token 预算（contextWindow×该值），0=按条数（hermes 0.05）
+      tail-token-max: 10000              # O8: 尾部 token 预算上限（hermes 10K cap）
+      ineffective-progress-ratio: 0.05   # O8: 压缩有效进展判据，token 降幅低于该值视为无效（hermes 5%）
+      ineffective-suppress-rounds: 3     # O8: 无效压缩后跳过压缩的轮数（防抖防循环）
+      summary-ceiling-chars: 7000        # O8: 分块摘要合并结果字符上限（ChunkSummarizer 递归阈值）
+  # ====== P0-1: 统一线程资源管理（AetherExecutorRegistry；未配置的池走内置默认）======
+  # P1(1.1)：graph 池是并发会话第一瓶颈——max-pool-size+queue-capacity 决定同时编排中的会话上限；
+  # 队列利用率指标 aether.executor.queue.utilization{pool="graph"} >0.8 持续 10min 触发容量告警。
+  thread-pools:
+    pools:                      # Map<池名, 参数>：绑定键必须是 pools.<池名>.*（AetherThreadPoolProperties.pools）
+      graph:
+        core-pool-size: 4
+        max-pool-size: 8
+        queue-capacity: 200
+        keep-alive-seconds: 60
+        thread-name-prefix: aether-graph
+        rejection-policy: CallerRunsPolicy
+    # 其余命名池（tool / memory-io / session-persist / delegation / background-review /
+    # graph-trace / scheduled）缺省即默认参数，可按需覆盖，键名见 AetherThreadPoolProperties.DEFAULT
   # ====== D4: 可视化调试 ======
   delegation:
     live-log-dir: ./cache/delegation/live   # 每子Agent直播日志根目录（对齐 hermes cache/delegation/live）

@@ -1,6 +1,7 @@
 package cn.zcj.aether.domain.agent.service.agent.permission;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -16,6 +17,7 @@ import java.util.regex.Pattern;
  * </ol>
  */
 @Slf4j
+@Component
 public class DangerousToolRule implements PermissionRule {
 
     private static final Set<Pattern> HARDBLOCK = Set.of(
@@ -55,16 +57,28 @@ public class DangerousToolRule implements PermissionRule {
     @Override
     public int priority() { return 0; }
 
+    /**
+     * 仅判断是否命中硬封锁（deny-first 最高层）。
+     * O14: 独立入口，供 ToolExecutor.executeOne 关卡 2 二次强制校验。
+     */
+    public boolean isHardblocked(PermissionContext ctx) {
+        String toolCall = ctx.getToolName() + " " + ctx.getToolInput();
+        for (Pattern p : HARDBLOCK) {
+            if (p.matcher(toolCall).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public PermissionDecision evaluate(PermissionContext ctx) {
         String toolCall = ctx.getToolName() + " " + ctx.getToolInput();
 
-        // Layer 1: 硬封锁（即使 BYPASS 也拒绝）
-        for (Pattern p : HARDBLOCK) {
-            if (p.matcher(toolCall).find()) {
-                log.warn("硬封锁触发: tool={}, user={}", ctx.getToolName(), ctx.getUserId());
-                return PermissionDecision.DENY;
-            }
+        // Layer 1: 硬封锁（即使 BYPASS 也拒绝）—— 复用 isHardblocked
+        if (isHardblocked(ctx)) {
+            log.warn("硬封锁触发: tool={}, user={}", ctx.getToolName(), ctx.getUserId());
+            return PermissionDecision.DENY;
         }
 
         // Layer 2: 会话白名单

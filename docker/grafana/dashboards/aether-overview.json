@@ -1,0 +1,139 @@
+{
+  "uid": "aether-overview",
+  "title": "Aether Agent 总览",
+  "tags": ["aether"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Turn 耗时 P50/P95/P99",
+      "description": "Agent 每轮端到端耗时（AgentMetrics Timer），P95 突增 = 模型延迟或工具阻塞",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "aether_agent_turn_latency_seconds{quantile=\"0.5\"}", "legendFormat": "P50" },
+        { "expr": "aether_agent_turn_latency_seconds{quantile=\"0.95\"}", "legendFormat": "P95" },
+        { "expr": "aether_agent_turn_latency_seconds{quantile=\"0.99\"}", "legendFormat": "P99" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "模型错误率（errors/turns）",
+      "description": ">5% 持续 5min 触发 AetherModelErrorRateHigh",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(aether_agent_errors_total[5m]) / clamp_min(rate(aether_agent_turns_total[5m]), 0.01)", "legendFormat": "error rate" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "工具失败率（tool errors/calls）",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(aether_agent_tool_errors_total[5m]) / clamp_min(rate(aether_agent_tool_calls_total[5m]), 0.01)", "legendFormat": "tool failure rate" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Token 消耗速率（成本代理）",
+      "description": "input+output tokens/s；结合 aether.pricing 估算 $/h",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(aether_agent_tokens_input_total[5m]))", "legendFormat": "input/s" },
+        { "expr": "sum(rate(aether_agent_tokens_output_total[5m]))", "legendFormat": "output/s" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "模型等待线程数（并发会话代理）",
+      "description": "aether.model.waiting.threads —— 阻塞在模型流等待上的 graphPool 线程",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "aether_model_waiting_threads", "legendFormat": "waiting threads" },
+        { "expr": "executor_active_threads{pool=\"graph\"}", "legendFormat": "graph active" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "graphPool 队列饱和度",
+      "description": ">0.8 持续 10min 触发 AetherGraphPoolSaturation（容量公式见 docs/capacity-planning.md）",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1 }, "overrides": [] },
+      "targets": [
+        { "expr": "aether_executor_queue_utilization{pool=\"graph\"}", "legendFormat": "graph" },
+        { "expr": "aether_executor_queue_utilization{pool=\"tool\"}", "legendFormat": "tool" },
+        { "expr": "aether_executor_queue_utilization{pool=\"session-persist\"}", "legendFormat": "session-persist" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "JVM 堆内存 used/max",
+      "gridPos": { "x": 0, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(jvm_memory_used_bytes{area=\"heap\"})", "legendFormat": "heap used" },
+        { "expr": "sum(jvm_memory_max_bytes{area=\"heap\"})", "legendFormat": "heap max" }
+      ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Hikari 连接池等待/活跃",
+      "description": "pending > 0 = DB 连接不足（调 maximum-pool-size，见容量文档）",
+      "gridPos": { "x": 8, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "hikaricp_connections_pending", "legendFormat": "pending" },
+        { "expr": "hikaricp_connections_active", "legendFormat": "active" },
+        { "expr": "hikaricp_connections_idle", "legendFormat": "idle" }
+      ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "限流触发速率（429）",
+      "description": "突增触发 AetherRateLimitSpike",
+      "gridPos": { "x": 16, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (scope) (rate(aether_ratelimit_triggered_total[5m]))", "legendFormat": "{{scope}}/s" }
+      ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Kafka 消费 lag",
+      "description": ">1000 持续 10min 触发 AetherKafkaConsumerLag（aether.kafka.enabled=true 时有数据）",
+      "gridPos": { "x": 0, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "max by (topic) (kafka_consumer_fetch_manager_records_lag)", "legendFormat": "{{topic}}" }
+      ]
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "模型调用超时 / 会话持久化失败（增量）",
+      "gridPos": { "x": 8, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "increase(aether_model_call_timeouts_total[15m])", "legendFormat": "timeouts" },
+        { "expr": "increase(aether_session_persist_failures_total[15m])", "legendFormat": "persist failures" }
+      ]
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "HTTP 承载（Tomcat）",
+      "description": "SSE 长连接数与请求吞吐（server.tomcat.threads.max 容量参考）",
+      "gridPos": { "x": 16, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "tomcat_threads_current_threads", "legendFormat": "threads" },
+        { "expr": "tomcat_connections_current_connections", "legendFormat": "connections" }
+      ]
+    }
+  ]
+}

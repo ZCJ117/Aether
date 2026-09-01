@@ -1,13 +1,12 @@
 package cn.zcj.aether.domain.agent.service.context.compaction;
 
+import cn.zcj.aether.domain.agent.service.context.TokenBudget;
 import cn.zcj.aether.domain.agent.service.context.TokenEstimator;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -38,10 +37,7 @@ public class CompactionPipeline {
     private final ChunkSummarizer chunkSummarizer;
     private final MessageOffloader messageOffloader;
     private final TokenEstimator tokenEstimator;
-
-    @Resource
-    @org.springframework.context.annotation.Lazy
-    private ChatModel chatModel;
+    private final CompactionMetrics compactionMetrics;
 
     /**
      * 压缩结果记录。
@@ -76,6 +72,22 @@ public class CompactionPipeline {
     public CompactionResult compactIfNeeded(
             List<TurnMessage> messages, String modelName,
             String sessionId, int startTurn) {
+        return compactIfNeeded(messages, modelName, sessionId, startTurn, null);
+    }
+
+    /**
+     * 条件触发压缩：若满足触发条件则执行六步管道。
+     *
+     * @param messages   当前完整消息列表
+     * @param modelName  模型名称，用于 token 估算
+     * @param sessionId  会话 ID，用于 MessageOffloader 泄流
+     * @param startTurn  起始回合号
+     * @param tokenBudget 成本预算（可为 null，null 时跳过成本累计）
+     * @return 压缩结果，包含（可能已变更的）消息列表
+     */
+    public CompactionResult compactIfNeeded(
+            List<TurnMessage> messages, String modelName,
+            String sessionId, int startTurn, TokenBudget tokenBudget) {
 
         if (messages == null || messages.isEmpty()) {
             return CompactionResult.notNeeded(messages);
@@ -125,7 +137,7 @@ public class CompactionPipeline {
         // Step 6: summarizePrefix — 生成摘要
         String summary;
         try {
-            summary = chunkSummarizer.summarize(prefix);
+            summary = chunkSummarizer.summarize(prefix, modelName, tokenBudget);
         } catch (Exception e) {
             log.warn("CompactionPipeline: 摘要生成失败", e);
             summary = "[压缩摘要生成失败: " + e.getMessage() + "]";
@@ -143,6 +155,9 @@ public class CompactionPipeline {
         log.info("CompactionPipeline: 压缩完成 {} -> {} tokens ({} -> {} messages)",
                 preCompactTokens, postCompactTokens,
                 messages.size(), compacted.size());
+
+        // P0(1.5): 压缩收益上报（aether.compaction.*）
+        compactionMetrics.recordCompaction(preCompactTokens, postCompactTokens);
 
         return CompactionResult.compacted(summary, compacted, preCompactTokens, postCompactTokens);
     }

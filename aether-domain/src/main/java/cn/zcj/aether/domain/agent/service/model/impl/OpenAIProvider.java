@@ -21,6 +21,21 @@ import org.springframework.stereotype.Component;
 @Component
 public class OpenAIProvider implements ModelProvider {
 
+    private final int connectTimeoutMs;
+    private final int readTimeoutMs;
+
+    public OpenAIProvider(
+            @org.springframework.beans.factory.annotation.Value("${aether.model.invoker.connect-timeout-ms:30000}") int connectTimeoutMs,
+            @org.springframework.beans.factory.annotation.Value("${aether.model.invoker.read-timeout-ms:120000}") int readTimeoutMs) {
+        this.connectTimeoutMs = connectTimeoutMs;
+        this.readTimeoutMs = readTimeoutMs;
+    }
+
+    @Override
+    public int connectTimeoutMs() { return connectTimeoutMs; }
+    @Override
+    public int readTimeoutMs() { return readTimeoutMs; }
+
     @Override
     public String providerName() { return "openai"; }
 
@@ -31,7 +46,7 @@ public class OpenAIProvider implements ModelProvider {
 
     @Override
     public ChatModel createChatModel(ModelConfig config) {
-        OpenAiApi openAiApi = buildOpenAiApi(config);
+        OpenAiApi openAiApi = buildOpenAiApi(config);   // 既有调用不变，现经超时钩子
 
         ChatModel chatModel = OpenAiChatModel.builder()
             .openAiApi(openAiApi)
@@ -40,8 +55,8 @@ public class OpenAIProvider implements ModelProvider {
                 .build())
             .build();
 
-        log.info("OpenAIProvider 创建 ChatModel: model={}, baseUrl={} (connectTimeout={}ms, readTimeout={}ms)",
-                config.getModelId(), config.getBaseUrl(), CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
+        log.info("OpenAIProvider 创建 ChatModel: model={}, baseUrl={} (connect={}ms, read={}ms)",
+                config.getModelId(), config.getBaseUrl(), connectTimeoutMs, readTimeoutMs);
         return chatModel;
     }
 }

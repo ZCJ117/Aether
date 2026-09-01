@@ -14,6 +14,7 @@ class PgvectorVectorStoreSqlTest {
         String sql = PgvectorVectorStore.buildCosineSearchSql(List.of());
         assertTrue(sql.contains("<=> ?::vector"));
         assertTrue(sql.contains("embedding IS NOT NULL"));
+        assertTrue(sql.contains("archived = false"), "P1(4.3): 归档记忆必须过滤出召回");
         assertTrue(sql.contains("ORDER BY embedding <=> ?::vector"));
         assertTrue(sql.contains("LIMIT ?"));
         assertTrue(sql.contains("AS similarity"));

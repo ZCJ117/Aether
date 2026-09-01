@@ -1,15 +1,16 @@
 package cn.zcj.aether.domain.agent.service.context.compaction;
 
+import cn.zcj.aether.domain.agent.service.context.ModelPricingRegistry;
+import cn.zcj.aether.domain.agent.service.context.TokenBudget;
 import cn.zcj.aether.domain.agent.service.context.TokenEstimator;
+import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -37,25 +38,36 @@ public class ChunkSummarizer {
 
     private static final int MAX_CHUNK_CHARS = 7_000;
     private static final int TOOL_RESULT_TRUNCATE_CHARS = 500;
-    private static final int MAX_MERGED_CHARS = 7_000;
 
-    private static final String SUMMARIZE_PROMPT =
-            "将以下对话片段压缩为简洁摘要。保留关键决策、重要结论、文件修改操作和未完成的任务。使用中文输出，不超过500字。\n\n对话片段：\n%s";
+    /** O8: 合并摘要字符上限（可配 aether.context.compaction.summary-ceiling-chars，默认 7000 = 原硬编码） */
+    @org.springframework.beans.factory.annotation.Value("${aether.context.compaction.summary-ceiling-chars:7000}")
+    private int maxMergedChars = 7_000;
+
+    private static final String SUMMARIZE_SYSTEM =
+            "将以下对话片段压缩为简洁摘要。保留关键决策、重要结论、文件修改操作和未完成的任务。使用中文输出，不超过500字。";
 
     @Resource
     private TokenEstimator tokenEstimator;
 
+    /** O7增强: 摘要模型显式选取（替代原 @Lazy ChatModel 字段注入，消除多 bean 不确定性） */
     @Resource
-    @org.springframework.context.annotation.Lazy
-    private ChatModel chatModel;
+    private cn.zcj.aether.domain.agent.service.context.SummaryChatModelResolver summaryChatModelResolver;
+
+    @Resource
+    private ModelInvoker modelInvoker;
+
+    @Resource
+    private ModelPricingRegistry pricingRegistry;
 
     /**
      * 对对话前缀生成分块摘要。
      *
-     * @param prefix 需要摘要的消息前缀列表
+     * @param prefix     需要摘要的消息前缀列表
+     * @param modelName  模型名称，用于 LLM 调用与成本累计
+     * @param tokenBudget 成本预算（可为 null，null 时跳过成本累计）
      * @return 摘要文本；若全部 LLM 调用均失败，返回降级拼接文本
      */
-    public String summarize(List<TurnMessage> prefix) {
+    public String summarize(List<TurnMessage> prefix, String modelName, TokenBudget tokenBudget) {
         if (prefix == null || prefix.isEmpty()) {
             return "";
         }
@@ -73,7 +85,7 @@ public class ChunkSummarizer {
         // Step 3: 逐块生成子摘要
         List<String> subSummaries = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
-            String summary = summarizeChunk(chunks.get(i), i + 1, chunks.size());
+            String summary = summarizeChunk(chunks.get(i), i + 1, chunks.size(), modelName, tokenBudget);
             if (summary != null && !summary.isBlank()) {
                 subSummaries.add(summary.trim());
             }
@@ -88,10 +100,9 @@ public class ChunkSummarizer {
         String merged = String.join("\n\n---\n\n", subSummaries);
 
         // Step 5: 若合并结果仍超长，递归摘要
-        if (merged.length() > MAX_MERGED_CHARS) {
-            log.info("合并摘要长度 {} > {}，递归摘要", merged.length(), MAX_MERGED_CHARS);
-            String recursivePrompt = String.format(SUMMARIZE_PROMPT, merged);
-            return callLlmWithFallback(recursivePrompt, formatted);
+        if (merged.length() > maxMergedChars) {
+            log.info("合并摘要长度 {} > {}，递归摘要", merged.length(), maxMergedChars);
+            return callLlmWithFallback(merged, formatted, modelName, tokenBudget);
         }
 
         return merged;
@@ -198,32 +209,36 @@ public class ChunkSummarizer {
         return result;
     }
 
-    /**
-     * 对单个文本块调用 LLM 生成摘要。
-     *
-     * @param chunk  文本块内容
-     * @param index  当前块序号（1-based）
-     * @param total  总块数
-     * @return 摘要文本，失败时返回 null
-     */
-    private String summarizeChunk(String chunk, int index, int total) {
-        String prompt = String.format(SUMMARIZE_PROMPT, chunk);
+    private String summarizeChunk(String chunk, int index, int total,
+                                  String modelName, TokenBudget tokenBudget) {
         log.debug("ChunkSummarizer: 摘要块 {}/{} ({} chars)", index, total, chunk.length());
-        return callLlm(prompt);
+        return callLlm(chunk, modelName, tokenBudget);
     }
 
     /**
-     * 调用 LLM 并返回文本，失败时返回 null。
+     * O7: 经 ModelInvoker.callWithStream 调用 LLM（模型经 SummaryChatModelResolver 显式选取）；
+     * 成功累计成本；失败返回 null。
      */
-    private String callLlm(String prompt) {
+    private String callLlm(String chunk, String modelName, TokenBudget tokenBudget) {
         try {
-            ChatResponse response = chatModel.call(new Prompt(new UserMessage(prompt)));
-            if (response != null && response.getResult() != null
-                    && response.getResult().getOutput() != null) {
-                String text = response.getResult().getOutput().getText();
-                if (text != null && !text.isBlank()) {
-                    return text.trim();
+            ChatModel chatModel = summaryChatModelResolver != null
+                    ? summaryChatModelResolver.resolve() : null;
+            if (chatModel == null) {
+                log.warn("ChunkSummarizer: 无可用 ChatModel（SummaryChatModelResolver 未注入或解析失败），降级");
+                return null;
+            }
+            ModelInvoker.ModelCallResult result = modelInvoker.callWithStream(
+                    chatModel,
+                    List.of(new UserMessage(chunk)),
+                    SUMMARIZE_SYSTEM,
+                    modelName);
+            if (result != null && !result.hasError()
+                    && result.getFullText() != null && !result.getFullText().isBlank()) {
+                if (tokenBudget != null && pricingRegistry != null) {
+                    tokenBudget.accumulateCost(result.getInputTokens(), result.getOutputTokens(),
+                            pricingRegistry.lookup(modelName));
                 }
+                return result.getFullText().trim();
             }
         } catch (Exception e) {
             log.warn("ChunkSummarizer: LLM 调用失败", e);
@@ -231,11 +246,9 @@ public class ChunkSummarizer {
         return null;
     }
 
-    /**
-     * 调用 LLM 并附带回退：失败时用降级方法。
-     */
-    private String callLlmWithFallback(String prompt, String fallbackText) {
-        String result = callLlm(prompt);
+    private String callLlmWithFallback(String chunk, String fallbackText,
+                                       String modelName, TokenBudget tokenBudget) {
+        String result = callLlm(chunk, modelName, tokenBudget);
         if (result != null && !result.isBlank()) {
             return result;
         }

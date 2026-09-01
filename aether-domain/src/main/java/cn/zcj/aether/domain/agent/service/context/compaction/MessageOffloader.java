@@ -78,6 +78,45 @@ public class MessageOffloader {
     }
 
     /**
+     * O8: 将超长工具结果写盘，返回相对于会话目录的文件引用路径。
+     *
+     * <p>写入 {@code .aether/sessions/tool-overflow/<toolName>_<内容hash>.txt}；
+     * 同一内容（hash 相同）复用已有文件，避免重复落盘。</p>
+     *
+     * @param toolCallId 工具调用 ID（仅用于日志）
+     * @param toolName   工具名（用于文件命名）
+     * @param content    完整工具输出内容
+     * @return 可回读的文件路径引用（相对路径字符串）；写盘失败返回 null（调用方降级为截断）
+     */
+    public String offloadToolResult(String toolCallId, String toolName, String content) {
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        try {
+            Path sessionsDir = Path.of(System.getProperty("user.dir"), SESSIONS_DIR);
+            Path overflowDir = sessionsDir.resolve("tool-overflow");
+            Files.createDirectories(overflowDir);
+
+            String safeTool = sanitizeFileName(toolName != null ? toolName : "unknown");
+            String contentHash = Integer.toHexString(content.hashCode());
+            Path toolFile = overflowDir.resolve(safeTool + "_" + contentHash + ".txt");
+
+            if (!Files.exists(toolFile)) {
+                Files.writeString(toolFile, content,
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            }
+            String reference = sessionsDir.relativize(toolFile).toString().replace('\\', '/');
+            log.debug("MessageOffloader: 超长工具结果已存盘 toolCallId={}, tool={}, file={}",
+                    toolCallId, toolName, reference);
+            return reference;
+        } catch (IOException e) {
+            log.warn("MessageOffloader: 超长工具结果写盘失败 toolCallId={}, tool={}, 降级为截断: {}",
+                    toolCallId, toolName, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 将单条 TurnMessage 格式化为一行 JSON。
      */
     private String formatLine(TurnMessage msg, int turn, String sessionId, Path sessionsDir) {
