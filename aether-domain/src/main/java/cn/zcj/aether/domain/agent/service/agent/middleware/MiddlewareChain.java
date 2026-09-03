@@ -101,7 +101,13 @@ public class MiddlewareChain {
         return wrapped.get();
     }
 
-    /** 执行工具调用链 */
+    /**
+     * 执行工具调用链。
+     *
+     * <p>fail-closed：任一中间件（尤其权限校验）抛出异常时，立即中断链路并返回空列表
+     * （= 拒绝本批全部工具调用）。异常被吞掉后继续放行会把权限校验击穿成 fail-open，
+     * 因此这里宁可全部拒绝。</p>
+     */
     public List<ToolExecutor.ToolCallRequest> applyActing(
             List<ToolExecutor.ToolCallRequest> requests) {
         List<ToolExecutor.ToolCallRequest> result = requests;
@@ -109,7 +115,9 @@ public class MiddlewareChain {
             try {
                 result = mw.onActing(result, agent, ctx);
             } catch (Exception e) {
-                log.warn("中间件 [{}] onActing 异常: {}", mw.name(), e.getMessage());
+                log.error("中间件 [{}] onActing 异常，fail-closed 拒绝本批 {} 个工具调用: {}",
+                        mw.name(), requests.size(), e.getMessage(), e);
+                return List.of();
             }
         }
         return result;

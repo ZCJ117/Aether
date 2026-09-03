@@ -14,6 +14,7 @@ import reactor.core.publisher.Flux;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 容错 ChatModel 装饰器 — 实现 {@link ChatModel} 接口，透明包装底层模型调用。
@@ -152,10 +153,8 @@ public class ResilientChatModelExecutor implements ChatModel {
      */
     @Override
     public ChatResponse call(Prompt prompt) {
-        int maxAttempts = currentModelConfig.getMaxAttempts() != null
-                ? currentModelConfig.getMaxAttempts() : DEFAULT_MAX_ATTEMPTS;
         // 每次调用 = 一个 turn，持有一个恢复分支账本
-        TurnRetryState turnRetry = new TurnRetryState(maxAttempts, fallbackChain.size());
+        TurnRetryState turnRetry = new TurnRetryState(resolveMaxAttempts(), fallbackChain.size());
 
         while (true) {
             try {
@@ -213,24 +212,101 @@ public class ResilientChatModelExecutor implements ChatModel {
     }
 
     /**
-     * 带容错的流式模型调用。
+     * 带容错的流式模型调用 —— 逐帧透传，TTFT 符合流式语义。
      *
-     * <p>当前 ModelInvoker 的流式调用路径通过 {@code flux.collectList().block()} 转为同步结果，
-     * 因此本方法委托给 {@link #call(Prompt)}，其内部有完整的 failover 循环。</p>
+     * <p>每次尝试直接订阅 {@code currentChatModel.stream(prompt)}，chunk 到达即向下游转发；
+     * failover 仅在首帧之前生效：失败时按 {@link TurnRetryState} 执行与 {@link #call(Prompt)}
+     * 相同的恢复分支（退避/压缩/凭据轮换/fallback），然后重建流重试。</p>
+     *
+     * <p>首帧之后失败不重试——下游已收到部分帧，重放会导致内容重复，只能原样传播错误。</p>
      */
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
+        return Flux.defer(() -> streamWithRecovery(prompt, new TurnRetryState(
+                resolveMaxAttempts(), fallbackChain.size())));
+    }
+
+    /** 单次流式尝试：逐帧透传 + 首帧前的 failover 重建。 */
+    private Flux<ChatResponse> streamWithRecovery(Prompt prompt, TurnRetryState turnRetry) {
         return Flux.defer(() -> {
-            try {
-                ChatResponse response = call(prompt);
-                return Flux.just(response);
-            } catch (Exception e) {
-                return Flux.error(e);
-            }
+            AtomicBoolean frameReceived = new AtomicBoolean(false);
+            return currentChatModel.stream(prompt)
+                    .doOnNext(r -> frameReceived.set(true))
+                    .doOnComplete(() -> {
+                        // 成功 — 恢复 fallback 状态标记（与 call() 语义对齐）
+                        if (fallbackActivated && !isInFallbackCooldown()) {
+                            log.info("Fallback 模型流式调用成功，下一轮将尝试恢复主模型");
+                            fallbackActivated = false;
+                            setStateAttr("resilient:fallbackActivated", Boolean.FALSE);
+                        }
+                    })
+                    .onErrorResume(e ->
+                            handleStreamError(prompt, turnRetry, frameReceived.get(), e));
         });
     }
 
+    /**
+     * 流式失败处理：首帧前按恢复分支重建流；首帧后原样传播。
+     */
+    private Flux<ChatResponse> handleStreamError(Prompt prompt, TurnRetryState turnRetry,
+            boolean frameReceived, Throwable t) {
+        if (frameReceived) {
+            // 首帧后失败：下游已收到部分帧，重放会重复下发，不重试
+            return Flux.error(t);
+        }
+        Exception e = t instanceof Exception x ? x : new RuntimeException(t);
+        ClassifiedError classified = classifyError(e);
+
+        log.warn("流式模型调用失败 provider={} model={} reason={} status={}",
+                currentProvider.providerName(), currentModelConfig.getModelId(),
+                classified.reason(), classified.statusCode());
+
+        RecoveryDirective d = turnRetry.nextDirective(classified);
+        log.info("流式恢复指令: branch={} reason={}", d.branch(), d.reason());
+        recordBranch(d.branch());
+
+        return switch (d.branch()) {
+            case JITTERED_BACKOFF, ADAPTIVE_RATE_LIMIT_BACKOFF -> {
+                turnRetry.markAttempted(d.branch());
+                backoffWaiter.accept(d.backoffSec());
+                yield streamWithRecovery(prompt, turnRetry);
+            }
+            case CONTEXT_COMPRESSION -> {
+                turnRetry.markAttempted(RecoveryBranch.CONTEXT_COMPRESSION);
+                tryCompress(classified);
+                yield streamWithRecovery(prompt, turnRetry);
+            }
+            case CREDENTIAL_ROTATION -> {
+                turnRetry.markAttempted(RecoveryBranch.CREDENTIAL_ROTATION);
+                tryRotateCredential(classified);
+                yield streamWithRecovery(prompt, turnRetry);
+            }
+            case PROVIDER_FALLBACK -> {
+                turnRetry.markAttempted(RecoveryBranch.PROVIDER_FALLBACK);
+                if (tryActivateFallback(classified.reason())) {
+                    turnRetry.resetPerModel(); // 新模型重新计退避，但保留 fallback 链位置
+                } else if (fallbackIndex >= fallbackChain.size()) {
+                    turnRetry.markExhausted(RecoveryBranch.PROVIDER_FALLBACK, fallbackChain.size());
+                }
+                yield streamWithRecovery(prompt, turnRetry);
+            }
+            case TIMEOUT_RECONNECT -> {
+                turnRetry.markAttempted(RecoveryBranch.TIMEOUT_RECONNECT);
+                backoffWaiter.accept(1.0); // 固定 1s 重建连接等待
+                yield streamWithRecovery(prompt, turnRetry);
+            }
+            case TERMINATE -> Flux.error(new ResilientCallException(
+                    "所有恢复策略耗尽: " + classified.reason(), classified, e));
+        };
+    }
+
     // ── 分类 ──
+
+    /** 单 turn 通用退避上限（ModelConfig.maxAttempts，缺省取默认值）——call/stream 共用。 */
+    private int resolveMaxAttempts() {
+        return currentModelConfig.getMaxAttempts() != null
+                ? currentModelConfig.getMaxAttempts() : DEFAULT_MAX_ATTEMPTS;
+    }
 
     private ClassifiedError classifyError(Exception e) {
         try {

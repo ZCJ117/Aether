@@ -61,6 +61,49 @@ class ModelCallCacheTest {
     }
 
     @Test
+    void cacheKeyIsStableForSameInput() {
+        List<org.springframework.ai.chat.messages.Message> messages = List.of(
+                new org.springframework.ai.chat.messages.UserMessage("你好"));
+        assertThat(ModelCallCache.cacheKey("gpt-4o", messages))
+                .isEqualTo(ModelCallCache.cacheKey("gpt-4o", messages));
+    }
+
+    @Test
+    void cacheKeyDistinguishesDifferentModelAndText() {
+        List<org.springframework.ai.chat.messages.Message> messages =
+                List.of(new org.springframework.ai.chat.messages.UserMessage("你好"));
+        List<org.springframework.ai.chat.messages.Message> other =
+                List.of(new org.springframework.ai.chat.messages.UserMessage("再见"));
+        String key = ModelCallCache.cacheKey("gpt-4o", messages);
+        assertThat(key).isNotEqualTo(ModelCallCache.cacheKey("gpt-4o", other));
+        assertThat(key).isNotEqualTo(ModelCallCache.cacheKey("claude-sonnet", messages));
+    }
+
+    @Test
+    void cacheKeyDoesNotCollideOnLegacy32BitHash() {
+        // "Aa" 与 "BB" 的 String.hashCode 相同（2112），旧 Objects.hash 实现下两段对话必碰撞；
+        // SHA-256 摘要必须能区分它们
+        List<org.springframework.ai.chat.messages.Message> aa =
+                List.of(new org.springframework.ai.chat.messages.UserMessage("Aa"));
+        List<org.springframework.ai.chat.messages.Message> bb =
+                List.of(new org.springframework.ai.chat.messages.UserMessage("BB"));
+        assertThat(ModelCallCache.cacheKey("gpt-4o", aa))
+                .isNotEqualTo(ModelCallCache.cacheKey("gpt-4o", bb));
+    }
+
+    @Test
+    void cacheKeyDistinguishesRoleWithSameText() {
+        List<org.springframework.ai.chat.messages.Message> asUser =
+                List.of(new org.springframework.ai.chat.messages.UserMessage("同样的话"));
+        List<org.springframework.ai.chat.messages.Message> asTool =
+                List.of(new org.springframework.ai.chat.messages.ToolResponseMessage(
+                        List.of(new org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse(
+                                "call-1", "search", "同样的话"))));
+        assertThat(ModelCallCache.cacheKey("gpt-4o", asUser))
+                .isNotEqualTo(ModelCallCache.cacheKey("gpt-4o", asTool));
+    }
+
+    @Test
     void secondaryFailureDegradesToMissWithoutThrowing() {
         ModelCacheStore broken = new ModelCacheStore() {
             @Override

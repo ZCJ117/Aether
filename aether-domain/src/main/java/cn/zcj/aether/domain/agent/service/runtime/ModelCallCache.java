@@ -10,12 +10,11 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
  * P1-#2: LLM 响应缓存。
- * Key = modelName + ":" + messages.contentHashCode()
+ * Key = modelName + ":" + SHA-256(role+text 逐条摘要)（16 进制；32 位 Objects.hash 碰撞会导致不同对话误命中）
  * Value = ModelInvoker.ModelCallResult
  * TTL = 60s (默认), 最大 1000 条, LRU 淘汰
  */
@@ -60,10 +59,23 @@ public class ModelCallCache {
     }
 
     public static String cacheKey(String modelName, List<org.springframework.ai.chat.messages.Message> messages) {
-        int hash = Objects.hash(modelName, messages.stream()
-                .map(m -> m.getText() != null ? m.getText() : "")
-                .toList());
-        return modelName + ":" + hash;
+        // SHA-256 全量摘要替代 32 位 Objects.hash：碰撞概率从 ~1/2^32 降为工程可忽略，
+        // 且逐条消息计入 role，user/tool_result 文本相同也不再同 key
+        java.security.MessageDigest digest;
+        try {
+            digest = java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("JVM 必有 SHA-256，不应到达此处", e);
+        }
+        digest.update((modelName != null ? modelName : "").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        for (org.springframework.ai.chat.messages.Message m : messages) {
+            String text = m.getText() != null ? m.getText() : "";
+            digest.update((byte) 0);
+            digest.update(String.valueOf(m.getMessageType()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return modelName + ":" + java.util.HexFormat.of().formatHex(digest.digest());
     }
 
     public ModelInvoker.ModelCallResult get(String key) {

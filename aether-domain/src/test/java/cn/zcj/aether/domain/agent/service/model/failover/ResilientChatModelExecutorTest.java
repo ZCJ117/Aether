@@ -11,7 +11,9 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import reactor.core.publisher.Flux;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -199,5 +201,56 @@ class ResilientChatModelExecutorTest {
 
         assertThrows(ResilientChatModelExecutor.ResilientCallException.class,
                 () -> executor.call(new Prompt("hi")));
+    }
+
+    // ── 真流式：逐帧透传 + 首帧前容错 ──
+
+    @Test
+    void streamPassesFramesThroughWithoutAggregation() {
+        when(chatModel.stream(any(Prompt.class))).thenReturn(Flux.just(ok(), ok(), ok()));
+        ModelConfig cfg = ModelConfig.builder().modelId("gpt-4o").apiKey("key1").build();
+
+        List<ChatResponse> frames = build(cfg, List.of())
+                .stream(new Prompt("hi")).collectList().block(Duration.ofSeconds(5));
+
+        assertEquals(3, frames.size(), "流式帧必须逐帧透传，不得聚合为单帧");
+        verify(chatModel, times(1)).stream(any(Prompt.class));
+    }
+
+    @Test
+    void streamRetriesBeforeFirstFrameThenStreams() {
+        when(chatModel.stream(any(Prompt.class)))
+                .thenReturn(Flux.error(new RuntimeException("rate limited")))
+                .thenReturn(Flux.just(ok(), ok()));
+        when(classifier.classify(any(), any(), any())).thenReturn(
+                ClassifiedError.of(FailoverReason.RATE_LIMIT, 429, "openai", "gpt-4o", "rate"));
+        ModelConfig cfg = ModelConfig.builder().modelId("gpt-4o").apiKey("key1").build();
+
+        ResilientChatModelExecutor executor = build(cfg, List.of());
+        executor.setBackoffWaiter(sec -> { }); // 测试中跳过真实退避等待
+
+        List<ChatResponse> frames = executor.stream(new Prompt("hi"))
+                .collectList().block(Duration.ofSeconds(5));
+
+        assertEquals(2, frames.size(), "首帧前失败应重试并正常流出全部帧");
+        verify(chatModel, times(2)).stream(any(Prompt.class));
+    }
+
+    @Test
+    void streamErrorAfterFirstFramePropagatesWithoutRetry() {
+        // 首帧后失败：重放会向下游重复下发已发出的帧，必须原样传播
+        when(chatModel.stream(any(Prompt.class)))
+                .thenReturn(Flux.just(ok()).concatWith(Flux.error(new RuntimeException("mid-stream boom"))));
+        ModelConfig cfg = ModelConfig.builder().modelId("gpt-4o").apiKey("key1").build();
+
+        List<ChatResponse> received = new ArrayList<>();
+        assertThrows(RuntimeException.class, () -> build(cfg, List.of())
+                .stream(new Prompt("hi"))
+                .doOnNext(received::add)
+                .collectList()
+                .block(Duration.ofSeconds(5)));
+
+        assertEquals(1, received.size(), "错误前已下发的帧应保留");
+        verify(chatModel, times(1)).stream(any(Prompt.class));
     }
 }

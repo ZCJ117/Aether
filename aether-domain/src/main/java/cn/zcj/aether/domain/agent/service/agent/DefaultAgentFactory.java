@@ -17,6 +17,7 @@ import cn.zcj.aether.domain.agent.service.curation.CurationPipeline;
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
 import cn.zcj.aether.domain.agent.service.notes.ExternalNotes;
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
+import cn.zcj.aether.domain.agent.service.session.SessionRepository;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
@@ -93,6 +94,8 @@ public class DefaultAgentFactory {
                 }
                 // P1(1.1): 注入模型等待可观测（waiting-threads gauge + 超时计数）
                 agent.setModelCallObservability(modelCallObservability);
+                // H4: 注入挂起快照持久化仓储（无持久化部署时为 null，Agent 侧降级跳过）
+                agent.setSessionRepository(resolveBean(SessionRepository.class));
                 return agent;
             }
         });

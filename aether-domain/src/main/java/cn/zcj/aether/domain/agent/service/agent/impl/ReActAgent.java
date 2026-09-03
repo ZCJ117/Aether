@@ -20,6 +20,8 @@ import cn.zcj.aether.domain.agent.service.model.failover.ResilientChatModelExecu
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
+import cn.zcj.aether.domain.agent.service.session.SessionEntity;
+import cn.zcj.aether.domain.agent.service.session.SessionRepository;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
 import cn.zcj.aether.domain.agent.service.tool.ToolResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -81,6 +83,14 @@ public class ReActAgent extends BaseAgent {
     /** P1(1.1): 注入模型等待可观测（DefaultAgentFactory 构造后调用）。 */
     public void setModelCallObservability(ModelCallObservability observability) {
         this.modelCallObservability = observability;
+    }
+
+    /** H4: 挂起快照持久化仓储（可选注入，未注入时退化为仅内存，由 SessionPersistenceHook 收尾兜底）。 */
+    private SessionRepository sessionRepository;
+
+    /** 注入会话持久化仓储（由 DefaultAgentFactory 构造后调用）。 */
+    public void setSessionRepository(SessionRepository sessionRepository) {
+        this.sessionRepository = sessionRepository;
     }
 
     private Instant startTime;
@@ -149,7 +159,10 @@ public class ReActAgent extends BaseAgent {
                 // 生命周期：after
                 long durationMs = java.time.Duration.between(startTime, Instant.now()).toMillis();
                 AgentResult result = AgentResult.success(getId(), "done", state.getCurrentTurn(), durationMs);
-                state.setStatus(AgentState.AgentStatus.IDLE);
+                // H4: 权限挂起后 status=PAUSED——不得被收尾覆写为 IDLE（挂起快照与恢复协议依赖该状态）
+                if (state.getStatus() == AgentState.AgentStatus.RUNNING) {
+                    state.setStatus(AgentState.AgentStatus.IDLE);
+                }
                 onAfterExecute(ctx, result);
 
             } catch (Exception e) {
@@ -899,15 +912,36 @@ public class ReActAgent extends BaseAgent {
 
     /**
      * 持久化当前 Agent 状态到 SessionRepository。
+     *
+     * <p>在权限挂起瞬间落盘（agent 的 PAUSED 状态存于 stateJson，与恢复协议
+     * {@code ChatService.handleConfirm} 的快照来源对齐）；实体级 status 沿用 "ACTIVE"
+     * （会话列表生命周期语义，与 {@code SessionPersistenceHook} 一致）。
+     * 未注入 SessionRepository 时降级为仅日志，不阻断挂起流程。</p>
      */
     private void persistState(RuntimeContext ctx) {
-        // 持久化依赖外部 SessionRepository，通过 ChatService 的会话持久化机制完成。
-        // 此处通过 saveState() 序列化，由调用方（ChatService）负责写入存储。
-        // ReActAgent 自身不持有 SessionRepository 引用（保持 DDD 分层约束）。
-        Map<String, Object> stateJson = saveState();
-        log.debug("Agent [{}] 状态已序列化待持久化: sessionId={}, askingCount={}",
-                getId(), ctx.sessionId(),
-                state.getAsking().size());
+        if (sessionRepository == null) {
+            log.debug("未注入 SessionRepository，跳过挂起快照落盘: sessionId={}", ctx.sessionId());
+            return;
+        }
+        try {
+            String stateJson = objectMapper.writeValueAsString(saveState());
+            SessionEntity entity = SessionEntity.builder()
+                    .sessionId(ctx.sessionId())
+                    .userId(ctx.userId())
+                    .agentId(getId())
+                    .status("ACTIVE")
+                    .stateJson(stateJson)
+                    .updatedAt(Instant.now())
+                    .build();
+            sessionRepository.save(entity).exceptionally(ex -> {
+                log.error("挂起快照持久化失败: agentId={}, sessionId={}", getId(), ctx.sessionId(), ex);
+                return null;
+            });
+            log.info("挂起快照已落盘: agentId={}, sessionId={}, status=PAUSED, askingCount={}",
+                    getId(), ctx.sessionId(), state.getAsking().size());
+        } catch (Exception e) {
+            log.error("挂起快照序列化失败: agentId={}, sessionId={}", getId(), ctx.sessionId(), e);
+        }
     }
 
     /**
