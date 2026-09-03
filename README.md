@@ -5,21 +5,21 @@
 ![CI](https://github.com/zuo-changjian/ai-agent-scaffold-lite/actions/workflows/ci.yml/badge.svg)
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.3-brightgreen)
-![Tests](https://img.shields.io/badge/tests-676%20passing-success)
+![Tests](https://img.shields.io/badge/tests-688%20passing-success)
 ![Coverage](https://img.shields.io/badge/coverage-51.4%25%20line-brightgreen)
 
 ## 量化数字（路线图交付）
 
 | 指标 | 数值 | 来源 |
 |------|------|------|
-| 测试用例 | **676**（0 失败） | `mvn -B verify` |
+| 测试用例 | **688**（0 失败；另有 3 个 Testcontainers IT 需 Docker） | `mvn -B verify`（无 Docker 加 `-DskipITs`） |
 | 行覆盖率（全项目 / domain） | **51.4% / 55.4%**（全项目达标 ≥40%；domain 距 60% 目标持续攻坚中） | [docs/coverage-baseline.md](docs/coverage-baseline.md) |
 | Eval 评测通过率（确定性模式） | **100%**（50 例：工具选择 20 / 多步编排 15 / 上下文保持 10 / 权限协议 5） | [docs/eval-report.md](docs/eval-report.md) |
 | A/B 回归捕获 | 基线 100% → 变异后 98%，失败用例精确定位 | `scripts/eval-ab-demo.sh` |
 | 并发容量 | **50 VU × 10 轮流式对话，0 错误**，轮 p95 稳定 ~4.6s（mock 节奏） | [docs/benchmark-report.md](docs/benchmark-report.md) |
 | 容错混沌恢复 | 429×3 → 500×2 → 成功，恢复 **197s**，最终成功率 **100%** | `benchmark/run.sh` |
 | LLM 响应缓存 | 冷调用 4,577ms → 命中后 p95 **14ms**（**331x**） | `aether.cache.llm.hitrate` |
-| 真流式 A/B | TTFT 真流式 ≈ 缓冲（Δ<2%）——收益被容错包装层中和，已定位为 P1 修复项 | [docs/benchmark-report.md](docs/benchmark-report.md) |
+| 真流式 A/B | TTFT 真流式 ≈ 缓冲（Δ<2%）——修复前基线；`stream()` 单帧聚合缺陷已于 2026-09-03 修复（逐帧透传 + 首帧前 failover） | [docs/benchmark-report.md](docs/benchmark-report.md) |
 | 多实例线性度（P2-1.4） | 单实例 1,144 RPS → 双实例 2,036 RPS = **1.78x**，64 并发 0 错误，PASS | [docs/scaling-benchmark-report.md](docs/scaling-benchmark-report.md) |
 
 ## 5 条命令快速开始
@@ -70,6 +70,17 @@ docker compose -f docker/docker-compose-fullstack.yml --env-file docker/.env up 
 docker compose -f docker/docker-compose-scale.yml up -d
 python scripts/scaling-benchmark.py --mode all --manage-stack --duration 60
 ```
+
+## 缺陷修复记录（2026-09-03，四缺陷端到端修复）
+
+| 缺陷 | 修复 | 回归测试 |
+|---|---|---|
+| `ModelCallCache` 缓存 key 用 32 位 `Objects.hash` 且不含消息 role——哈希碰撞导致不同对话误命中 | key 改为 SHA-256 全量摘要（modelName + 逐条 `role+text`），碰撞概率降至工程可忽略 | `ModelCallCacheTest`（碰撞回归/稳定性/区分度） |
+| `ResilientChatModelExecutor.stream()` 委托同步 `call()` 聚合为单帧——真流式 TTFT 失效 | stream 改逐帧透传；首帧前按恢复分支重建流（退避/压缩/凭据轮换/fallback），首帧后失败不重放 | `ResilientChatModelExecutorTest`（多帧/首帧前后失败） |
+| `ReActAgent.persistState` 伪持久化 + 挂起 PAUSED 状态被收尾无条件覆写为 IDLE——权限挂起恢复协议失效 | 挂起瞬间经可选注入的 `SessionRepository` 真实落盘快照；`execute()` 收尾仅 RUNNING→IDLE，PAUSED 保持 | `ReActAgentStatePersistenceTest`（落盘 + loadState 恢复回路） |
+| `MiddlewareChain.applyActing` 吞异常继续放行——权限链被击穿成 fail-open | 改 fail-closed：任一中间件异常即中断链路并拒绝本批全部工具调用（log.error 含堆栈） | `MiddlewareChainTest`（短路/透传/正常链） |
+
+四个测试类 22 用例全绿 + domain/app 模块回归通过，详见 [docs/superpowers/plans/2026-09-02-four-defect-fixes.md](docs/superpowers/plans/2026-09-02-four-defect-fixes.md)（含根因分析与遗留项记录）。
 
 ---
 
@@ -149,7 +160,8 @@ Aether 是一个六模块的 Maven 多模块工程（`groupId=cn.zcj.aether`，`
 ### 3. 模型 Provider SPI 与容错
 
 - 可插拔的 `ModelProvider` SPI，内置 `OpenAIProvider`、`AnthropicProvider`、`DashScopeProvider`，由 `ModelProviderRegistry` 自动发现并按 `modelId` 路由。
-- **容错与凭据轮换**：`ResilientChatModelExecutor`（错误分类 + 退避重试 + fallback 链）、`RotatingCredentialPool`、`DefaultModelErrorClassifier`、`RetryBackoff`、`RecoveryDirective` 等。
+- **容错与凭据轮换**：`ResilientChatModelExecutor`（错误分类 + 退避重试 + fallback 链；`call()` 与 `stream()` 共用恢复分支，流式为逐帧透传 + 首帧前 failover、首帧后失败不重放）、`RotatingCredentialPool`、`DefaultModelErrorClassifier`、`RetryBackoff`、`RecoveryDirective` 等。
+- **LLM 响应缓存**：`ModelCallCache`（Caffeine L1，TTL 60s / LRU 1000 条 + 可选 Redis L2），key 为 modelName + SHA-256(逐条 role+text) 摘要（2026-09-03 修复 32 位哈希碰撞）。
 - **成本追踪与熔断**：`ModelPricingRegistry` + `TokenBudget`，支持 `maxCostUsd` 成本上限熔断。
 
 ### 4. 上下文与记忆
@@ -179,6 +191,7 @@ Aether 是一个六模块的 Maven 多模块工程（`groupId=cn.zcj.aether`，`
 
 - 会话持久化支持 PostgreSQL（`PgSessionRepository`）与 Redis（`RedisSessionRepository`），软删除策略（状态改为 `ARCHIVED`）。
 - Agent 状态序列化 / 恢复（`saveState` / `loadState`），缺失必需字段时抛出 `StateRestoreException`「响亮失败」。
+- 权限挂起（PAUSED）瞬间即经可选注入的 `SessionRepository` 落盘状态快照（未注入时降级为仅内存），收尾不会把 PAUSED 覆写为 IDLE，支撑确认回执后的恢复执行。
 - 检查点（Checkpoint）：每 N 轮自动保存（`checkpointInterval`，默认 5），支持文件快照（`FileCheckpointCollector`）、WAL 结构化日志、Git 影子仓（`GitShadowCheckpointStore`）。
 
 ### 9. 安全与审计
@@ -284,7 +297,7 @@ aether/
 │       │   └── security/UserDetailsServiceImpl.java
 │       └── resources/
 │           ├── application.yml     # 主配置（默认激活 dev）
-│           ├── application-dev.yml / application-prod.yml / application-test.yml
+│           ├── application-dev.yml / application-prod.yml / application-test.yml / application-bench.yml
 │           ├── schema.sql          # 数据库初始化（spring.sql.init.mode=always）
 │           ├── logback-spring.xml
 │           └── agent/              # 智能体 YAML 配置 + skills + prompts
@@ -314,11 +327,13 @@ aether/
 git clone <repository-url> aether
 cd aether
 
-# 编译并跳过测试（父 POM 中 surefire 默认 skipTests=true）
+# 编译并跳过测试（父 POM 未默认跳过测试，需显式 -DskipTests）
 mvn clean package -DskipTests
 ```
 
 打包产物为 `aether-app/target/aether-app.jar`。
+
+> 注意：`mvn -B verify` 会连带执行 `aether-infrastructure` 的 Testcontainers 集成测试（`*IT.java`，需 Docker 运行环境）；无 Docker 本地验证请加 `-DskipITs`。JDK 17 可直接运行；本机为 JDK 21 时需追加 `-DargLine="-Djdk.attach.allowAttachSelf=true -XX:+EnableDynamicAgentLoading"`（Mockito inline 自附加）。
 
 ### 2. 启动数据库（可选）
 
@@ -360,6 +375,7 @@ java -jar aether-app/target/aether-app.jar \
 
 | 配置键 | 默认值 | 说明 |
 |--------|--------|------|
+| `ai.agent.config.enabled` | `true` | Agent 自动装配总开关（O17；false 时启动不装配任何 Agent） |
 | `aether.ssrf.allow-private-urls` | `false` | SSRF 防护：是否允许访问内网 URL（生产必须为 false，dev 覆盖为 true） |
 | `aether.security.jwt.secret` | `${JWT_SECRET:...}` | JWT 签名密钥（至少 32 字符） |
 | `aether.security.jwt.access-token-expiration` | `900000` | Access Token 有效期（ms，15 分钟） |
@@ -376,7 +392,7 @@ java -jar aether-app/target/aether-app.jar \
 | `aether.delegation.stale-scan-interval-ms` | `60000` | 过时委派扫描间隔 |
 | `aether.subagent.terminal-retention` | `100` | 子 Agent 终态保留上限 |
 | `aether.graph.trace.persistence` | dev 为 `true` | 图级 trace 是否异步落盘 |
-| `aether.cors.allowed-origins` | `*` | CORS 白名单（逗号分隔） |
+| `aether.cors.allowed-origins` | 未配置=拒绝所有跨域 | CORS 白名单（逗号分隔；dev 显式放行前端 `http://localhost:5173`） |
 
 ### P1/P2 新增配置速查
 
@@ -391,6 +407,21 @@ java -jar aether-app/target/aether-app.jar \
 | `aether.model.invoker.true-streaming` | `true` | 真流式模型调用开关（压测 A/B 维度） |
 | `aether.memory.decay.*` / `write-gate.*` / `conflict.*` | 见 yml | 记忆生命周期：遗忘曲线 / 写入重要性门槛 / 冲突合并策略 |
 | `aether.graph.background-review.*` | 关闭 | BackgroundReviewer 后台复盘开关与超时参数 |
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `DB_PASSWORD` | `123456`（dev/bench） | PostgreSQL 密码（prod 无默认，必须显式提供） |
+| `JWT_SECRET` | dev/bench 提供开发默认 | JWT 签名密钥（≥32 字符；主配置无默认，prod 未设即启动失败） |
+| `ZHIPU_API_KEY` | dev 提供开发回退 | 记忆向量嵌入（智谱）API Key（主配置无默认，未设置即启动失败；bench 关闭记忆不受影响） |
+| `JASYPT_MASTER_PASSWORD` | 无 | Jasypt 配置加密主密钥（`docker/.env` 与 docker-compose-secure.yml 使用） |
+| `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | Redis 连接（限流 redis 模式 / 会话 redis 存储时使用） |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka broker 地址（`aether.kafka.enabled=true` 时生效） |
+| `AETHER_LLM_CACHE_REDIS_ENABLED` | `false` | LLM 缓存 Redis L2 开关（等价 `aether.cache.llm.redis-enabled`） |
+| `AETHER_MODEL_INVOKER_TRUE_STREAMING` | `true` | 真流式开关（bench 压测 A/B 重启切换用） |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP 上报端点（OTel Java Agent 读取） |
+| `MANAGEMENT_HEALTH_REDIS_ENABLED` | `false` | 未部署 Redis 时保持 health UP；redis 模式部署设 `true` |
 
 ### 数据源与线程池（`application-dev.yml`）
 
@@ -616,7 +647,7 @@ runner:
 ## 工程化闭环（P0 路线图交付）
 
 ```bash
-mvn -B verify                                        # 构建 + 676 测试 + JaCoCo（aether-app/target/site/jacoco-aggregate/）
+mvn -B verify                                        # 构建 + 688 测试 + JaCoCo（aether-app/target/site/jacoco-aggregate/；IT 需 Docker，无 Docker 加 -DskipITs）
 python scripts/coverage-summary.py --write docs/coverage-baseline.md   # 覆盖率汇总/盲区
 docker compose -f docker/docker-compose-bench.yml up -d --build        # 压测栈（PG + mock-llm + aether bench）
 cd benchmark && ./run.sh                             # 一键压测 → docs/benchmark-report.md
