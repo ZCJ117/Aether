@@ -15,11 +15,15 @@ import java.util.regex.Pattern;
  *   <li><b>危险模式</b> — 需用户审批（rm -r、curl|sh、chmod 777…）</li>
  *   <li><b>会话白名单</b> — 用户批准"本会话始终允许"</li>
  * </ol>
+ *
+ * <p><b>【架构亮点 · 权限体系 fail-closed】</b><br>
+ * 面试举证点：HARDBLOCK 正则集（:23-36）对任意危险命令（rm -rf /、dd、DROP TABLE 等）永远 DENY；priority=0（:58）置于 deny 组最高优先；即便上层 BYPASS 模式也拒绝（:79-82），构成不可绕过的"最后一道墙"。
  */
 @Slf4j
 @Component
 public class DangerousToolRule implements PermissionRule {
 
+    // 【fail-closed】危险命令硬封锁正则集：命中即 DENY，任何权限模式（含 BYPASS）均不可绕过
     private static final Set<Pattern> HARDBLOCK = Set.of(
         Pattern.compile("rm\\s+-rf\\s+/", Pattern.CASE_INSENSITIVE),
         Pattern.compile("rm\\s+-rf\\s+--no-preserve-root", Pattern.CASE_INSENSITIVE),
@@ -55,7 +59,7 @@ public class DangerousToolRule implements PermissionRule {
     public String name() { return "dangerous-tool"; }
 
     @Override
-    public int priority() { return 0; }
+    public int priority() { return 0; } // 【fail-closed】priority=0 最高优先，确保硬封锁先于一切规则求值
 
     /**
      * 仅判断是否命中硬封锁（deny-first 最高层）。
@@ -75,6 +79,7 @@ public class DangerousToolRule implements PermissionRule {
     public PermissionDecision evaluate(PermissionContext ctx) {
         String toolCall = ctx.getToolName() + " " + ctx.getToolInput();
 
+        // 【fail-closed】Layer 1 硬封锁：即使上层 BYPASS 模式也强制拒绝，是不可绕过的最后防线
         // Layer 1: 硬封锁（即使 BYPASS 也拒绝）—— 复用 isHardblocked
         if (isHardblocked(ctx)) {
             log.warn("硬封锁触发: tool={}, user={}", ctx.getToolName(), ctx.getUserId());

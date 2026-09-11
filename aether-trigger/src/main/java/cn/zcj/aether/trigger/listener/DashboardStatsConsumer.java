@@ -23,6 +23,11 @@ import java.util.List;
  * 聚合规则：turn.completed → turns/toolCalls；tool.call.completed → toolCalls/toolErrors；
  * agent.completed → sessions；model.call.completed → tokens/cost。
  * key=sessionId 分区，消费侧并发 2×分区数按 key 分组，聚合行级竞争由 upsert 原子增量化解。</p>
+ *
+ * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
+ * 面试举证点：消费端<b>幂等去重</b>——批量 {@code onBatch()}（行44）先以 {@code aether_processed_event}
+ * 占位（行63，ON CONFLICT 原子判定）实现至少一次投递下幂等；解析失败（缺 eventId/agentId 或格式错）
+ * 送 DLT（行53-60）隔离毒消息；聚合增量写入 dashboard_stats（行71-85）替代实时 GROUP BY。</p>
  */
 @Slf4j
 @Component
@@ -45,20 +50,24 @@ public class DashboardStatsConsumer {
             topics = KafkaTopics.AGENT_EVENTS,
             groupId = "aether-dashboard-consumer",
             containerFactory = "batchListenerContainerFactory")
+    // 【事件驱动】批量消费 + 手动 ack：处理完整批才提交 offset
     public void onBatch(List<ConsumerRecord<Object, Object>> records, Acknowledgment ack) {
         for (ConsumerRecord<Object, Object> record : records) {
             String json = record.value() instanceof String s ? s : null;
             AgentEventMessage msg = KafkaMessageCodec.fromJson(json, AgentEventMessage.class);
             if (msg == null) {
+                // 【事件驱动】解析失败送 DLT，隔离毒消息
                 DltSupport.sendToDlt(kafkaTemplate, KafkaTopics.AGENT_EVENTS_DLT,
                         record, "agent 事件", "消息解析失败");
                 continue;
             }
             if (msg.eventId() == null || msg.agentId() == null) {
+                // 【事件驱动】缺幂等键送 DLT，避免无法去重
                 DltSupport.sendToDlt(kafkaTemplate, KafkaTopics.AGENT_EVENTS_DLT,
                         record, "agent 事件", "缺幂等键/agentId");
                 continue;
             }
+            // 【事件驱动】幂等占位：返回 false = 重复投递，跳过（至少一次下不重复计数）
             // 幂等占位：返回 false = 重复投递，跳过
             if (!processedEventRepository.markProcessed(msg.eventId(), msg.eventType())) {
                 continue;

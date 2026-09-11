@@ -43,6 +43,12 @@ import java.util.stream.Collectors;
 /**
  * 标准 ReAct（Reasoning + Acting）Agent 实现。
  * 迁移自 AgentRuntime.queryLoop()，但现在是 Agent 的自有行为。
+ *
+ * <p><b>【架构亮点 · 上下文工程与成本治理】</b><br>
+ * 面试举证点：①每轮模型调用后做 M7 成本跟踪与熔断（:312-330）——lookup 定价、accumulateCost 累计、isWithinBudget 判定，
+ * 超限即发 costExceeded 事件并终止本轮 agent 执行；<br>
+ * ②成本上限来自 AgentConfig.getMaxCostUsd，与 TokenBudget 双轨；<br>
+ * ③ReAct 主循环是成本治理的「执行闸口」：上下文预算不足由下游压缩兜底，而美元预算超限在此硬终止，避免失控烧钱。</p>
  */
 @Slf4j
 public class ReActAgent extends BaseAgent {
@@ -310,6 +316,7 @@ public class ReActAgent extends BaseAgent {
             }
 
             // ====== M7: 成本跟踪与熔断检查 ======
+            // 【成本治理】每轮模型调用后累计成本并熔断：超限发 costExceeded 事件并终止 agent
             if (pricingRegistry != null && tokenBudget != null) {
                 // 设置每轮成本上限（从 AgentConfig 读取）
                 if (config.getMaxCostUsd() != null && config.getMaxCostUsd() > 0) {
@@ -323,6 +330,7 @@ public class ReActAgent extends BaseAgent {
                 if (!tokenBudget.isWithinBudget()) {
                     log.warn("Agent [{}] 成本超限 ${}，触发熔断",
                             getId(), String.format("%.4f", tokenBudget.getTotalCostUsd()));
+                    // 【成本治理】熔断动作：下发 costExceeded 事件并结束本轮 ReAct 循环，硬止烧钱
                     emitter.onNext(RuntimeEvent.costExceeded(
                             tokenBudget.getTotalCostUsd(), tokenBudget.getMaxCostUsd()));
                     emitter.onComplete();

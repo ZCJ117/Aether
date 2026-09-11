@@ -3,10 +3,16 @@ spring:
     name: aether-app
   profiles:
 #   NOTE 2.在项目启动时优先加载application.yml, 在第六行激活 dev 因此它会加载 application-dev.yml 作为补充配置
+    # 【工程化闭环】profile 体系（dev/prod/test/bench）实现"一套代码、多环境配置"的工程化治理：
+    # 由单一 application.yml 激活基准 profile，再按环境叠加对应 application-{profile}.yml，
+    # 配置变更无需改码重编，配合 CI 多 profile 测试与容器 env 注入形成环境隔离闭环。
     active: dev
   # ====== P1(1.2): Redis（mode=redis 分布式限流 / session.store=redis 时使用；Lettuce 懒连接，未部署不影响启动）======
   data:
     redis:
+      # 【工程化闭环】配置外部化：敏感/环境相关项（${REDIS_HOST}、${KAFKA_BOOTSTRAP_SERVERS}、
+      # ${JWT_SECRET}、${DB_PASSWORD}）全部以环境变量覆盖，默认值仅用于本地开发；
+      # 容器部署时由 docker-compose 注入，实现"配置与镜像解耦"，契合 12-factor 配置原则。
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 2000
@@ -34,6 +40,9 @@ management:
 # ====== P1(1.1): HTTP 承载层容量 —— SSE 长连接由 Tomcat 线程/连接器承载 ======
 # 容量公式与调优记录见 docs/capacity-planning.md：
 #   最大并发会话 ≈ min(graphPool.max+queue, tomcat.threads.max/每会话1线程, hikari.maximum-pool-size/每会话DB占用)
+# 【工程化闭环】SSE 流式推送为长连接，Tomcat 线程被连接长期占用；将 threads.max 调至 200、
+# max-connections=8192、accept-count=100，使连接承载量远大于 graph 并发编排上限，
+# 避免流式推送耗尽 HTTP 线程导致新请求排队，是"容量规划闭环"在承载层的落地。
 server:
   tomcat:
     threads:

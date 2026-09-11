@@ -38,6 +38,13 @@ import java.util.*;
  * - CORS 改为按 profile 配置白名单（不再 * 全开）
  * - 新增 POST /api/v1/confirm 权限确认回执端点
  * - SSE 序列化新增 permissionAsking / agentPaused 事件类型
+ *
+ * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
+ * 面试举证点：{@code chatStream()}（行365）是 Flowable→SSE 的边缘承接点——以 10 分钟超时的
+ * ResponseBodyEmitter（行374）订阅领域层 {@code Flowable<RuntimeEvent>}，将逐事件经
+ * {@code serializeEvent()}（行485）序列化为 SSE data 帧（textDelta/toolCall/permissionAsking/
+ * agentPaused/checkpoint/tokenBudget 等）；correlationId 入 MDC（行369）串联全链路；
+ * {@code confirm()}（行429）以同款 SSE 承接权限确认恢复流。</p>
  */
 @Slf4j
 @RestController
@@ -366,11 +373,13 @@ public class AgentServiceController implements IAgentService {
     @Override
     public ResponseBodyEmitter chatStream(@RequestBody ChatRequestDTO requestDTO) {
         // P0-6: 注入 correlationId 到 MDC
+        // 【流式】correlationId 入 MDC，串联 SSE 全链路便于跨进程追踪
         String correlationId = UUID.randomUUID().toString().substring(0, 8);
         MDC.put("correlationId", correlationId);
 
         // 超时对齐最长工具等待预算：baidu-search MCP requestTimeout=500s + 多轮调用，
         // 3min 会在 Agent 仍在执行时切断 SSE（前端"生成中"卡住 + 重发重复执行）。
+        // 【流式】SSE 边缘承接：10 分钟超时对齐最长工具等待预算，避免 Agent 执行中被切断
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(10 * 60 * 1000L);
         try {
             log.info("流式对话 agentId:{} userId:{} sessionId:{} message:{}",
@@ -385,6 +394,7 @@ public class AgentServiceController implements IAgentService {
             chatService.handleMessageStream(
                             requestDTO.getAgentId(), requestDTO.getUserId(),
                             sessionId, requestDTO.getMessage())
+                    // 【流式】订阅统一 Flowable，将逐事件经 SSE data 帧下发前端
                     .subscribe(
                             event -> {
                                 try {
@@ -482,6 +492,7 @@ public class AgentServiceController implements IAgentService {
 
     // ========== SSE 序列化 ==========
 
+    // 【流式】RuntimeEvent → SSE data 帧：按 type 序列化 textDelta/toolCall/permissionAsking 等
     private String serializeEvent(RuntimeEvent event) {
         try {
             Map<String, Object> payload = new LinkedHashMap<>();

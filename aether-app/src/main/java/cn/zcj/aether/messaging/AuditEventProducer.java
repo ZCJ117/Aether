@@ -21,6 +21,11 @@ import java.util.concurrent.TimeUnit;
  * <p><b>不丢</b>：{@code send()} 同步确认（acks=all + 有界等待），
  * 任何失败（超时/序列化/未启用）返回 false，调用方降级既有异步直写路径，
  * 审计永不静默丢失。<b>有序</b>：key=userId，单用户审计落同一分区。</p>
+ *
+ * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
+ * 面试举证点：审计事件走<b>强一致</b>通道——{@code send()}（行49）同步确认（acks=all + 有界等待，
+ * 行52-53），任何失败返回 false 触发调用方降级直写（行56-61，永不静默丢失）；key=userId（行51）
+ * 单用户有序落同一分区；{@code produce} 指标（行64-74）按 success/fallback 计数可观测。</p>
  */
 @Slf4j
 @Component
@@ -46,8 +51,10 @@ public class AuditEventProducer {
      *
      * @return true=已确认入队；false=失败（调用方必须降级直写，保证不丢）
      */
+    // 【事件驱动】强一致审计通道：同步确认 + 失败降级直写，保证不丢
     public boolean send(AuditEventMessage message) {
         try {
+            // 【事件驱动】key=userId 单用户有序；acks=all 同步确认（有界等待）
             String key = message.userId() != null ? message.userId().toString() : "anonymous";
             kafkaTemplate.send(KafkaTopics.AUDIT_EVENTS, key, KafkaMessageCodec.toJson(message))
                     .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
@@ -61,6 +68,7 @@ public class AuditEventProducer {
         }
     }
 
+    // 【事件驱动】produce 指标：success/fallback 计数，可观测审计投递健康度
     private void increment(String outcome) {
         if (meterRegistry == null) {
             return;

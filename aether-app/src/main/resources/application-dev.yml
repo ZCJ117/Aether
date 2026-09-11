@@ -85,6 +85,9 @@ logging:
   config: classpath:logback-spring.xml
 
 # ====== P1-3: 可观测性配置 ======
+# 【工程化闭环】可观测性端点按需暴露 health/info/metrics/prometheus：
+# prometheus 端点供 Prometheus 定时拉取，metrics.tags.application=aether-agent 为所有指标
+# 统一打上应用标签，便于多实例聚合与分面查询，是监控大盘与告警规则的数据来源闭环。
 management:
   endpoints:
     web:
@@ -96,10 +99,16 @@ management:
         enabled: true
   metrics:
     tags:
+      # 【工程化闭环】全局指标标签：所有 Micrometer 指标自动携带 application=aether-agent，
+      # 多实例部署时可在 Prometheus 中按应用维度聚合（如 sum by(application)），
+      # 与自定义指标 aether.session.persist.failures 共用同一标签体系，统一可观测。
       application: aether-agent
 
 # OpenTelemetry — 由 OTel Java Agent（-javaagent）在 JVM 启动时读取，非 Spring Boot 托管属性。
 # IDE 警告 "无法解析配置属性 otel.*" 为预期行为，不影响运行时。
+# 【工程化闭环】链路追踪经 OTLP 导出至 localhost:4317（OTel Collector），service.name=aether-agent
+# 与 metrics.tags.application 保持一致的应用标识；分布式调用链与指标/日志三支柱联动，
+# 使跨服务 SSE 编排的延迟与异常可在追踪系统端到端还原，补全"可观测三支柱"闭环。
 otel:
   traces:
     exporter: otlp

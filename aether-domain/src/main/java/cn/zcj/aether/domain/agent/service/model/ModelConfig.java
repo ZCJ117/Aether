@@ -12,6 +12,10 @@ import java.util.Map;
  *
  * P1 扩展：新增 maxAttempts / initialBackoff / maxBackoff / fallbackModels 字段，
  * 对齐 hermes/AgentScope 的分层重试 + fallback 配置。
+ *
+ * <p><b>【架构亮点 · 模型容错层】</b><br>
+ * 面试举证点：{@code fallbackModels}（:48）声明有序主备模型链，是模型级故障域隔离的配置载体；
+ * 配合 {@code maxAttempts}/退避时长实现分层重试，使单一 Provider 故障可被备模型链吸收，提升整体可用性。</p>
  */
 @Value
 @Builder

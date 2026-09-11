@@ -8,6 +8,11 @@ import java.util.*;
 
 /**
  * Agent 抽象基类，提供钩子管理和状态管理的通用实现。
+ * <p><b>【架构亮点 · 状态机与持久化】</b><br>
+ * 面试举证点：Agent 状态以"带版本号的快照"语义持久化——STATE_SCHEMA_VERSION=2（L86）置顶
+ * 于 saveState；loadState 对不支持的版本（version > 当前）响亮抛出 StateRestoreException（L113-117），
+ * 旧版经 migrate 迁移（L118-120），并用 requireKeys 强校验必需字段缺失即失败（L123），
+ * 对齐 autogen "恢复失败要响亮地失败"，杜绝带病恢复。</p>
  */
 @Slf4j
 public abstract class BaseAgent implements Agent {
@@ -82,6 +87,7 @@ public abstract class BaseAgent implements Agent {
         state.interruptControl().interrupt();
     }
 
+    // 【持久化】状态 schema 版本：v1=无版本号存量 JSON，v2=引入 schemaVersion 的带版本格式，迁移路径据此选择
     /** O4: 当前状态 schema 版本。v1 = 无版本号的存量 JSON；v2 = 引入 schemaVersion 后的带版本格式。 */
     public static final int STATE_SCHEMA_VERSION = 2;
 
@@ -111,15 +117,18 @@ public abstract class BaseAgent implements Agent {
         // O4: 按版本迁移——旧 JSON（无 schemaVersion）视为 v1；不支持的版本响亮失败
         int version = resolveSchemaVersion(stateMap);
         if (version > STATE_SCHEMA_VERSION) {
+            // 【持久化】不支持的版本响亮失败：拒绝恢复高于当前 schema 的状态，避免静默错乱
             throw new cn.zcj.aether.types.exception.StateRestoreException(
                     "State restore failed: unsupported schemaVersion " + version
                             + " (supported up to " + STATE_SCHEMA_VERSION + ")");
         }
         if (version < STATE_SCHEMA_VERSION) {
+            // 【持久化】旧版迁移：v1→v2 字段同构无需变换，此处保留显式迁移点供后续版本演进
             migrate(stateMap, version, STATE_SCHEMA_VERSION);
         }
 
         // H5-步骤1: 全字段必需校验——缺字段响亮报错（对齐 autogen "恢复失败要响亮地失败"）
+        // 【持久化】恢复强校验：必需字段缺失即抛 StateRestoreException，拒绝带病恢复
         requireKeys(stateMap, "currentTurn", "rollingSummary", "status", "messages");
 
         // 恢复轮次

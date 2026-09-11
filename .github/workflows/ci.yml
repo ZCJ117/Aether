@@ -7,6 +7,9 @@ on:
 
 jobs:
   build-test:
+    # 【工程化闭环】build-test 是质量门禁第一道关卡：mvn verify 同时跑单测（surefire）
+    # 与聚合覆盖率统计（JaCoCo），产物 jacoco-aggregate 报告上传为 artifact（保留 14 天），
+    # 失败时的 surefire 文本报告亦单独上传，保证"测试不通过 → 报告可追溯"闭环。
     name: Build & Test (JaCoCo)
     runs-on: ubuntu-latest
     steps:
@@ -37,6 +40,10 @@ jobs:
           path: '**/target/surefire-reports/*.txt'
 
   integration:
+    # 【工程化闭环】集成测试独立成 job，用 -Pintegration 激活 failsafe 跑 **/*IT.java，
+    # 通过 Testcontainers 拉起真实 PG(pgvector)/Redis/EmbeddedKafka 依赖，覆盖 KafkaAuditPipelineIT、
+    # PgHybridSearchRepositoryIT、RedisTokenBucketRateLimiterIT 等真实链路；与单测隔离避免
+    # 重量级容器拖慢核心构建，失败即上传 failsafe 报告，形成"集成验证闭环"。
     name: Integration Tests (Testcontainers)
     runs-on: ubuntu-latest
     steps:
@@ -61,6 +68,9 @@ jobs:
           path: '**/target/failsafe-reports/*.txt'
 
   qodana:
+    # 【工程化闭环】静态分析独立 job：JetBrains Qodana 对全仓做深度代码 inspection，
+    # 结果回写 security-events（需 contents:read + security-events:write），
+    # 在合并前拦截潜在缺陷与安全隐患，与单测/集成测试共同构成"多层质量门禁"。
     name: Qodana static analysis
     runs-on: ubuntu-latest
     permissions:

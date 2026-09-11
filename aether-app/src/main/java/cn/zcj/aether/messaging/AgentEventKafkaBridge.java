@@ -29,15 +29,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>事件发射在 Agent 调用线程上同步遍历订阅者，桥接端<b>绝不阻塞</b>：
  * 有界队列（1000）+ 后台单线程发送；队列满丢弃并计数（统计事件可容忍少量丢失）。</p>
+ *
+ * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
+ * 面试举证点：本类是事件总线→Kafka 的<b>跨进程解耦桥</b>——{@code @ConditionalOnProperty}
+ * （{@code aether.kafka.enabled}，行35）按需启用；内存总线回调 {@code onEvent()}（行63）仅做
+ * 映射+入队，<b>有界队列 1000 + 后台单线程发送零阻塞</b>（行42、76-93），队满丢弃计数不反压；
+ * 仅投递 4 类聚合投影（turn/tool/agent/model，行96-118），key=sessionId 保序。</p>
  */
 @Slf4j
 @Component
+// 【事件驱动】跨进程桥接按需启用：aether.kafka.enabled=true 才装配，未启用则纯内存总线
 @ConditionalOnProperty(name = "aether.kafka.enabled", havingValue = "true")
 public class AgentEventKafkaBridge {
 
     private final AgentEventPublisher publisher;
     private final KafkaTemplate<Object, Object> kafkaTemplate;
 
+    // 【事件驱动】有界队列 1000：背压边界，满则丢弃计数，绝不阻塞 Agent 调用线程
     private final BlockingQueue<AgentEventMessage> queue = new ArrayBlockingQueue<>(1000);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService sender;
@@ -59,7 +67,7 @@ public class AgentEventKafkaBridge {
         log.info("AgentEventKafkaBridge 已启动: topic={}", KafkaTopics.AGENT_EVENTS);
     }
 
-    /** 总线回调（Agent 调用线程）：只做映射 + 入队，零阻塞。 */
+    // 【事件驱动】总线回调（Agent 调用线程）：只做映射+入队，零阻塞、零反压
     void onEvent(AgentEvent event) {
         AgentEventMessage message = map(event);
         if (message == null) {
@@ -80,6 +88,7 @@ public class AgentEventKafkaBridge {
                 if (message == null) {
                     continue;
                 }
+                // 【事件驱动】key=sessionId 保序投递 4 类聚合投影到 aether.agent.events
                 kafkaTemplate.send(KafkaTopics.AGENT_EVENTS, message.sessionId(),
                         KafkaMessageCodec.toJson(message)).get(2, TimeUnit.SECONDS);
             } catch (InterruptedException e) {

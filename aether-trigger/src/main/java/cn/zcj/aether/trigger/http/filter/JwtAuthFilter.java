@@ -22,6 +22,9 @@ import java.util.List;
 
 /**
  * P0: JWT 认证过滤器（替换原有的 ApiTokenAuthFilter）。
+ *
+ * <p><b>【架构亮点 · 权限体系 fail-closed】</b><br>
+ * 面试举证点：token 过期/校验异常仅告警（:91-100），不向 SecurityContext 注入任何身份；未认证请求继续走过滤器链后由 anyRequest().authenticated() 统一拒绝，确保异常路径绝不静默赋予权限。
  */
 @Slf4j
 @Component
@@ -88,6 +91,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             log.debug("JWT 认证成功: userId={}, username={}, role={}",
                     userId, username, role);
 
+        // 【fail-closed】过期/校验异常仅告警，不向 SecurityContext 注入身份，交由后续 anyRequest().authenticated() 拒绝
         } catch (ExpiredJwtException e) {
             log.warn("JWT 已过期: {}, uri={}", e.getMessage(), request.getRequestURI());
         } catch (JwtException e) {

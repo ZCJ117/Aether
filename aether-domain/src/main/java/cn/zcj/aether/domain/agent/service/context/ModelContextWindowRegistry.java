@@ -20,12 +20,18 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>来源：autogen TokenLimited / cc-haha getEffectiveContextWindowSize 的模式，
  * 消除 TokenEstimator.getContextWindow() 的硬编码问题。</p>
+ *
+ * <p><b>【架构亮点 · 上下文工程与成本治理】</b><br>
+ * 面试举证点：①YAML 可配 + 关键字回退 + 默认 128k 三级查找（:60-82）消除硬编码窗口；<br>
+ * ②默认 128,000 tokens（:29），未知模型不再误判窗口；<br>
+ * ③关键字表 "claude"→200k 等（:46-49）对模型名做子串匹配，无需精确注册即可正确估算上下文容量，是 TokenBudget 三层预算与 ContextManager 压缩触发的前提。</p>
  */
 @Slf4j
 @Service
 public class ModelContextWindowRegistry {
 
     /** 默认上下文窗口：128k tokens（当前行业主流模型的默认值） */
+    // 【上下文工程】未知模型统一兜底 128k，避免窗口误判导致预算/压缩阈值失真
     public static final int DEFAULT_CONTEXT_WINDOW = 128_000;
 
     /** 精确 modelId → contextWindow 映射 */
@@ -70,6 +76,7 @@ public class ModelContextWindowRegistry {
         }
 
         // 2. 关键字包含匹配
+        // 【上下文工程】关键字兜底：模型名含 "claude" 即 200k、含 "gpt-4" 即 128k，无需精确注册
         for (Map.Entry<String, Integer> entry : keywordMap.entrySet()) {
             if (lower.contains(entry.getKey())) {
                 return entry.getValue();

@@ -21,6 +21,12 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import jakarta.servlet.DispatcherType;
 
+/**
+ * Web 层安全配置 —— 采用 fail-closed 的认证/授权默认拒绝策略。
+ *
+ * <p><b>【架构亮点 · 权限体系 fail-closed】</b><br>
+ * 面试举证点：authorizeHttpRequests 以 anyRequest().authenticated() 收底（:75），所有未显式 permitAll 的请求一律需认证；/actuator/** 与 /api/v1/admin/** 强制 ROLE_ADMIN（:71-72），认证失败由 JwtAuthEntryPoint 统一返回 401，未授权访问绝不放行。
+ */
 @Slf4j
 @Configuration
 @EnableWebSecurity
@@ -68,10 +74,12 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
+                // 【fail-closed】仅暴露 health；其余 /actuator/** 与 /api/v1/admin/** 强制 ADMIN
                 .requestMatchers("/actuator/**").hasRole("ADMIN")
                 .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                 // ASYNC 分发已在 REQUEST 阶段通过认证，无需二次授权检查
                 .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
+                // 【fail-closed】兜底策略：任何未显式放行的请求一律需认证，拒绝静默放行
                 .anyRequest().authenticated())
             .addFilterBefore(jwtAuthFilter,
                     UsernamePasswordAuthenticationFilter.class);

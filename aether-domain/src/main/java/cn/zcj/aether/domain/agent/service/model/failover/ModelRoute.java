@@ -29,6 +29,7 @@ public class ModelRoute {
     String completionsPath;
 
     /** 此路由的独立冷却时间戳（epoch millis），限流切换后 60s 内禁止切回 */
+    // 【容错】独立冷却：限流触发后一段时间内禁止切回该路由，避免对已限流端点空转重试
     long cooldownUntil;
 
     /** 标记此路由已冷却 */

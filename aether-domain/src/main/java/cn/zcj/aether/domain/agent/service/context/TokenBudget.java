@@ -10,6 +10,12 @@ import lombok.extern.slf4j.Slf4j;
  * ├── 固定开销层 (~15%): 系统提示词 + 工具定义 + 记忆注入
  * ├── 弹性层 (~70%): 对话历史 + 工具参数 + 工具结果
  * └── 预留层 (~15%): 模型输出 + 安全缓冲
+ *
+ * <p><b>【架构亮点 · 上下文工程与成本治理】</b><br>
+ * 面试举证点：①三层预算固定/弹性/预留（outputReserve = 窗口15%，见构造器 :35-36）将上下文窗口切分为可计量配额；<br>
+ * ②WARN 80% / ERROR 95% 双阈值预警（:25-26），checkThresholds 梯度告警避免突发截断；<br>
+ * ③tryConsume 为弹性层消费闸门（:43-52），返回 false 即触发上层压缩；<br>
+ * ④美元成本熔断 M7：setMaxCostUsd / accumulateCost / isWithinBudget / checkCostThreshold（:72-131）与 token 预算双轨并行，超限即熔断。</p>
  */
 @Slf4j
 @Getter
@@ -22,6 +28,7 @@ public class TokenBudget {
     private int currentElasticUsage;
 
     /** 告警阈值 */
+    // 【上下文工程】WARN 80% / ERROR 95% 双阈值：弹性层使用比例越线即分级告警，临近耗尽前预警
     private static final double WARN_THRESHOLD = 0.80;
     private static final double ERROR_THRESHOLD = 0.95;
 
@@ -33,6 +40,7 @@ public class TokenBudget {
         this.contextWindow = contextWindow;
         this.fixedOverhead = fixedOverhead;
         this.outputReserve = (int) (contextWindow * 0.15);
+        // 【上下文工程】预留层 = 窗口 15%，专门用于模型输出与安全缓冲，避免压缩/截断导致回复被截断
         this.elasticBudget = contextWindow - fixedOverhead - outputReserve;
         this.currentElasticUsage = 0;
     }
@@ -41,6 +49,7 @@ public class TokenBudget {
      * 尝试消费弹性预算。返回 false 表示预算不足，需触发压缩。
      */
     public boolean tryConsume(int estimatedTokens) {
+        // 【上下文工程】预算闸门：弹性层配额不足时拒绝消费并返回 false，驱动上层触发上下文压缩
         if (currentElasticUsage + estimatedTokens > elasticBudget) {
             log.warn("Token预算拒绝消费: 需要={} 当前={} 上限={}",
                     estimatedTokens, currentElasticUsage, elasticBudget);
@@ -69,6 +78,7 @@ public class TokenBudget {
 
     // ========== M7: 成本跟踪与熔断 ==========
 
+    // 【成本治理】M7 成本熔断：以美元为单位的累计成本上限，与 token 预算双轨并行，防止失控烧钱
     /** M7: 累计 USD 成本 */
     private double totalCostUsd = 0.0;
 
@@ -121,6 +131,7 @@ public class TokenBudget {
     public double getMaxCostUsd() { return maxCostUsd; }
 
     private void checkCostThreshold() {
+        // 【成本治理】累计成本越过美元上限即置 costExhausted=true，后续 isWithinBudget() 返回 false 触发熔断
         if (maxCostUsd <= 0) return;
         if (totalCostUsd >= maxCostUsd && !costExhausted) {
             costExhausted = true;

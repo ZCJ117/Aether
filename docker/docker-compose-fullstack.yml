@@ -4,6 +4,9 @@
 # 启动：cd aether && docker compose -f docker/docker-compose-fullstack.yml --env-file docker/.env.example up -d
 # 端口：8091 应用 | 9090 Prometheus | 3000 Grafana | 9093 Alertmanager | 8081 alert-echo | 5432 PG
 # ============================================================
+# 【工程化闭环】一键全栈闭环：单条 docker compose 拉起 应用 + PG(pgvector) + Redis + Kafka(KRaft)
+# + Prometheus/Grafana/Alertmanager + node-exporter + alert-echo，覆盖"部署 → 限流/消息 → 监控告警"
+# 的完整工程化链路，本地即可复现生产可观测能力，无需逐个手工搭建。
 name: aether-fullstack
 
 services:
@@ -22,6 +25,9 @@ services:
         condition: service_started
     environment:
       - SPRING_PROFILES_ACTIVE=dev
+      # 【工程化闭环】密钥外部化：JASYPT_MASTER_PASSWORD 经 .env 注入容器，
+      # 配合根 pom.xml 的 jasypt-spring-boot-starter 在启动时解密配置文件中的敏感项，
+      # 实现"密文入库、明文不落地"，杜绝凭据硬编码（对照 application-dev.yml 中泄露的 dev key 教训）。
       - JASYPT_MASTER_PASSWORD=${JASYPT_MASTER_PASSWORD}
       - DB_PASSWORD=${DB_PASSWORD:-aether}
       - JWT_SECRET=${JWT_SECRET:-dev-only-jwt-secret-key-min-32-chars!!}
@@ -31,6 +37,8 @@ services:
       - REDIS_HOST=redis
       - MANAGEMENT_HEALTH_REDIS_ENABLED=true
       # ---- P1(1.3): Kafka 消息队列解耦 ----
+      # 【工程化闭环】AETHER_KAFKA_ENABLED=true 一键激活 Kafka 双链路（审计削峰 + 会话统计聚合），
+      # 与下方 kafka 服务、prometheus 监控联动，构成"消息解耦 → 指标采集 → 告警"的可观测闭环。
       - AETHER_KAFKA_ENABLED=true
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - AETHER_DASHBOARD_STATS_SOURCE=kafka
@@ -90,6 +98,9 @@ services:
     restart: unless-stopped
 
   # ---- P1(3.3): 监控告警栈 ----
+  # 【工程化闭环】监控告警栈（Prometheus 拉取 /actuator/prometheus、Grafana 可视化、
+  # Alertmanager 经 alert-echo 回显触达）与应用中暴露的 metrics/prometheus 端点对接，
+  # 将自定义指标（如 aether.session.persist.failures）纳入统一面板与告警，落地"可观测闭环"。
   prometheus:
     image: prom/prometheus:v2.53.0
     container_name: aether-prometheus

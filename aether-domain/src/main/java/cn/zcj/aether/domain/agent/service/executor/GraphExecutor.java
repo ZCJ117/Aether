@@ -45,6 +45,12 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>P2-2.3: orchestration details moved to {@code orchestration.*}; this class
  * retains execution lifecycle (trace, hooks, MDC, error completion).</p>
+ *
+ * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
+ * 面试举证点：{@code execute()}（行98）返回 {@code Flowable<RuntimeEvent>} 是统一流式出口；
+ * 内部以 {@code Flowable.create} + {@code FlowableEmitter}（行153、168）逐事件发射 RuntimeEvent，
+ * 五类编排策略（顺序/并行/循环/事件驱动/子代理，行174-187）共享同一 emitter 出口，下游
+ * HTTP(SSE) 与 Kafka 桥均消费同一 Flowable 原语，进程内全链路统一。</p>
  */
 @Slf4j
 @Service
@@ -95,6 +101,7 @@ public class GraphExecutor {
         return pool;
     }
 
+    // 【流式】统一流式出口：返回 Flowable<RuntimeEvent>，全链路事件原语
     public Flowable<RuntimeEvent> execute(AgentGraph graph, String userId, String sessionId,
                                           String initialMessage) {
         return Flowable.create(emitter -> {
@@ -150,6 +157,7 @@ public class GraphExecutor {
     }
 
     private boolean dispatchEdges(AgentGraph graph, String userId, String sessionId, String initialMessage,
+                                  // 【流式】统一事件出口：所有编排策略共用同一 FlowableEmitter
                                   ExecutionState state, FlowableEmitter<RuntimeEvent> emitter,
                                   String graphExecutionId) {
         for (AgentEdge edge : graph.getEdges()) {
@@ -159,6 +167,7 @@ public class GraphExecutor {
                 coordinator.execute(graph, userId, sessionId, initialMessage, emitter, graphExecutionId);
                 return true;
             }
+            // 【事件驱动】五类编排策略共享统一 emitter 出口，事件经同一 Flowable 流向下游
             strategyFor(edge.getType()).execute(graph, edge, userId, sessionId, state, emitter);
         }
         return false;

@@ -6,6 +6,8 @@ version: "1.0"
 
 #Specify inspection profile for code analysis
 profile:
+  # 【工程化闭环】采用 qodana.starter 入门级检查集，覆盖常见缺陷、安全隐患与代码异味，
+  # 作为合并前静态分析门禁，与 CI 的 qodana job 配合，在不引入过重规则的前提下守住质量底线。
   name: qodana.starter
 
 #Enable inspections
@@ -18,7 +20,7 @@ profile:
 #    paths:
 #      - <path/where/not/run/inspection>
 
-projectJDK: "17" #(Applied in CI/CD pipeline)
+projectJDK: "17" #(Applied in CI/CD pipeline)  # 【工程化闭环】锁定 JDK17 与项目运行/编译版本一致，确保静态分析基于正确的语言特性与 API 基线。
 
 #Execute shell command before Qodana execution (Applied in CI/CD pipeline)
 #bootstrap: sh ./prepare-qodana.sh
@@ -28,4 +30,6 @@ projectJDK: "17" #(Applied in CI/CD pipeline)
 #  - id: <plugin.id> #(plugin id can be found at https://plugins.jetbrains.com)
 
 #Specify Qodana linter for analysis (Applied in CI/CD pipeline)
+# 【工程化闭环】指定 JVM linter 镜像（jetbrains/qodana-jvm:2025.1），与 CI qodana job 使用的
+# JetBrains/qodana-action@v2025.1 版本对齐，保证本地与流水线分析结论一致，避免"本地能过、CI 报错"的偏差。
 linter: jetbrains/qodana-jvm:2025.1

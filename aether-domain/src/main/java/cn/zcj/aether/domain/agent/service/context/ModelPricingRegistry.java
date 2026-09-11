@@ -19,6 +19,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>通配符模式匹配（如 "gpt-*" → "gpt-4o"、"gpt-4o-mini"）</li>
  *   <li>默认定价（$0.001/1K input, $0.002/1K output — 保守高估）</li>
  * </ol>
+ *
+ * <p><b>【架构亮点 · 上下文工程与成本治理】</b><br>
+ * 面试举证点：①精确匹配 → 通配符匹配（"deepseek-*"）→ 保守默认 $0.001/$0.002 三级查找（:79-101），未配置模型也不会成本估计归零；<br>
+ * ②通配符先注册先匹配（wildcardMap 顺序遍历，:89-93）支持整系模型统一定价；<br>
+ * ③与 TokenBudget.accumulateCost / ModelPricing.calculateCost 配合，构成 M7 美元成本熔断的数据底座。</p>
  */
 @Slf4j
 @Component
@@ -97,6 +102,7 @@ public class ModelPricingRegistry {
     }
 
     private ModelPricing defaultPricing() {
+        // 【成本治理】未命中任何规则时返回保守高估定价 $0.001/$0.002，确保成本熔断始终生效而非漏计
         return new ModelPricing("default", 0.001, 0.002);
     }
 }

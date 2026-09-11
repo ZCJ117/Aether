@@ -39,7 +39,7 @@ public class TurnRetryState {
     public RecoveryDirective nextDirective(ClassifiedError e) {
         FailoverReason r = e.reason();
 
-        // ── 确定性终止 ──
+        // 【容错】确定性错误（AUTH_PERMANENT/CONTENT_POLICY_BLOCKED/SSL_CERT）直接终止，不浪费重试预算
         if (r == FailoverReason.AUTH_PERMANENT
                 || r == FailoverReason.CONTENT_POLICY_BLOCKED
                 || r == FailoverReason.SSL_CERT) {

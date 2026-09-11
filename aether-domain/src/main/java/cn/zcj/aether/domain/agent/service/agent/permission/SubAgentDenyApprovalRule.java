@@ -16,6 +16,9 @@ import lombok.extern.slf4j.Slf4j;
  * 早于 InjectionGuardRule 的 p=8）。
  *
  * <p>判定条件：PermissionContext.isSubAgentContext == true → 自动 DENY
+ *
+ * <p><b>【架构亮点 · 权限体系 fail-closed】</b><br>
+ * 面试举证点：子 Agent 上下文下，需要审批的工具一律自动 DENY（evaluate :34-46），避免线程池 worker 交互式等待审批造成死锁；对齐 Hermes auto-deny 安全失败语义，宁拒勿阻塞。
  */
 @Slf4j
 public class SubAgentDenyApprovalRule implements PermissionRule {
@@ -37,11 +40,12 @@ public class SubAgentDenyApprovalRule implements PermissionRule {
             return null; // 不参与决策
         }
 
+        // 【fail-closed】子Agent上下文：需审批工具一律自动拒绝，防线程池 worker 死锁（auto-deny）
         // 子Agent上下文中，需要审批的工具一律自动拒绝
         // 原因：子Agent运行在线程池worker中，交互式审批会导致死锁
         // 对齐 Hermes auto-deny 安全失败语义
         log.info("子Agent审批自动拒绝: tool={}, agentId={}, userId={}",
                 ctx.getToolName(), ctx.getAgentId(), ctx.getUserId());
-        return PermissionDecision.DENY;
+        return PermissionDecision.DENY; // 【fail-closed】安全失败策略：宁拒勿阻塞
     }
 }

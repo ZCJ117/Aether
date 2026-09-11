@@ -169,7 +169,7 @@ public class DefaultModelErrorClassifier implements ModelErrorClassifier {
                     statusCode, provider, model, msg);
         }
 
-        // 超时
+        // 【容错】超时统一归类 TIMEOUT 分支，触发固定 1s 重建连接（而非指数退避），快速试探链路恢复
         if (root instanceof TimeoutException
                 || msgLower.contains("timeout")
                 || msgLower.contains("timed out")

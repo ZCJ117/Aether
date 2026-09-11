@@ -5,6 +5,11 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * 退避计算工具 — 对齐 hermes retry_utils.py。
  * jittered_backoff（抖动指数退避）+ adaptive_rate_limit_backoff（自适应限流表）。
+ *
+ * <p><b>【架构亮点 · 模型容错层】</b><br>
+ * 面试举证点：退避算法是重试风暴的"节流阀"——{@link #jitteredBackoff} 抖动打散重试洪峰避免惊群，
+ * {@link #adaptiveRateLimitBackoff}（:41）提供比通用指数更陡峭的限流自适应退避（30/60/90/120s），
+ * 尊重上游限流窗口，是分布式系统重试退避的标准实践。</p>
  */
 public final class RetryBackoff {
 
@@ -38,6 +43,7 @@ public final class RetryBackoff {
      * _ZAI_CODING_OVERLOAD_LONG_BACKOFF（约 L25）。
      * 用于 RATE_LIMIT / OVERLOADED，比通用指数退避更陡峭。
      */
+    // 【容错】限流自适应退避：比通用指数退避更陡峭（30/60/90/120s），尊重上游限流窗口，避免无效高频重试
     public static double adaptiveRateLimitBackoff(int attempt) {
         return switch (attempt) {
             case 1 -> 30.0;

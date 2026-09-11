@@ -35,6 +35,11 @@ import java.util.concurrent.TimeoutException;
  * 持有 SubagentRuntime（agent + cancelToken + future + 心跳）。状态转换经 AtomicReference
  * CAS 守卫（对齐 hermes RLock + 状态检查）。cancel→CANCELLED；stale（心跳冻结）→TIMED_OUT。
  * 注：hermes 无 TIMED_OUT 状态、超时仅作 wait 标志；Aether 按设计 §6.3③ 引入 stale→TIMED_OUT。</p>
+ * <p><b>【架构亮点 · 状态机与持久化】</b><br>
+ * 面试举证点：本类是不变量守护者——终态落地一律经由 SubagentRuntime 的 CAS（launch 内
+ * L171 tryTerminal(COMPLETED)、异常 L181 tryTerminal(FAILED)），保证 cancel/stale 已置的
+ * 终态不被覆盖；detectStale（L299-319）以"RUNNING 且心跳冻结超 timeout"为判据，
+ * 经 L304 的 tryTerminal(TIMED_OUT) CAS 进入，避免对已完成委派重复超时。</p>
  */
 @Slf4j
 @Component
@@ -168,6 +173,7 @@ public class SubagentLifecycleService {
                     });
             ResultRefiner.SubAgentResult result = refiner.refine(rt.task().task(), collected);
             rt.setResult(result);
+            // 【状态机】CAS 终态：已被 cancel/stale 置终态则 tryTerminal 因期望值 RUNNING 不符而失败，原终态保留
             rt.tryTerminal(SubagentState.COMPLETED); // 已被 cancel/stale 置终态则 CAS 失败，保持原终态
             closeLiveLog(rt);
             evictTerminalIfNeeded();
@@ -295,12 +301,14 @@ public class SubagentLifecycleService {
         return true;
     }
 
+    // 【状态机】stale 心跳冻结检测：L303 仅对 RUNNING 态且 lastHeartbeatAt 早于 cutoff 的委派判超时
     /** 扫描 RUNNING 且心跳冻结超过 timeout 的委派 → TIMED_OUT + 取消 token。返回受影响 id 列表。 */
     public List<String> detectStale(Duration timeout) {
         List<String> stale = new ArrayList<>();
         Instant cutoff = Instant.now().minus(timeout);
         for (SubagentRuntime rt : runtimes.values()) {
             if (rt.state() == SubagentState.RUNNING && rt.lastHeartbeatAt().isBefore(cutoff)) {
+                // 【状态机】CAS 进入 TIMED_OUT：仅 RUNNING 成功，已完成/已取消委派不会被重复置超时终态
                 if (rt.tryTerminal(SubagentState.TIMED_OUT)) {
                     rt.cancelToken().cancel();
                     if (rt.future() != null) {

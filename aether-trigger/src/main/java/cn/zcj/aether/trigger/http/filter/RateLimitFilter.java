@@ -34,6 +34,11 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>响应头：{@code X-RateLimit-Limit} / {@code X-RateLimit-Remaining}；超限 429 +
  * {@code Retry-After}（来自令牌桶真实补充时间，非固定 60s）。</p>
+ *
+ * <p><b>【架构亮点 · 模型容错层】</b><br>
+ * 面试举证点：令牌桶限流是入口层的"过载保护"——{@link #decide}（:118-134）在 Redis 不可用时
+ * 自动降级内存实现并节流告警，使限流层自身不成为可用性单点；其下发的 429 又可被下游分类器
+ * 识别为 RATE_LIMIT 触发模型层 fallback，形成多层防御。</p>
  */
 @Slf4j
 @Component

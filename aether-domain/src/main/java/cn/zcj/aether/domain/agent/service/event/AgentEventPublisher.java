@@ -12,6 +12,12 @@ import java.util.Map;
 /**
  * Agent 领域事件发布器 — P0-6。
  * 统一发布结构化日志事件，供 LoggingHook 和外部监听器使用。
+ *
+ * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
+ * 面试举证点：本类是进程内<b>内存事件总线</b>——{@code CopyOnWriteArrayList} 订阅（行29-53）是
+ * AgentEventKafkaBridge 的首次真实消费者；17 个 {@code publish*} 方法（行58-216）统一发射，
+ * 订阅者异常逐个隔离（行46-52）不阻断发布；{@code toJsonWithMdc}（行243-252）把
+ * graphExecutionId/sessionId/subagentId 并入事件，保证跨进程链路可 join 对齐。</p>
  */
 @Slf4j
 @Component
@@ -26,6 +32,7 @@ public class AgentEventPublisher {
      * 线程安全：CopyOnWriteArrayList 订阅隔离；订阅者异常逐个隔离不阻断发布与日志 sink。
      * 订阅为可选能力：无订阅者时行为与纯日志一致（回滚安全）。
      */
+    // 【事件驱动】内存事件总线：CopyOnWriteArrayList 订阅隔离，AgentEventKafkaBridge 由此接入
     private final java.util.concurrent.CopyOnWriteArrayList<java.util.function.Consumer<AgentEvent>> subscribers =
             new java.util.concurrent.CopyOnWriteArrayList<>();
 
@@ -43,6 +50,7 @@ public class AgentEventPublisher {
         } else {
             log.info("{}: {}", logKey, json);
         }
+        // 【事件驱动】遍历订阅者逐个发射；异常隔离不阻断发布与日志 sink
         for (java.util.function.Consumer<AgentEvent> subscriber : subscribers) {
             try {
                 subscriber.accept(event);
@@ -240,6 +248,7 @@ public class AgentEventPublisher {
     }
 
     /** 当前 MDC 中的结构化上下文字段（供日志 grep/join 与测试）。 */
+    // 【事件驱动】MDC 上下文字段并入事件 JSON，跨进程链路可 grep/join
     public static Map<String, String> mdcFields() {
         Map<String, String> result = new java.util.LinkedHashMap<>();
         for (String key : new String[]{"graphExecutionId", "sessionId", "subagentId"}) {

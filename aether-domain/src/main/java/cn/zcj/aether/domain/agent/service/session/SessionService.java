@@ -26,6 +26,11 @@ import java.util.UUID;
  * 会话服务 — O2 从 ChatService 拆出。
  *
  * <p>单一职责：会话的创建/列表/删除/恢复（SessionRepository 状态恢复 + 检查点恢复）与历史消息提取。
+ * <p><b>【架构亮点 · 状态机与持久化】</b><br>
+ * 面试举证点：恢复路径坚持"带病不恢复"——restoreSession（L164-198）将字段缺失类
+ * StateRestoreException 响亮抛出（L190-193），仅对 JSON 解析失败等非结构错误兼容回退新会话；
+ * resumeFromCheckpoint（L207-220）从最新检查点快照恢复 agentState，无检查点则显式抛错，
+ * 与 CrewAI from_checkpoint 风格对齐，保证恢复的可追溯与可失败。</p>
  */
 @Slf4j
 @Service
@@ -161,6 +166,7 @@ public class SessionService {
      * @param sessionId 会话 ID
      * @throws StateRestoreException 如果必需字段缺失
      */
+    // 【持久化】强校验恢复：StateRestoreException（字段缺失）响亮传播，拒绝带病恢复；仅 JSON 解析失败兼容回退
     public void restoreSession(Agent agent, String sessionId) {
         if (sessionRepository == null || sessionId == null) return;
         try {
@@ -204,6 +210,7 @@ public class SessionService {
      *
      * 借鉴 CrewAI 的 from_checkpoint（快照恢复）+ MetaGPT 的 recovered 标志。
      */
+    // 【持久化】检查点恢复：从最新检查点快照（CrewAI from_checkpoint 风格）载入 agentState，无检查点显式抛错
     public Map<String, Object> resumeFromCheckpoint(String agentId, String sessionId) {
         if (checkpointCollector == null) {
             throw new AppException(ResponseCode.E0001.getCode(), "检查点收集器未配置");

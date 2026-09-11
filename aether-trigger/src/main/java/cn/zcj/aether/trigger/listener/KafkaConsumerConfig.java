@@ -28,8 +28,14 @@ import java.util.Map;
  * <b>幂等</b>（消费端 event_id 去重，见各 Consumer）、<b>重试 + 死信</b>
  * （指数退避 1s 起共 3 次后路由 {@code *.DLT}，毒消息不阻塞分区）。
  * key/value 均为 String，消息契约见 {@code cn.zcj.aether.types.messaging}。</p>
+ *
+ * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
+ * 面试举证点：消费端语义三件套——批量监听 + <b>MANUAL_IMMEDIATE 手动 ack</b>（行65，处理完才提交不丢）；
+ * DefaultErrorHandler 配置<b>指数退避重试 3 次</b>（1s 起）后 {@code DeadLetterPublishingRecoverer}
+ * 死信（行56-72，毒消息不阻塞分区）；MicrometerConsumerListener（行51）采集 lag 指标供告警。</p>
  */
 @Configuration
+// 【事件驱动】消费容器工厂按需启用：aether.kafka.enabled=true 才装配
 @ConditionalOnProperty(name = "aether.kafka.enabled", havingValue = "true")
 public class KafkaConsumerConfig {
 
@@ -47,6 +53,7 @@ public class KafkaConsumerConfig {
         DefaultKafkaConsumerFactory<Object, Object> factory = new DefaultKafkaConsumerFactory<>(props);
         MeterRegistry registry = meterRegistryProvider.getIfAvailable();
         if (registry != null) {
+            // 【事件驱动】消费端 lag 指标数据源，供积压告警
             // 消费端指标（kafka.consumer.fetch.manager.records.lag 等）→ lag 告警数据源
             factory.addListener(new MicrometerConsumerListener<>(registry));
         }
@@ -62,8 +69,10 @@ public class KafkaConsumerConfig {
         factory.setConsumerFactory(aetherConsumerFactory);
         factory.setConcurrency(2);
         factory.setBatchListener(true);
+        // 【事件驱动】MANUAL_IMMEDIATE：处理完才提交 offset，至少一次不丢
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
 
+        // 【事件驱动】指数退避重试 3 次 → 死信 DLT，毒消息不阻塞分区
         // 重试 3 次（1s 指数退避）→ 原消息原样路由 <topic>.DLT，offset 随之提交
         DefaultErrorHandler errorHandler = new DefaultErrorHandler(
                 new DeadLetterPublishingRecoverer(kafkaTemplate),

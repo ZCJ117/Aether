@@ -26,6 +26,11 @@ import java.util.Map;
  * P0-2 重试收口：本类只做"单次调用 + 总超时"；
  * 重试/退避/上下文压缩/凭据轮换/fallback 由 ResilientChatModelExecutor 统一负责，
  * 避免双层重试放大（外层 4 次 × 内层 3 次 = 最坏 12 次下游调用）。
+ *
+ * <p><b>【架构亮点 · 上下文工程与成本治理】</b><br>
+ * 面试举证点：①callWithStreamingAsync 在响应 metadata 中回采真实 usage（getPromptTokens / getCompletionTokens，:285-297），
+ * 而非估算值；<br>
+ * ②该真实 token 用量回流至 TokenBudget.accumulateCost 与 ContextManager 预算闸门，是 M7 美元成本熔断与三层 token 预算的「计量数据源」，保证成本/上下文治理基于真实消耗而非猜测。</p>
  */
 @Slf4j
 @Service
@@ -278,11 +283,13 @@ public class ModelInvoker {
                             modelName, fullText.length(), toolCalls.size());
 
                     // Phase 9: 提取 token 使用量
+                    // 【成本治理】从模型响应 metadata 回采真实 usage（prompt/completion tokens），作为成本与预算的计量源头
                     int inputTokens = 0, outputTokens = 0;
                     if (responses != null && !responses.isEmpty()) {
                         var lastResp = responses.get(responses.size() - 1);
                         var metadata = lastResp.getMetadata();
                         if (metadata != null && metadata.getUsage() != null) {
+                            // 【成本治理】真实用量：输入 token（prompt）+ 输出 token（completion）分别提取，喂给下游成本累计
                             inputTokens = (int) metadata.getUsage().getPromptTokens();
                             outputTokens = (int) metadata.getUsage().getCompletionTokens();
                         }

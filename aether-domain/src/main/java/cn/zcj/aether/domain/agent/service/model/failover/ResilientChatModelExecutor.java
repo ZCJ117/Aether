@@ -179,19 +179,23 @@ public class ResilientChatModelExecutor implements ChatModel {
                 recordBranch(d.branch());
 
                 switch (d.branch()) {
+                    // 去相关抖动退避重试
                     case JITTERED_BACKOFF, ADAPTIVE_RATE_LIMIT_BACKOFF -> {
                         turnRetry.markAttempted(d.branch());
                         backoffWaiter.accept(d.backoffSec());
                     }
                     case CONTEXT_COMPRESSION -> {
+                        // 上下文溢出，回调压缩后重试
                         turnRetry.markAttempted(RecoveryBranch.CONTEXT_COMPRESSION);
                         tryCompress(classified);
                     }
                     case CREDENTIAL_ROTATION -> {
+                        // 凭据轮换后重试
                         turnRetry.markAttempted(RecoveryBranch.CREDENTIAL_ROTATION);
                         tryRotateCredential(classified);
                     }
                     case PROVIDER_FALLBACK -> {
+                        // fallback 链切换后重试
                         turnRetry.markAttempted(RecoveryBranch.PROVIDER_FALLBACK);
                         if (tryActivateFallback(classified.reason())) {
                             turnRetry.resetPerModel(); // 新模型重新计退避，但保留 fallback 链位置
@@ -308,6 +312,7 @@ public class ResilientChatModelExecutor implements ChatModel {
                 ? currentModelConfig.getMaxAttempts() : DEFAULT_MAX_ATTEMPTS;
     }
 
+    //NOTE 这个是异常的分类入口
     private ClassifiedError classifyError(Exception e) {
         try {
             ClassifiedError fromProvider = currentProvider.classifyError(
@@ -379,6 +384,7 @@ public class ResilientChatModelExecutor implements ChatModel {
 
     // ── Fallback 链管理 ──
 
+    // 【容错】主备模型链切换：按序尝试 fallback 路由，尊重路由冷却，递归跳过失效/解析失败的路由
     private boolean tryActivateFallback(FailoverReason reason) {
         if (reason == FailoverReason.RATE_LIMIT
                 || reason == FailoverReason.UPSTREAM_RATE_LIMIT

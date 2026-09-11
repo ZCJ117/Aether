@@ -21,6 +21,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * </ol>
  *
  * <p>规则表构造时从装配配置快照拷贝，运行期经 {@link #addRule} 动态追加。
+ *
+ * <p><b>【架构亮点 · 权限体系 fail-closed】</b><br>
+ * 面试举证点：deny→ask→allow 分组短路评估链（check 方法 :121-175）；任一规则评估抛异常一律返回 DENY（fail-closed，:187-191 与 :213-217）；BYPASS 模式仍强制先过 deny 组（:122-132），PLAN 模式未命中规则的写入工具默认拒绝（:163-168），确保越权与异常路径一律收紧而非静默放行。
  */
 @Slf4j
 @Component
@@ -119,6 +122,7 @@ public class PermissionEngine {
      * @return 权限决策
      */
     public PermissionDecision check(PermissionContext ctx, PermissionMode mode) {
+        // 【fail-closed】BYPASS 模式也强制先过 deny 组，危险命令硬封锁在任何模式下都不可绕过
         // 0. BYPASS 仍须执行 deny 组（硬封锁不可绕过，对齐 hermes tool_guardrails 正交语义）
         if (mode == PermissionMode.BYPASS) {
             PermissionDecision deny = evaluateDenyGroup(denyRules, ctx);
@@ -161,6 +165,7 @@ public class PermissionEngine {
 
         // 5. DONT_ASK 模式 → DENY（用户不可用）
         if (mode == PermissionMode.PLAN) {
+            // 【fail-closed】PLAN 模式未命中规则的写入工具默认 DENY，收紧而非放行
             // PLAN 模式：未命中任何规则的写入工具默认 DENY
             if (!ctx.isReadOnly()) {
                 log.info("Plan 模式默认拒绝写入工具: tool={}", ctx.getToolName());
@@ -185,6 +190,7 @@ public class PermissionEngine {
                     return decision;
                 }
             } catch (Exception e) {
+                // 【fail-closed】规则评估异常 = 一律拒绝，绝不静默放行
                 // O14: 规则异常 fail-closed，绝不静默放行
                 log.error("权限规则 [{}] 评估异常，fail-closed 拒绝: {}", rule.name(), e.getMessage(), e);
                 return PermissionDecision.DENY;
@@ -211,6 +217,7 @@ public class PermissionEngine {
                 }
                 // null / ASK_USER 视作该规则未否定 → 继续评估其余 deny 规则
             } catch (Exception e) {
+                // 【fail-closed】deny 组评估异常 = 一律拒绝（O14 修复 ALLOW 提前短路隐患）
                 // O14: 规则异常 fail-closed，绝不静默放行
                 log.error("权限规则 [{}] 评估异常，fail-closed 拒绝: {}", rule.name(), e.getMessage(), e);
                 return PermissionDecision.DENY;

@@ -17,7 +17,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/** EVENT_DRIVEN execution using topic subscriptions and bounded mailboxes. */
+/**
+ * EVENT_DRIVEN execution using topic subscriptions and bounded mailboxes.
+ *
+ * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
+ * 面试举证点：五类编排策略之一，采用 topic 订阅 + 有界邮箱的事件驱动执行（行22、60-96）：
+ * 通过 SubscriptionRouter 在 Agent 间以 MessageEnvelope 异步传递，轮询 {@code drainMailbox}
+ * （行60）解耦生产者/消费者；同包另含顺序/并行/循环/子代理四种策略，均共享 GraphExecutor 的
+ * 统一 {@code Flowable<RuntimeEvent>} 出口。</p>
+ */
 @Slf4j
 public final class EventDrivenOrchestrationStrategy implements GraphOrchestrationStrategy {
     private final OrchestrationServices services;
@@ -42,6 +50,7 @@ public final class EventDrivenOrchestrationStrategy implements GraphOrchestratio
 
         Map<String, AgentNodeDef> agentDefs = graph.getAgentDefs();
         Map<String, List<String>> watches = buildWatchMap(graph, edge, agentNames);
+        // 【事件驱动】topic 订阅路由：Agent 间以 MessageEnvelope 解耦传递
         SubscriptionRouter router = new SubscriptionRouter();
 
         if (edge.getCauseBy() != null || edge.getWatch() != null) {
@@ -57,6 +66,7 @@ public final class EventDrivenOrchestrationStrategy implements GraphOrchestratio
             boolean anyExecuted = false;
             for (String agentName : agentNames) {
                 long pollTimeout = iter == 0 ? eventTimeoutMs : 1000;
+                // 【事件驱动】有界邮箱轮询：解耦生产者与消费者，事件驱动触发执行
                 List<MessageEnvelope> msgs = state.drainMailbox(agentName, pollTimeout);
                 if (msgs.isEmpty()) continue;
                 anyExecuted = true;
@@ -77,6 +87,7 @@ public final class EventDrivenOrchestrationStrategy implements GraphOrchestratio
                         AgentEdgeType.EVENT_DRIVEN.name(), edge.getWorkflowName(), Map.of());
                 if (!services.applyDirectInterception(input, ictx, emitter)) continue;
 
+                // 【流式】共享 GraphExecutor 的统一 FlowableEmitter 出口，事件汇入全链路流
                 services.executeSingle(def, userId, sessionId, input, state, emitter, agentName);
                 publishOutput(state, def, agentName, sessionId, router, watches);
             }
