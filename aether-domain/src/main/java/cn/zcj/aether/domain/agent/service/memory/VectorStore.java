@@ -13,6 +13,7 @@ public interface VectorStore {
     CompletableFuture<Void> upsert(String id, float[] vector, MemoryRecord record);
 
     /** 语义相似度搜索 */
+    //NOTE
     CompletableFuture<List<MemorySearchResult>> search(
         float[] queryVector, int topK, List<MemoryScope> scopes);
 

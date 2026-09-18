@@ -36,6 +36,7 @@ public class TurnRetryState {
     /**
      * 根据分类结果与当前账本，输出下一个恢复指令。
      */
+    //NOTE 第 2 步：决策 —— TurnRetryState.nextDirective()
     public RecoveryDirective nextDirective(ClassifiedError e) {
         FailoverReason r = e.reason();
 
@@ -108,6 +109,7 @@ public class TurnRetryState {
         if (count(RecoveryBranch.PROVIDER_FALLBACK) < fallbackChainSize) {
             return RecoveryDirective.fallback("分支耗尽(" + branch + ") → fallback");
         }
+        // fallback 链也耗尽 → 终止
         return RecoveryDirective.terminate("所有恢复分支耗尽: " + e.reason());
     }
 

@@ -224,6 +224,7 @@ public class DefaultMemoryFacade implements MemoryFacade {
         return recallFlow.recallShallow(query, options);
     }
 
+    //NOTE 在这个search方法里又去调用了recallFlow.recallShallow方法
     @Override
     public List<MemorySearchResult> search(String query, MemoryScope scope, int maxResults) {
         var options = new RecallOptions(

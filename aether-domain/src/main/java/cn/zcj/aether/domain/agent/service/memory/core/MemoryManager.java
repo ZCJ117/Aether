@@ -80,6 +80,8 @@ public final class MemoryManager {
         return "\n[Memory nudge: 请考虑是否将本回合的重要信息保存到记忆。]\n";
     }
 
+    //NOTE 这里的 prefetchAll 会调用各个 provider 的 prefetch 方法
+    //NOTE 每个p调用prefetch()重写的方法，也就是BuiltinMemoryProvider的prefetch()方法，返回的记忆内容会被注入到instruction里
     /** turn 前召回：汇总各 provider 上下文，单个失败不阻塞其余。 */
     public String prefetchAll(String query, String sessionId) {
         if (!props.isEnabled()) {
@@ -99,17 +101,21 @@ public final class MemoryManager {
         return out.toString();
     }
 
+    //NOTE
     /** turn 后同步：计数 + 异步提交各 provider 写入。 */
     public void syncAll(String userMsg, String assistantResponse, String sessionId,
                         List<Map<String, Object>> messages) {
         if (!props.isEnabled()) {
             return;
         }
+        //NOTE turn计数+1
         userTurnCount.incrementAndGet();
         for (MemoryProvider p : providers) {
             try {
+                //NOTE 异步提交各 provider 写入，保证 turn N 先于 turn N+1 落盘
                 syncExecutor.submit(() -> {
                     try {
+                        //NOTE 这里调用重写的syncTurn方法，也就是BuiltinMemoryProvider的syncTurn方法
                         p.syncTurn(userMsg, assistantResponse, sessionId, messages);
                     } catch (Exception e) {
                         log.warn("记忆 provider '{}' syncTurn 失败: {}", p.name(), e.getMessage());

@@ -11,6 +11,7 @@ import io.reactivex.rxjava3.core.FlowableEmitter;
 import lombok.extern.slf4j.Slf4j;
 
 /** SEQUENTIAL edge execution with output-to-input handoff. */
+//NOTE 串行执行：每个子Agent的输出作为下一个子Agent的输入，形成链式传递。
 @Slf4j
 public final class SequentialOrchestrationStrategy implements GraphOrchestrationStrategy {
     private final OrchestrationServices services;

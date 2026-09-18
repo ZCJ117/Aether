@@ -126,6 +126,7 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.E0001.getCode());
         }
 
+        //NOTE ChatService 触发编排 路由判断——graph 有 edges → 交给 GraphExecutor；无 edges → 单 Agent 直跑
         // 多Agent工作流 → GraphExecutor（P0-1 改造：不再传 chatModel）
         if (graph.getEdges() != null && !graph.getEdges().isEmpty()) {
             log.info("路由到 GraphExecutor: edges={}", graph.getEdges().size());
@@ -146,6 +147,10 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.E0001.getCode(), "入口Agent未配置: " + graph.getEntryPoint());
         }
 
+        //NOTE MemoryInjectionService.injectMemory（点进这个MemoryInjectionService去看）
+        // 这个是用用户这句话去记忆库做语义搜索，捞出最相关的 10 条
+        // → 拼成 <memory-context> 块 → 替换 agent instruction 里的 {memory} 占位符
+        //   → 这次对话的 system prompt 里就带上了历史记忆
         // P1-4: 记忆注入（优先 MemoryLifecycleHooks prefetch，回退文件存储）
         String instruction = memoryInjectionService.injectMemory(
                 entry.getInstruction(), message, entry.getName(), sessionId);
@@ -183,6 +188,8 @@ public class ChatService implements IChatService {
                 entry.getName());
 
         List<String> outputs = new ArrayList<>();
+        //NOTE  turn 结束 = agent.execute(ctx) 这个 Flowable 跑完,在这个项目里 turn = 一次「用户发一条消息 → Agent 跑完给出回复」。
+        // 项目内部的正式叫法是 currentTurn（SessionService 里有个字段 currentTurn，从会话状态 JSON 里读这个字段）
         agent.execute(ctx)
                 .blockingForEach(event -> {
                     if (event.getType() == RuntimeEvent.EventType.textDelta
@@ -191,6 +198,7 @@ public class ChatService implements IChatService {
                     }
                 });
 
+        //NOTE 这里的message和assistantext是用户的消息和助手的回复，syncTurn会把这两条消息写入记忆库
         // 记忆生命周期：turn 后持久化（异步，经净化防记忆回显递归污染）
         if (memoryLifecycleHooks != null && !outputs.isEmpty()) {
             String assistantText = MemoryContextScrubber.sanitize(String.join("", outputs));
@@ -209,6 +217,8 @@ public class ChatService implements IChatService {
             return Flowable.error(new AppException(ResponseCode.E0001.getCode()));
         }
 
+        //NOTE ChatService 触发编排 路由判断——graph 有 edges → 交给 GraphExecutor；
+        // 无 edges → 单 Agent 直跑
         // 多Agent工作流 → GraphExecutor（P0-1 改造：不再传 chatModel）
         if (graph.getEdges() != null && !graph.getEdges().isEmpty()) {
             log.info("流式路由到 GraphExecutor: edges={}", graph.getEdges().size());

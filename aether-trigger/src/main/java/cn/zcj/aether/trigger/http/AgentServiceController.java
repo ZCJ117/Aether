@@ -46,6 +46,10 @@ import java.util.*;
  * agentPaused/checkpoint/tokenBudget 等）；correlationId 入 MDC（行369）串联全链路；
  * {@code confirm()}（行429）以同款 SSE 承接权限确认恢复流。</p>
  */
+
+//NOTE 这里是编排与协调的阶段一，HTTP 接入层
+// 阶段 0是 启动装配（一次性）YAML 在启动期就编译成图
+
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/")
@@ -368,18 +372,19 @@ public class AgentServiceController implements IAgentService {
         return "新对话";
     }
 
+    //NOTE 阶段 1：HTTP 接入层
     @Auditable(value = AuditAction.AGENT_CHAT, resource = "agent")
     @RequestMapping(value = "chat_stream", method = RequestMethod.POST)
     @Override
     public ResponseBodyEmitter chatStream(@RequestBody ChatRequestDTO requestDTO) {
         // P0-6: 注入 correlationId 到 MDC
-        // 【流式】correlationId 入 MDC，串联 SSE 全链路便于跨进程追踪
+        // NOTE 【流式】correlationId 入 MDC，串联 SSE 全链路便于跨进程追踪，日志追踪号
         String correlationId = UUID.randomUUID().toString().substring(0, 8);
         MDC.put("correlationId", correlationId);
 
         // 超时对齐最长工具等待预算：baidu-search MCP requestTimeout=500s + 多轮调用，
         // 3min 会在 Agent 仍在执行时切断 SSE（前端"生成中"卡住 + 重发重复执行）。
-        // 【流式】SSE 边缘承接：10 分钟超时对齐最长工具等待预算，避免 Agent 执行中被切断
+        // NOTE【流式】SSE 边缘承接：10 分钟超时对齐最长工具等待预算，避免 Agent 执行中被切断
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(10 * 60 * 1000L);
         try {
             log.info("流式对话 agentId:{} userId:{} sessionId:{} message:{}",
@@ -395,6 +400,7 @@ public class AgentServiceController implements IAgentService {
                             requestDTO.getAgentId(), requestDTO.getUserId(),
                             sessionId, requestDTO.getMessage())
                     // 【流式】订阅统一 Flowable，将逐事件经 SSE data 帧下发前端
+                    //NOTE 触发点
                     .subscribe(
                             event -> {
                                 try {

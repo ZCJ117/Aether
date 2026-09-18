@@ -26,6 +26,7 @@ import java.util.Objects;
  * （行60）解耦生产者/消费者；同包另含顺序/并行/循环/子代理四种策略，均共享 GraphExecutor 的
  * 统一 {@code Flowable<RuntimeEvent>} 出口。</p>
  */
+// NOTE 事件驱动执行：Agent 间以 MessageEnvelope 解耦传递，轮询 mailbox 触发执行
 @Slf4j
 public final class EventDrivenOrchestrationStrategy implements GraphOrchestrationStrategy {
     private final OrchestrationServices services;

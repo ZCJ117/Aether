@@ -31,6 +31,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+//NOTE DAG 前四种策略是"固定路线的带团方式"，GraphFlowCoordinator 是"拿到任意地铁线路图都能规划出乘车顺序"的导航——节点可并行时自动并行（同一批），
+// 有依赖时自动等待（父节点计数），还支持条件边（condition）和循环退出（exitCondition）
+// 标准的拓扑层调度
 /** GRAPHFLOW DAG scheduler. Extracted from the original monolithic executor. */
 @Slf4j
 public final class GraphFlowCoordinator {
@@ -91,6 +94,7 @@ public final class GraphFlowCoordinator {
         ExecutionState globalState = new ExecutionState();
         int iteration = 0;
 
+        //NOTE 主循环：按拓扑顺序执行节点，处理条件分支和循环边，支持流式事件发射和后台审查。
         while (!readyQueue.isEmpty() && iteration < MAX_ITERATIONS) {
             iteration++;
             List<String> currentBatch = new ArrayList<>();

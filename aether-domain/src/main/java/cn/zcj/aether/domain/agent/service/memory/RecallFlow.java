@@ -51,6 +51,7 @@ public class RecallFlow {
     /**
      * Shallow 召回：单次语义搜索 + 时间衰减加权。
      */
+    //NOTE 调用的这个recallShallow方法，最终会调用vectorStore.search()方法，去向量数据库中检索
     public CompletableFuture<List<MemorySearchResult>> recallShallow(
             String query, MemoryFacade.RecallOptions options) {
 
@@ -68,10 +69,12 @@ public class RecallFlow {
                 }
             }
 
+            //NOTE 这句话变向量
             // 1. Query → Embedding
             float[] queryVector = embed(query);
 
-            // 2. 语义搜索
+            //NOTE 真正的语义搜索
+            // 2. 语义搜索 这里的vectorStore.search()方法会去向量数据库中检索
             List<MemorySearchResult> results = vectorStore.search(
                 queryVector, options.maxResults() * 2, options.scopes()).join();
 

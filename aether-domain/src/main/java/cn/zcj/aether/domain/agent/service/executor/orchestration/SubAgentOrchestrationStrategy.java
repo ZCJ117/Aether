@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.List;
 
 /** SUBAGENT edge execution via the structured delegation orchestrator. */
+// NOTE 子Agent执行：通过 SubAgentOrchestrator 进行结构化委派，支持多子Agent并行或串行执行，结果汇总。
 @Slf4j
 public final class SubAgentOrchestrationStrategy implements GraphOrchestrationStrategy {
     private final OrchestrationServices services;

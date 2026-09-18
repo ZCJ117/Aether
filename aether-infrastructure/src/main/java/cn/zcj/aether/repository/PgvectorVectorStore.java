@@ -131,6 +131,8 @@ public class PgvectorVectorStore implements VectorStore {
         }, executor);
     }
 
+    //NOTE 这里是 PgvectorVectorStore 的 search 方法实现，
+    // 使用了 pgvector 的余弦相似度搜索，如果查询向量无效（null 或全零），则回退为按最后访问时间排序的搜索。
     @Override
     public CompletableFuture<List<MemorySearchResult>> search(
             float[] queryVector, int topK, List<MemoryScope> scopes) {

@@ -52,6 +52,13 @@ import java.util.concurrent.TimeUnit;
  * 五类编排策略（顺序/并行/循环/事件驱动/子代理，行174-187）共享同一 emitter 出口，下游
  * HTTP(SSE) 与 Kafka 桥均消费同一 Flowable 原语，进程内全链路统一。</p>
  */
+//NOTE 这个GraphExecutor 是编排执行器，负责是总的调度器，负责执行 AgentGraph 的编排逻辑。
+// 它根据 AgentGraph 中的 edges 类型，选择不同的编排策略（顺序、并行、循环、事件驱动、子代理）来执行任务。它还处理 MDC 日志上下文、异常处理和钩子调用等。
+//
+// NOTE
+//  这套设计的核心价值：总调度只管生命周期，编排语义是可插拔的策略，五种策略共享同一个执行模板和事件出口。新增一种编排方式 = 新写一个实现
+//  GraphOrchestrationStrategy 接口的类 + 在 strategyFor()
+//  注册一行——总调度、事件流、拦截、可观测全部零改动。这是开闭原则（OCP）的一个教科书式落地
 @Slf4j
 @Service
 public class GraphExecutor {
@@ -101,7 +108,9 @@ public class GraphExecutor {
         return pool;
     }
 
-    // 【流式】统一流式出口：返回 Flowable<RuntimeEvent>，全链路事件原语
+    //NOTE 第 1 层：总入口 —— GraphExecutor.execute()（统一生命周期）
+    // GraphExecutor 触发编排
+    // 【流式】统一流式出口：返回 Flowable<RuntimeEvent>，全链路事件原语 这里GraphExecutor 不执行Agent ，只是做开trace 分发 收尾 异常兜底
     public Flowable<RuntimeEvent> execute(AgentGraph graph, String userId, String sessionId,
                                           String initialMessage) {
         return Flowable.create(emitter -> {
@@ -156,12 +165,15 @@ public class GraphExecutor {
         }, BackpressureStrategy.BUFFER);
     }
 
+    //NOTE 调度核心 第 2 层：分发 —— dispatchEdges()
     private boolean dispatchEdges(AgentGraph graph, String userId, String sessionId, String initialMessage,
                                   // 【流式】统一事件出口：所有编排策略共用同一 FlowableEmitter
                                   ExecutionState state, FlowableEmitter<RuntimeEvent> emitter,
                                   String graphExecutionId) {
+        //真正的分发点。遍历 edges：遇到 isGraphFlow() 走 DAG 协调器，否则走策略执行
         for (AgentEdge edge : graph.getEdges()) {
             if (edge.isGraphFlow()) {
+                //NOTE 第 4 层：DAG 调度 —— GraphFlowCoordinator 按依赖图自动排期
                 GraphFlowCoordinator coordinator = new GraphFlowCoordinator(
                         services(), conditionEvaluator, graphExecutionRecorder, backgroundReviewer);
                 coordinator.execute(graph, userId, sessionId, initialMessage, emitter, graphExecutionId);
@@ -180,6 +192,10 @@ public class GraphExecutor {
                 graph, entry, userId, sessionId, state, emitter);
     }
 
+    //NOTE 根据 AgentEdgeType 获取对应的编排策略，这里就是五种编排策略，串行、并行、循环、事件驱动、子代理。
+    // 每种策略都实现了 GraphOrchestrationStrategy 接口，包含 supports() 和 execute() 方法。
+    // 所有策略实现同一个 5 行接口 GraphOrchestrationStrategy（supports() + execute()）。
+    //NOTE第 3 层：五种带团方式逐个看
     private GraphOrchestrationStrategy strategyFor(AgentEdgeType type) {
         OrchestrationServices services = services();
         Map<AgentEdgeType, GraphOrchestrationStrategy> strategies = new EnumMap<>(AgentEdgeType.class);

@@ -11,6 +11,7 @@ import io.reactivex.rxjava3.core.FlowableEmitter;
 import lombok.extern.slf4j.Slf4j;
 
 /** LOOP edge execution with fixed-point convergence detection. */
+// NOTE 循环执行：每个子Agent的输出作为下一个子Agent的输入，直到收敛或达到最大迭代次数。
 @Slf4j
 public final class LoopOrchestrationStrategy implements GraphOrchestrationStrategy {
     private final OrchestrationServices services;

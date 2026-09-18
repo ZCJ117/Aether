@@ -36,6 +36,7 @@ public interface MemoryFacade {
     /**
      * 按作用域简单搜索（无 LLM 增强）。
      */
+    //NOTE 又去调用这个方法的DefaultMemoryFacade实现
     List<MemorySearchResult> search(String query, MemoryScope scope, int maxResults);
 
     // =========================================================

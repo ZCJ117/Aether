@@ -24,6 +24,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /** PARALLEL edge execution on the shared bounded graph pool. */
+//NOTE 并行执行：所有子Agent同时启动，独立执行，最终结果按顺序收集。
 @Slf4j
 public final class ParallelOrchestrationStrategy implements GraphOrchestrationStrategy {
     private final OrchestrationServices services;

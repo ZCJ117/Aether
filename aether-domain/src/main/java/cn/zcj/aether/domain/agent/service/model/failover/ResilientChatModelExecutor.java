@@ -151,13 +151,25 @@ public class ResilientChatModelExecutor implements ChatModel {
      * <p>当前 ModelInvoker 的流式调用路径最终通过 {@code flux.collectList().block()}
      * 转为同步结果，因此本方法实际承载了所有模型调用。</p>
      */
+
+    //NOTE 恢复决策错误 分类 + 退避/压缩/凭据轮换/fallback 链切换
+    // 具体场景，假设 Agent 正在对话，底层 DeepSeek API 返回了 429 限流
+    // 第 0 步：触发点 —— ResilientChatModelExecutor.call()
     @Override
     public ChatResponse call(Prompt prompt) {
         // 每次调用 = 一个 turn，持有一个恢复分支账本
         TurnRetryState turnRetry = new TurnRetryState(resolveMaxAttempts(), fallbackChain.size());
 
+        //这里循环不是失败一次就拋，而是每轮失败都重新分类、重新决策、再试，直到成功或决策器说"放弃"（TERMINATE分支抛异常）
+        // TurnRetryState 是每次 call() 新建的，所以一本"病历"只管这一次对话轮次
+//
+//       TurnRetryState 在其中的真实角色
+//        它不是重试的执行者，是重试的裁判。它只负责两件事：
+//        1. 记账：markAttempted() —— "限流退避这个疗法已经用过 1 次了"
+//        2. 裁决：nextDirective() —— "还能再试吗？"（次数没超 → 给重试指令；超了 → 给 fallback 或 TERMINATE 指令）
         while (true) {
             try {
+                //要是再次执行 currentChatModel.call(prompt) → 成功，就直接返回
                 ChatResponse response = currentChatModel.call(prompt);
                 // 成功 — 恢复 fallback 状态标记
                 if (fallbackActivated && !isInFallbackCooldown()) {
@@ -168,6 +180,8 @@ public class ResilientChatModelExecutor implements ChatModel {
                 return response;
 
             } catch (Exception e) {
+                //markAttempted() 记录尝试过的分支，避免重复尝试
+                //这里是调用classifyError()，也就是分类的入口
                 ClassifiedError classified = classifyError(e);
 
                 log.warn("模型调用失败 provider={} model={} reason={} status={}",
@@ -178,6 +192,7 @@ public class ResilientChatModelExecutor implements ChatModel {
                 log.info("恢复指令: branch={} reason={}", d.branch(), d.reason());
                 recordBranch(d.branch());
 
+                //NOTE  第 3 步：执行 —— call() 的 switch，30 秒后又 429，60 秒后又 429,attempt=4>3 走exhaustedBranch()，走 TERMINATE 分支抛异常
                 switch (d.branch()) {
                     // 去相关抖动退避重试
                     case JITTERED_BACKOFF, ADAPTIVE_RATE_LIMIT_BACKOFF -> {
@@ -194,6 +209,7 @@ public class ResilientChatModelExecutor implements ChatModel {
                         turnRetry.markAttempted(RecoveryBranch.CREDENTIAL_ROTATION);
                         tryRotateCredential(classified);
                     }
+                    //NOTE 第 4 步：换模型 —— tryActivateFallback(),执行器收到 PROVIDER_FALLBACK 指令
                     case PROVIDER_FALLBACK -> {
                         // fallback 链切换后重试
                         turnRetry.markAttempted(RecoveryBranch.PROVIDER_FALLBACK);
@@ -312,17 +328,19 @@ public class ResilientChatModelExecutor implements ChatModel {
                 ? currentModelConfig.getMaxAttempts() : DEFAULT_MAX_ATTEMPTS;
     }
 
-    //NOTE 这个是异常的分类入口
+    //NOTE 第 1 步：分类 —— "这是什么错误？"
+    // 这个是异常的分类入口
     private ClassifiedError classifyError(Exception e) {
         try {
+            // 先问当前 Provider："你自己认识这个错误吗？"（OpenAI 的错误格式和 Anthropic 不同）
             ClassifiedError fromProvider = currentProvider.classifyError(
                     e, currentModelConfig.getModelId());
             if (fromProvider != null) return fromProvider;
         } catch (Exception ignored) {
             // Provider 分类失败，回退默认
         }
-        return errorClassifier.classify(e,
-                currentProvider.providerName(), currentModelConfig.getModelId());
+        // Provider 不认识 → 用通用分类器，就去调用 errorClassifier.classify()，这个是 hermes-agent error_classifier.py 的移植
+        return errorClassifier.classify(e, currentProvider.providerName(), currentModelConfig.getModelId());
     }
 
     // ── 恢复动作执行 ──
@@ -385,6 +403,12 @@ public class ResilientChatModelExecutor implements ChatModel {
     // ── Fallback 链管理 ──
 
     // 【容错】主备模型链切换：按序尝试 fallback 路由，尊重路由冷却，递归跳过失效/解析失败的路由
+    //NOTE 这里tryActivateFallback()是执行器的核心，执行器收到 PROVIDER_FALLBACK 指令后就会调用这个方法,它做的：
+    // 1. 因为原因是限流类 → 写 60 秒冷却期（防止刚切回来又立刻切走）
+    //  2. 从链里取下一个 ModelRoute（glm-flash）
+    //  3. 通过 providerRegistry.resolve() 找到对应 Provider
+    //  4. 创建新的 ChatModel 替换掉 currentChatModel——注意不是"记住下次用"，而是就地换枪，接下来 while
+    //  循环立刻用新模型重试同一个 prompt
     private boolean tryActivateFallback(FailoverReason reason) {
         if (reason == FailoverReason.RATE_LIMIT
                 || reason == FailoverReason.UPSTREAM_RATE_LIMIT

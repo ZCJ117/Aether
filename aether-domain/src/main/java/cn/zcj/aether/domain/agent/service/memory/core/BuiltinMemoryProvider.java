@@ -56,6 +56,7 @@ public class BuiltinMemoryProvider implements MemoryProvider {
         return List.of(); // builtin 不暴露工具（上下文注入即可）
     }
 
+    //NOTE 调用到这个BuiltinMemoryProvider重写的prefetch方法，这里又分别调用了两个facade.search方法
     @Override
     public String prefetch(String query, String sessionId) {
         if (facade == null || query == null || query.isBlank()) {
@@ -80,12 +81,14 @@ public class BuiltinMemoryProvider implements MemoryProvider {
         }
     }
 
+    //NOTE 调用重写的这个syncTurn方法
     @Override
     public void syncTurn(String userContent, String assistantContent,
                          String sessionId, List<Map<String, Object>> messages) {
         if (facade == null) {
             return;
         }
+        //NOTE 这里的 userContent 是用户的消息，assistantContent 是助手的回复，这里是进行拼接
         String content = cleanText(userContent) + "\n\n" + cleanText(assistantContent);
         if (content.isBlank()) {
             return;

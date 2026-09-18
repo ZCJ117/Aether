@@ -48,6 +48,7 @@ public class MemoryLifecycleHooks {
         return props.isEnabled();
     }
 
+    //NOTE 这里的 prefetch 再调用 MemoryManager 的 prefetchAll 方法
     /** turn 前召回：返回待注入的 {@code <memory-context>} 围栏文本（空串=无）。 */
     public String prefetch(String query, String sessionId) {
         MemoryManager m = manager;
@@ -55,6 +56,8 @@ public class MemoryLifecycleHooks {
     }
 
     /** turn 后持久化：非阻塞异步写入。 */
+    //NOTE 这里的 syncTurn 再调用 MemoryManager 的 syncAll 方法，
+    // 这个是ChatService中的syncTurn方法的入口
     public void syncTurn(String userContent, String assistantContent,
                          String sessionId, List<Map<String, Object>> messages) {
         MemoryManager m = manager;

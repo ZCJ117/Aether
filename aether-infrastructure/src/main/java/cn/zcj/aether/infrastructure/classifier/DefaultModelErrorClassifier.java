@@ -29,7 +29,9 @@ import java.util.concurrent.TimeoutException;
 @Component
 public class DefaultModelErrorClassifier implements ModelErrorClassifier {
 
+    //这个是通用的分类器
     // ── 消息模式关键词（对齐 hermes _CONTENT_POLICY_BLOCKED_PATTERNS）──
+    //这个是错误消息中包含的关键词
     private static final String[] CONTENT_POLICY_PATTERNS = {
             "content_policy_violation",
             "content filter",

@@ -32,6 +32,8 @@ public class MemoryInjectionService {
     /**
      * P1-4: 记忆注入（优先 MemoryLifecycleHooks prefetch，内部经 BuiltinMemoryProvider 委托 MemoryFacade；回退文件存储关键词匹配）。
      */
+
+    //     → 这次对话的 system prompt 里就带上了历史记忆
     public String injectMemory(String instruction, String userMessage, String agentId, String sessionId) {
         // Phase 9: 注入标识符上下文（项目文件结构+文档索引）
         if (identifierRegistry != null) {
@@ -46,10 +48,13 @@ public class MemoryInjectionService {
         }
 
         // 新：MemoryLifecycleHooks prefetch（含 <memory-context> 围栏格式化与 char-limit 截断）
+        //NOTE 用户的消息第一次被当作 query 用，query是用来检索记忆的，prefetch返回的记忆内容会被注入到instruction里，
+        // 这里调用memoryLifecycleHooks.prefetch()
         if (memoryLifecycleHooks != null) {
             String memoryBlock = memoryLifecycleHooks.prefetch(userMessage, sessionId);
             if (memoryBlock != null && !memoryBlock.isEmpty()) {
                 if (instruction == null) return memoryBlock;
+                //NOTE 这里是真正的注入prompt的地方，instruction里必须有{memory}占位符，否则记忆内容不会被注入
                 String enriched = instruction.replace("{memory}", memoryBlock);
                 if (enriched.equals(instruction)) {
                     log.warn("Agent [{}] 的 instruction 缺少 {{memory}} 占位符，记忆内容未被注入。" +

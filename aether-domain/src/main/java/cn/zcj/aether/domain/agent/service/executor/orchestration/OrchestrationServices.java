@@ -25,6 +25,9 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+//NOTE  第 5 层：所有策略共享的底座 —— OrchestrationServices
+// 五种策略 + DAG 调度器都不直接碰 Agent 创建、拦截、钩子，
+// 而是通过 OrchestrationServices 统一访问，便于统一拦截、日志、钩子、线程池等行为。
 /** Shared dependencies and behavior for the five graph orchestration strategies. */
 @Slf4j
 public final class OrchestrationServices {
