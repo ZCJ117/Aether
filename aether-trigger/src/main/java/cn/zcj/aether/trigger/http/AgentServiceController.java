@@ -76,7 +76,13 @@ public class AgentServiceController implements IAgentService {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    /** H4: CORS 允许的来源白名单（逗号分隔，默认 * 保持向后兼容） */
+    /**
+     * H4: CORS 允许的来源白名单（逗号分隔）。
+     *
+     * <p>注：本字段当前未被引用，实际生效的是 {@code CorsConfig} 注册的 CorsFilter——
+     * 其同名配置默认值为空，即未配置时拒绝所有跨域（fail-closed）；
+     * 此处的 {@code :*} 默认值仅为兼容旧引用保留，不代表生效行为。</p>
+     */
     @Value("${aether.cors.allowed-origins:*}")
     private String allowedOrigins;
 
@@ -172,7 +178,8 @@ public class AgentServiceController implements IAgentService {
             }
 
             List<String> messages = chatService.handleMessage(
-                    requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
+                    requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage(),
+                    requestDTO.getPermissionMode());
 
             ChatResponseDTO responseDTO = new ChatResponseDTO();
             responseDTO.setContent(String.join("", messages));
@@ -398,7 +405,7 @@ public class AgentServiceController implements IAgentService {
 
             chatService.handleMessageStream(
                             requestDTO.getAgentId(), requestDTO.getUserId(),
-                            sessionId, requestDTO.getMessage())
+                            sessionId, requestDTO.getMessage(), requestDTO.getPermissionMode())
                     // 【流式】订阅统一 Flowable，将逐事件经 SSE data 帧下发前端
                     //NOTE 触发点
                     .subscribe(
@@ -451,6 +458,8 @@ public class AgentServiceController implements IAgentService {
             String agentId = (String) requestBody.get("agentId");
             String userId = (String) requestBody.get("userId");
             String sessionId = (String) requestBody.get("sessionId");
+            // D2/F1-2: 恢复执行的权限模式必须与挂起时一致（可选，缺省沿用 DEFAULT）
+            String permissionMode = (String) requestBody.get("permissionMode");
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> rawResults = (List<Map<String, Object>>) requestBody.get("confirmResults");
@@ -475,7 +484,7 @@ public class AgentServiceController implements IAgentService {
             log.info("收到确认回执: agentId={}, userId={}, sessionId={}, count={}",
                     agentId, userId, sessionId, confirmResults.size());
 
-            chatServiceImpl.handleConfirm(agentId, userId, sessionId, confirmResults)
+            chatServiceImpl.handleConfirm(agentId, userId, sessionId, confirmResults, permissionMode)
                     .subscribe(
                             event -> {
                                 try {
@@ -543,6 +552,14 @@ public class AgentServiceController implements IAgentService {
                     payload.put("model", event.getInternalLlmModel());
                     payload.put("durationMs", event.getInternalLlmDurationMs());
                     payload.put("success", event.isInternalLlmSuccess());
+                }
+                case delegation -> {
+                    // D3/VUL-05: 子代理完成事件 → 前端据此刷新委派状态。
+                    // 载荷映射自 RuntimeEvent.delegation(taskId, toolCount, status) 的三个字段；
+                    // 缺此分支时事件会落进 default，前端只收到 {"type":"delegation"} 拿不到内容。
+                    payload.put("delegationId", event.getToolCallId());
+                    payload.put("toolCount", event.getTurnCount());
+                    payload.put("status", event.getToolOutput());
                 }
                 case done -> {} // stream close is signaled by emitter.complete(), no payload needed
                 default -> {}   // maxTurnsReached and any future types — no extra payload

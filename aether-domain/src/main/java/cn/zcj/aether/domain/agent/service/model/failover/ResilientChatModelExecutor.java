@@ -94,6 +94,29 @@ public class ResilientChatModelExecutor implements ChatModel {
         this.compressCallback = callback;
     }
 
+    // ── 压缩后的请求重建 ──
+    /**
+     * 压缩后的待重试请求重建器（由宿主注入）。
+     *
+     * <p>压缩改的是 {@code AgentState} 里的消息，而本类重试时复用的是入参 {@link Prompt}；
+     * 两者是不同对象，故压缩后必须由宿主持有 system 指令与中间件变换的一方重建请求，
+     * 否则重试发出去的仍是压缩前那份超长请求，必然再次溢出。</p>
+     */
+    @FunctionalInterface
+    public interface PromptRebuilder {
+        Prompt rebuild();
+    }
+
+    /** 未注入时重试复用入参 Prompt（改造前行为，靠下一轮生效）。 */
+    private PromptRebuilder promptRebuilder;
+
+    /**
+     * 注入压缩后的请求重建器。
+     */
+    public void setPromptRebuilder(PromptRebuilder rebuilder) {
+        this.promptRebuilder = rebuilder;
+    }
+
     // ── 容错指标（可选，未注入则不记录；P0(1.5) 混沌压测观测用）──
     private FailoverMetrics failoverMetrics;
 
@@ -167,10 +190,12 @@ public class ResilientChatModelExecutor implements ChatModel {
 //        它不是重试的执行者，是重试的裁判。它只负责两件事：
 //        1. 记账：markAttempted() —— "限流退避这个疗法已经用过 1 次了"
 //        2. 裁决：nextDirective() —— "还能再试吗？"（次数没超 → 给重试指令；超了 → 给 fallback 或 TERMINATE 指令）
+        // 每轮重试实际发出的请求：压缩真正改变了上下文时会被重建，否则沿用入参
+        Prompt activePrompt = prompt;
         while (true) {
             try {
                 //要是再次执行 currentChatModel.call(prompt) → 成功，就直接返回
-                ChatResponse response = currentChatModel.call(prompt);
+                ChatResponse response = currentChatModel.call(activePrompt);
                 // 成功 — 恢复 fallback 状态标记
                 if (fallbackActivated && !isInFallbackCooldown()) {
                     log.info("Fallback 模型调用成功，下一轮将尝试恢复主模型");
@@ -202,7 +227,11 @@ public class ResilientChatModelExecutor implements ChatModel {
                     case CONTEXT_COMPRESSION -> {
                         // 上下文溢出，回调压缩后重试
                         turnRetry.markAttempted(RecoveryBranch.CONTEXT_COMPRESSION);
-                        tryCompress(classified);
+                        // 只有压缩真的改变了上下文才重建请求：未改变时沿用原 Prompt，
+                        // 避免用同一份超长上下文再发一次完全相同的请求
+                        if (tryCompress(classified)) {
+                            activePrompt = rebuildPrompt(activePrompt);
+                        }
                     }
                     case CREDENTIAL_ROTATION -> {
                         // 凭据轮换后重试
@@ -293,8 +322,10 @@ public class ResilientChatModelExecutor implements ChatModel {
             }
             case CONTEXT_COMPRESSION -> {
                 turnRetry.markAttempted(RecoveryBranch.CONTEXT_COMPRESSION);
-                tryCompress(classified);
-                yield streamWithRecovery(prompt, turnRetry);
+                // 同同步路径：压缩真的改变了上下文才重建请求，用压缩后的上下文重建流
+                yield tryCompress(classified)
+                        ? streamWithRecovery(rebuildPrompt(prompt), turnRetry)
+                        : streamWithRecovery(prompt, turnRetry);
             }
             case CREDENTIAL_ROTATION -> {
                 turnRetry.markAttempted(RecoveryBranch.CREDENTIAL_ROTATION);
@@ -347,18 +378,58 @@ public class ResilientChatModelExecutor implements ChatModel {
 
     /**
      * 执行上下文压缩。失败仅记录，不阻断（下一轮指令会退化到 fallback/终止）。
+     *
+     * <p>四个出口分别打点，使 CONTEXT_COMPRESSION 分支不再无声 ——
+     * 调用方（{@code call()} / {@code handleStreamError()}）仍忽略返回值，
+     * 台账记账（{@code markAttempted}）保持在动作之前。</p>
+     *
+     * @return 是否真的改变了上下文（false = 回调缺失、无变化或失败）
      */
-    private void tryCompress(ClassifiedError classified) {
+    private boolean tryCompress(ClassifiedError classified) {
         if (compressCallback == null) {
-            log.debug("无压缩回调，跳过压缩");
-            return;
+            log.warn("无压缩回调，跳过压缩（CONTEXT_COMPRESSION 分支空转，请检查装配）");
+            recordCompressResult(FailoverMetrics.CompressOutcome.NOOP);
+            return false;
         }
         try {
             if (compressCallback.compress(agentState, classified.reason())) {
                 log.info("上下文压缩完成，重试模型调用");
+                recordCompressResult(FailoverMetrics.CompressOutcome.SUCCESS);
+                return true;
             }
+            log.warn("上下文压缩未产生变化");
+            recordCompressResult(FailoverMetrics.CompressOutcome.INEFFECTIVE);
+            return false;
         } catch (Exception ce) {
             log.warn("上下文压缩失败: {}", ce.getMessage());
+            recordCompressResult(FailoverMetrics.CompressOutcome.ERROR);
+            return false;
+        }
+    }
+
+    private void recordCompressResult(FailoverMetrics.CompressOutcome outcome) {
+        if (failoverMetrics != null) {
+            failoverMetrics.recordCompressResult(outcome);
+        }
+    }
+
+    /**
+     * 用宿主注入的重建器生成压缩后的待重试请求。
+     *
+     * <p>未注入重建器、重建返回 null 或重建抛异常时一律回退原请求 ——
+     * 本方法在模型调用热路径上，**不得**抛异常，最坏情况退化为改造前行为
+     * （重试复用原请求，压缩收益留给下一轮）。</p>
+     */
+    private Prompt rebuildPrompt(Prompt fallback) {
+        if (promptRebuilder == null) {
+            return fallback;
+        }
+        try {
+            Prompt rebuilt = promptRebuilder.rebuild();
+            return rebuilt != null ? rebuilt : fallback;
+        } catch (Exception e) {
+            log.warn("压缩后重建请求失败，重试将复用原请求: {}", e.getMessage());
+            return fallback;
         }
     }
 

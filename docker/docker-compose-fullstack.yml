@@ -2,7 +2,7 @@
 # P1 全栈部署：业务(aether+pg) + P1 新增组件(Redis/Kafka) + 监控告警(Prometheus/Grafana/Alertmanager)
 # 用途：P1-1.2 分布式限流 / P1-1.3 消息队列 / P1-3.3 监控告警 的一键演示与联调环境
 # 启动：cd aether && docker compose -f docker/docker-compose-fullstack.yml --env-file docker/.env.example up -d
-# 端口：8091 应用 | 9090 Prometheus | 3000 Grafana | 9093 Alertmanager | 8081 alert-echo | 5432 PG
+# 端口：8091 应用 | 4317 OTel Collector(OTLP gRPC) | 9090 Prometheus | 3000 Grafana | 9093 Alertmanager | 8081 alert-echo | 5432 PG
 # ============================================================
 # 【工程化闭环】一键全栈闭环：单条 docker compose 拉起 应用 + PG(pgvector) + Redis + Kafka(KRaft)
 # + Prometheus/Grafana/Alertmanager + node-exporter + alert-echo，覆盖"部署 → 限流/消息 → 监控告警"
@@ -23,6 +23,8 @@ services:
         condition: service_started
       kafka:
         condition: service_started
+      otel-collector:
+        condition: service_started
     environment:
       - SPRING_PROFILES_ACTIVE=dev
       # 【工程化闭环】密钥外部化：JASYPT_MASTER_PASSWORD 经 .env 注入容器，
@@ -42,6 +44,10 @@ services:
       - AETHER_KAFKA_ENABLED=true
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - AETHER_DASHBOARD_STATS_SOURCE=kafka
+      # ---- D4/F2-7: OTel trace 导出端点（prod yml 已用 ${OTEL_EXPORTER_OTLP_ENDPOINT:...} 读取）----
+      # 配合下方 otel-collector 服务，构成"span 采集 → OTLP 导出 → collector stdout"的链路，
+      # 与既有的 Prometheus 指标链路互补，补齐 trace 这一支柱。
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
     ports:
       - "8091:8091"
     healthcheck:
@@ -149,6 +155,23 @@ services:
       - /:/host:ro,rslave
     ports:
       - "127.0.0.1:9100:9100"
+    restart: unless-stopped
+
+  # 告警通知回显通道（可实测触达；生产替换为钉钉/企微/邮件网关）
+  # ---- D4/F2-7: OpenTelemetry Collector（trace 接收 + stdout 回显）----
+  # 【工程化闭环】接收应用 OTLP gRPC 导出的 span（OtelConfig 装配），经 debug exporter 打到
+  # stdout，使 "docker compose logs otel-collector" 即可验证 agent.turn → agent.model.call /
+  # agent.tool.call 三层链路，补齐 trace 支柱（metrics 已由 Prometheus 承担）。
+  # 注意：镜像 tag 未在本机验证（无网络/无 Docker 守护进程），首次 up 若报 manifest unknown
+  # 请按需改为已发布的 tag 或 latest。
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    container_name: aether-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yml"]
+    volumes:
+      - ./otel-collector/config.yml:/etc/otelcol-contrib/config.yml:ro
+    ports:
+      - "127.0.0.1:4317:4317"
     restart: unless-stopped
 
   # 告警通知回显通道（可实测触达；生产替换为钉钉/企微/邮件网关）

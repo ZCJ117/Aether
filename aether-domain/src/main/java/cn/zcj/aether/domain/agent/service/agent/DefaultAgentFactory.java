@@ -18,6 +18,7 @@ import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
 import cn.zcj.aether.domain.agent.service.notes.ExternalNotes;
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.session.SessionRepository;
+import cn.zcj.aether.domain.agent.service.subagent.PendingDelegationInbox;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
@@ -96,6 +97,8 @@ public class DefaultAgentFactory {
                 agent.setModelCallObservability(modelCallObservability);
                 // H4: 注入挂起快照持久化仓储（无持久化部署时为 null，Agent 侧降级跳过）
                 agent.setSessionRepository(resolveBean(SessionRepository.class));
+                // D3: 注入父会话委派结果收件箱（子代理终态回传，下一轮注入为系统消息；无 Bean 时为 null）
+                agent.setDelegationInbox(resolveBean(PendingDelegationInbox.class));
                 return agent;
             }
         });

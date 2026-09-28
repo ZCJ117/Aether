@@ -21,6 +21,13 @@ public interface IChatService {
     List<String> handleMessage(String agentId, String userId, String sessionId, String message);
 
     /**
+     * D2/F1-2：带权限模式的同步对话。
+     * {@code permissionMode} 非空白时写入 {@code RuntimeContext.metadata}；空白时保持既有语义（不写该键）。
+     */
+    List<String> handleMessage(String agentId, String userId, String sessionId, String message,
+                               String permissionMode);
+
+    /**
      * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
      * 面试举证点：本方法返回 {@code Flowable<RuntimeEvent>}（行23）是贯穿全链路的统一流式原语——
      * 领域层编排（GraphExecutor）经 FlowableEmitter 逐事件发射 RuntimeEvent，HTTP 边缘以
@@ -29,6 +36,10 @@ public interface IChatService {
      */
     // 【流式】统一流式入口：Flowable<RuntimeEvent> 逐事件推送，下游对接 SSE / Kafka
     Flowable<RuntimeEvent> handleMessageStream(String agentId, String userId, String sessionId, String message);
+
+    /** D2/F1-2：带权限模式的流式对话（语义同 5 参 {@code handleMessage}）。 */
+    Flowable<RuntimeEvent> handleMessageStream(String agentId, String userId, String sessionId, String message,
+                                               String permissionMode);
 
     List<String> handleMessage(ChatCommandEntity chatCommandEntity);
 

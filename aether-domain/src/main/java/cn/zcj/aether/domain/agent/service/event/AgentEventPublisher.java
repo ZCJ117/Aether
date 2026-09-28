@@ -15,7 +15,7 @@ import java.util.Map;
  *
  * <p><b>【架构亮点 · 事件驱动统一流式架构】</b><br>
  * 面试举证点：本类是进程内<b>内存事件总线</b>——{@code CopyOnWriteArrayList} 订阅（行29-53）是
- * AgentEventKafkaBridge 的首次真实消费者；17 个 {@code publish*} 方法（行58-216）统一发射，
+ * AgentEventKafkaBridge 的首次真实消费者；15 个 {@code publish*} 方法（行66-218）统一发射，
  * 订阅者异常逐个隔离（行46-52）不阻断发布；{@code toJsonWithMdc}（行243-252）把
  * graphExecutionId/sessionId/subagentId 并入事件，保证跨进程链路可 join 对齐。</p>
  */

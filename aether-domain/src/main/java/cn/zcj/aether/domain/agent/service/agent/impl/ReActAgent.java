@@ -9,19 +9,25 @@ import cn.zcj.aether.domain.agent.service.agent.hook.HookPoint;
 import cn.zcj.aether.domain.agent.service.agent.hook.HookRegistry;
 import cn.zcj.aether.domain.agent.service.agent.middleware.AgentMiddleware;
 import cn.zcj.aether.domain.agent.service.agent.middleware.MiddlewareChain;
+import cn.zcj.aether.domain.agent.service.agent.observability.AgentTracer;
 import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
+import cn.zcj.aether.domain.agent.service.agent.permission.PermissionModes;
 import cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall;
 import cn.zcj.aether.domain.agent.observability.ModelCallObservability;
 import cn.zcj.aether.domain.agent.service.context.AutoCompactResult;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
 import cn.zcj.aether.domain.agent.service.context.TokenBudget;
 import cn.zcj.aether.domain.agent.service.event.AgentEventPublisher;
+import cn.zcj.aether.domain.agent.service.model.failover.FailoverReason;
 import cn.zcj.aether.domain.agent.service.model.failover.ResilientChatModelExecutor;
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.runtime.TurnMessage;
 import cn.zcj.aether.domain.agent.service.session.SessionEntity;
 import cn.zcj.aether.domain.agent.service.session.SessionRepository;
+import cn.zcj.aether.domain.agent.service.subagent.DelegationCompletion;
+import cn.zcj.aether.domain.agent.service.subagent.PendingDelegationInbox;
+import cn.zcj.aether.domain.agent.service.tool.ToolContext;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
 import cn.zcj.aether.domain.agent.service.tool.ToolResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -99,6 +105,16 @@ public class ReActAgent extends BaseAgent {
         this.sessionRepository = sessionRepository;
     }
 
+    /**
+     * D3: 父会话委派结果收件箱（由 DefaultAgentFactory 构造后注入）。
+     * 无 Bean 时为 null → 跳过消费逻辑，行为等价改造前（保证测试可直接 new）。
+     */
+    private PendingDelegationInbox delegationInbox;
+
+    public void setDelegationInbox(PendingDelegationInbox delegationInbox) {
+        this.delegationInbox = delegationInbox;
+    }
+
     private Instant startTime;
 
     public ReActAgent(AgentConfig config,
@@ -130,8 +146,9 @@ public class ReActAgent extends BaseAgent {
         return Flowable.create(emitter -> {
             startTime = Instant.now();
             try {
-                // P1 容错：将 AgentState 注入 ResilientChatModelExecutor（供 fallback 冷却使用）
-                wireResilientExecutor();
+                // P1 容错：将 AgentState 与上下文压缩回调注入 ResilientChatModelExecutor
+                // （供 fallback 冷却使用；使 CONTEXT_COMPRESSION 分支真正执行压缩而非空转）
+                wireResilientExecutor(ctx);
 
                 // H4-步骤5: 检测挂起恢复
                 if (state.getStatus() == AgentState.AgentStatus.PAUSED) {
@@ -152,6 +169,9 @@ public class ReActAgent extends BaseAgent {
 
                 // ====== P1-2: 应用系统提示词变换 ======
                 String enrichedInstruction = chain.applySystemPrompt(config.getInstruction());
+
+                // P1 容错：注入"压缩后重建重试请求"能力（须待 chain 与指令就绪）
+                wirePromptRebuilder(chain, enrichedInstruction);
 
                 // ==== 初始化对话 ====
                 List<TurnMessage> messages = state.messagesMutable();
@@ -204,313 +224,344 @@ public class ReActAgent extends BaseAgent {
                 && !aborted.get() && !state.interruptControl().isInterrupted()) {
             state.incrementTurn();
 
-            // H5-步骤5: 每轮清空快照去重集合（对齐 hermes new_turn() L737-739）
-            toolExecutor.clearSnapshotTracking();
+            // D4/F2-4: turn span —— 覆盖本轮全部路径（含 4 处 return / break 与异常），
+            // 循环开始处开启，finally 收口；异常在 catch 里记 turn.error 属性并置 ERROR 状态。
+            AgentTracer.SpanScope turnScope = AgentTracer.startAgentTurn(
+                    getId(), ctx.sessionId(), state.getCurrentTurn());
+            try {
 
-            Instant turnStart = Instant.now();
+                // H5-步骤5: 每轮清空快照去重集合（对齐 hermes new_turn() L737-739）
+                toolExecutor.clearSnapshotTracking();
 
-            // P0-6: 发布 TurnStarted 事件
-            if (eventPublisher != null) {
-                eventPublisher.publishTurnStarted(getId(),
-                        ctx.sessionId(), ctx.correlationId(), state.getCurrentTurn());
-            }
+                Instant turnStart = Instant.now();
 
-            // ====== Phase 1: Context Management ======
-            List<TurnMessage> messages = state.messagesMutable();
-
-            // P2-2: 消息修剪——超过500条保留最近200条（下沉至 ContextManager，含配对对齐 + 占位消息）
-            if (messages.size() > 500) {
-                contextManager.trimMessages(messages, 200);
-            }
-
-            messages = contextManager.applyToolResultBudget(messages);
-            messages = contextManager.microCompact(messages);
-
-            var compactResult = contextManager.autoCompactIfNeeded(messages, config.getModelRef(), ctx.sessionId(), tokenBudget);
-            if (compactResult.isCompacted()) {
-                List<TurnMessage> compacted = (List<TurnMessage>) compactResult.getCompressedMessages();
-                messages.clear();
-                messages.addAll(compacted);
-                emitter.onNext(RuntimeEvent.builder()
-                        .type(RuntimeEvent.EventType.compactBoundary)
-                        .compactSummary(compactResult.getSummary())
-                        .build());
-
-                // C2: 发射内部 LLM 调用事件（context compaction）
-                if (compactResult.getInternalLlmCallEvent() != null) {
-                    emitter.onNext(compactResult.getInternalLlmCallEvent());
+                // P0-6: 发布 TurnStarted 事件
+                if (eventPublisher != null) {
+                    eventPublisher.publishTurnStarted(getId(),
+                            ctx.sessionId(), ctx.correlationId(), state.getCurrentTurn());
                 }
-            }
 
-            // Phase 9: Pipe compaction (六步压缩管道)
-            if (!compactResult.isCompacted() && externalNotes != null) {
-                var pipeResult = contextManager.runCompactionPipeline(messages, config.getModelRef(), ctx.sessionId(), state.getCurrentTurn(), tokenBudget);
-                if (pipeResult.compacted()) {
+                // ====== Phase 1: Context Management ======
+                List<TurnMessage> messages = state.messagesMutable();
+
+                // P2-2: 消息修剪——超过500条保留最近200条（下沉至 ContextManager，含配对对齐 + 占位消息）
+                if (messages.size() > 500) {
+                    contextManager.trimMessages(messages, 200);
+                }
+
+                // D3/VUL-05: 消费父会话委派结果收件箱——子代理终态回传注入为系统消息，
+                // 父 Agent 无需轮询即可在下一轮看到子任务结果（推模式落地点）。
+                // 位置在 microCompact/autoCompactIfNeeded 之前，使新注入的消息参与当轮压缩评估。
+                if (delegationInbox != null) {
+                    List<DelegationCompletion> completions = delegationInbox.drain(ctx.sessionId());
+                    for (DelegationCompletion c : completions) {
+                        messages.add(TurnMessage.system(formatDelegationCompletion(c)));
+                        emitter.onNext(RuntimeEvent.delegation(c.delegationId(), 0, c.statusName()));
+                    }
+                }
+
+                messages = contextManager.applyToolResultBudget(messages);
+                messages = contextManager.microCompact(messages);
+
+                var compactResult = contextManager.autoCompactIfNeeded(messages, config.getModelRef(), ctx.sessionId(), tokenBudget);
+                if (compactResult.isCompacted()) {
+                    List<TurnMessage> compacted = (List<TurnMessage>) compactResult.getCompressedMessages();
                     messages.clear();
-                    messages.addAll(pipeResult.messages());
-                    String noteBlock = externalNotes.buildSummaryBlock(ctx.sessionId());
-                    if (!noteBlock.isEmpty()) messages.add(TurnMessage.user(noteBlock));
-                    emitter.onNext(RuntimeEvent.builder().type(RuntimeEvent.EventType.compactBoundary).compactSummary(pipeResult.summary()).build());
+                    messages.addAll(compacted);
+                    emitter.onNext(RuntimeEvent.builder()
+                            .type(RuntimeEvent.EventType.compactBoundary)
+                            .compactSummary(compactResult.getSummary())
+                            .build());
+
+                    // C2: 发射内部 LLM 调用事件（context compaction）
+                    if (compactResult.getInternalLlmCallEvent() != null) {
+                        emitter.onNext(compactResult.getInternalLlmCallEvent());
+                    }
                 }
-            }
 
-            // 将裁剪/紧凑后的消息同步回 state，确保后续 assistant/tool 消息写入持久化列表
-            state.messagesMutable().clear();
-            state.messagesMutable().addAll(messages);
-            messages = state.messagesMutable();
+                // Phase 9: Pipe compaction (六步压缩管道)
+                if (!compactResult.isCompacted() && externalNotes != null) {
+                    var pipeResult = contextManager.runCompactionPipeline(messages, config.getModelRef(), ctx.sessionId(), state.getCurrentTurn(), tokenBudget);
+                    if (pipeResult.compacted()) {
+                        messages.clear();
+                        messages.addAll(pipeResult.messages());
+                        String noteBlock = externalNotes.buildSummaryBlock(ctx.sessionId());
+                        if (!noteBlock.isEmpty()) messages.add(TurnMessage.user(noteBlock));
+                        emitter.onNext(RuntimeEvent.builder().type(RuntimeEvent.EventType.compactBoundary).compactSummary(pipeResult.summary()).build());
+                    }
+                }
 
-            // ====== Phase 2: Model Call ======
-            List<Message> springMessages = convertToSpringMessages(messages);
+                // 将裁剪/紧凑后的消息同步回 state，确保后续 assistant/tool 消息写入持久化列表
+                state.messagesMutable().clear();
+                state.messagesMutable().addAll(messages);
+                messages = state.messagesMutable();
 
-            // P1-2: 通过中间件链处理推理消息
-            List<Message> enrichedMessages = chain.applyReasoning(springMessages);
+                // ====== Phase 2: Model Call ======
+                List<Message> springMessages = convertToSpringMessages(messages);
 
-            // 在模型调用前发送 turnStarted，避免前端长时间空白
-            emitter.onNext(RuntimeEvent.turnStarted(state.getCurrentTurn()));
+                // P1-2: 通过中间件链处理推理消息
+                List<Message> enrichedMessages = chain.applyReasoning(springMessages);
 
-            // P1-6 + O15: Hook - before model call（经 HookRegistry 单一命名空间分发）
-            long modelStart = System.currentTimeMillis();
-            fireBeforeModelCall(ctx, state.getCurrentTurn());
+                // 在模型调用前发送 turnStarted，避免前端长时间空白
+                emitter.onNext(RuntimeEvent.turnStarted(state.getCurrentTurn()));
 
-            // D3: PRE_API_REQUEST（对齐 hermes pre_api_request）
-            if (hookRegistry != null) {
-                hookRegistry.invokeAll(HookPoint.PRE_API_REQUEST, HookContext.builder()
-                        .agentId(getId()).sessionId(ctx.sessionId())
-                        .turnNumber(state.getCurrentTurn())
-                        .request(enrichedInstruction != null
-                                ? enrichedInstruction.substring(0, Math.min(300, enrichedInstruction.length()))
-                                : null)
-                        .build());
-            }
+                // P1-6 + O15: Hook - before model call（经 HookRegistry 单一命名空间分发）
+                long modelStart = System.currentTimeMillis();
+                fireBeforeModelCall(ctx, state.getCurrentTurn());
 
-            // P1-#2 + P1-#1 + O5: 真流式/缓冲路径按 aether.model.invoker.true-streaming 切换
-            var modelResult = chain.applyModelCall(
-                () -> invokeModel(enrichedMessages, enrichedInstruction, emitter, aborted, activeModelSub),
-                config.getModelRef());
-            long modelDuration = System.currentTimeMillis() - modelStart;
+                // D3: PRE_API_REQUEST（对齐 hermes pre_api_request）
+                if (hookRegistry != null) {
+                    hookRegistry.invokeAll(HookPoint.PRE_API_REQUEST, HookContext.builder()
+                            .agentId(getId()).sessionId(ctx.sessionId())
+                            .turnNumber(state.getCurrentTurn())
+                            .request(enrichedInstruction != null
+                                    ? enrichedInstruction.substring(0, Math.min(300, enrichedInstruction.length()))
+                                    : null)
+                            .build());
+                }
 
-            // D3: POST_API_REQUEST / API_REQUEST_ERROR（对齐 hermes post_api_request / api_request_error）
-            // ModelInvoker 吞异常返回 error 结果 → hasError() 等价异常回调
-            if (hookRegistry != null) {
+                // P1-#2 + P1-#1 + O5: 真流式/缓冲路径按 aether.model.invoker.true-streaming 切换
+                var modelResult = chain.applyModelCall(
+                    () -> invokeModel(enrichedMessages, enrichedInstruction, emitter, aborted, activeModelSub),
+                    config.getModelRef());
+                long modelDuration = System.currentTimeMillis() - modelStart;
+
+                // D3: POST_API_REQUEST / API_REQUEST_ERROR（对齐 hermes post_api_request / api_request_error）
+                // ModelInvoker 吞异常返回 error 结果 → hasError() 等价异常回调
+                if (hookRegistry != null) {
+                    if (modelResult.hasError()) {
+                        hookRegistry.invokeAll(HookPoint.API_REQUEST_ERROR, HookContext.builder()
+                                .agentId(getId()).sessionId(ctx.sessionId())
+                                .turnNumber(state.getCurrentTurn())
+                                .error(modelResult.getError())
+                                .durationMs(modelDuration).build());
+                    } else {
+                        hookRegistry.invokeAll(HookPoint.POST_API_REQUEST, HookContext.builder()
+                                .agentId(getId()).sessionId(ctx.sessionId())
+                                .turnNumber(state.getCurrentTurn())
+                                .response(modelResult.getFullText())
+                                .durationMs(modelDuration).build());
+                    }
+                }
+
+                // P1-6 + O15: Hook - after model call（经 HookRegistry 单一命名空间分发）
+                fireAfterModelCall(ctx, modelResult, modelDuration);
+
                 if (modelResult.hasError()) {
-                    hookRegistry.invokeAll(HookPoint.API_REQUEST_ERROR, HookContext.builder()
-                            .agentId(getId()).sessionId(ctx.sessionId())
-                            .turnNumber(state.getCurrentTurn())
-                            .error(modelResult.getError())
-                            .durationMs(modelDuration).build());
-                } else {
-                    hookRegistry.invokeAll(HookPoint.POST_API_REQUEST, HookContext.builder()
-                            .agentId(getId()).sessionId(ctx.sessionId())
-                            .turnNumber(state.getCurrentTurn())
-                            .response(modelResult.getFullText())
-                            .durationMs(modelDuration).build());
+                    emitter.onNext(RuntimeEvent.error(modelResult.getError()));
+                    break;
                 }
-            }
 
-            // P1-6 + O15: Hook - after model call（经 HookRegistry 单一命名空间分发）
-            fireAfterModelCall(ctx, modelResult, modelDuration);
-
-            if (modelResult.hasError()) {
-                emitter.onNext(RuntimeEvent.error(modelResult.getError()));
-                break;
-            }
-
-            // ====== M7: 成本跟踪与熔断检查 ======
-            // 【成本治理】每轮模型调用后累计成本并熔断：超限发 costExceeded 事件并终止 agent
-            if (pricingRegistry != null && tokenBudget != null) {
-                // 设置每轮成本上限（从 AgentConfig 读取）
-                if (config.getMaxCostUsd() != null && config.getMaxCostUsd() > 0) {
-                    tokenBudget.setMaxCostUsd(config.getMaxCostUsd());
+                // ====== M7: 成本跟踪与熔断检查 ======
+                // 【成本治理】每轮模型调用后累计成本并熔断：超限发 costExceeded 事件并终止 agent
+                if (pricingRegistry != null && tokenBudget != null) {
+                    // 设置每轮成本上限（从 AgentConfig 读取）
+                    if (config.getMaxCostUsd() != null && config.getMaxCostUsd() > 0) {
+                        tokenBudget.setMaxCostUsd(config.getMaxCostUsd());
+                    }
+                    var pricing = pricingRegistry.lookup(config.getModelRef());
+                    tokenBudget.accumulateCost(
+                            modelResult.getInputTokens(),
+                            modelResult.getOutputTokens(),
+                            pricing);
+                    if (!tokenBudget.isWithinBudget()) {
+                        log.warn("Agent [{}] 成本超限 ${}，触发熔断",
+                                getId(), String.format("%.4f", tokenBudget.getTotalCostUsd()));
+                        // 【成本治理】熔断动作：下发 costExceeded 事件并结束本轮 ReAct 循环，硬止烧钱
+                        emitter.onNext(RuntimeEvent.costExceeded(
+                                tokenBudget.getTotalCostUsd(), tokenBudget.getMaxCostUsd()));
+                        emitter.onComplete();
+                        return;
+                    }
                 }
-                var pricing = pricingRegistry.lookup(config.getModelRef());
-                tokenBudget.accumulateCost(
-                        modelResult.getInputTokens(),
-                        modelResult.getOutputTokens(),
-                        pricing);
-                if (!tokenBudget.isWithinBudget()) {
-                    log.warn("Agent [{}] 成本超限 ${}，触发熔断",
-                            getId(), String.format("%.4f", tokenBudget.getTotalCostUsd()));
-                    // 【成本治理】熔断动作：下发 costExceeded 事件并结束本轮 ReAct 循环，硬止烧钱
-                    emitter.onNext(RuntimeEvent.costExceeded(
-                            tokenBudget.getTotalCostUsd(), tokenBudget.getMaxCostUsd()));
+
+                // 转发模型事件
+                if (modelResult.getEvents() != null) {
+                    modelResult.getEvents().forEach(emitter::onNext);
+                }
+
+                // 存储 assistant 消息
+                if (!modelResult.getToolCalls().isEmpty()) {
+                    List<Map<String, Object>> tcMeta = modelResult.getToolCalls().stream()
+                            .map(tc -> {
+                                Map<String, Object> m = new HashMap<>();
+                                m.put("id", tc.getId());
+                                m.put("name", tc.getName());
+                                m.put("input", tc.getInput());
+                                return m;
+                            })
+                            .toList();
+                    messages.add(TurnMessage.assistantWithToolCalls(
+                            modelResult.getFullText(), tcMeta));
+                } else if (modelResult.getFullText() != null && !modelResult.getFullText().isEmpty()) {
+                    messages.add(TurnMessage.assistant(modelResult.getFullText()));
+                }
+
+                // ====== Phase 3: Exit Check ======
+                if (modelResult.getToolCalls().isEmpty()) {
+                    emitter.onNext(RuntimeEvent.done());
                     emitter.onComplete();
                     return;
                 }
-            }
 
-            // 转发模型事件
-            if (modelResult.getEvents() != null) {
-                modelResult.getEvents().forEach(emitter::onNext);
-            }
+                // ====== Phase 4: Tool Execution ======
+                List<ToolExecutor.ToolCallRequest> requests = modelResult.getToolCalls().stream()
+                    .map(tc -> new ToolExecutor.ToolCallRequest(tc.getId(), tc.getName(), tc.getInput()))
+                    .toList();
 
-            // 存储 assistant 消息
-            if (!modelResult.getToolCalls().isEmpty()) {
-                List<Map<String, Object>> tcMeta = modelResult.getToolCalls().stream()
-                        .map(tc -> {
-                            Map<String, Object> m = new HashMap<>();
-                            m.put("id", tc.getId());
-                            m.put("name", tc.getName());
-                            m.put("input", tc.getInput());
-                            return m;
-                        })
-                        .toList();
-                messages.add(TurnMessage.assistantWithToolCalls(
-                        modelResult.getFullText(), tcMeta));
-            } else if (modelResult.getFullText() != null && !modelResult.getFullText().isEmpty()) {
-                messages.add(TurnMessage.assistant(modelResult.getFullText()));
-            }
+                // P1-6 + O15: Hook - before tool call（经 HookRegistry 单一命名空间分发）
+                long toolStart = System.currentTimeMillis();
+                fireBeforeToolCall(ctx, requests);
 
-            // ====== Phase 3: Exit Check ======
-            if (modelResult.getToolCalls().isEmpty()) {
-                emitter.onNext(RuntimeEvent.done());
-                emitter.onComplete();
-                return;
-            }
+                // P1-2: 通过中间件链过滤/检查工具调用
+                List<ToolExecutor.ToolCallRequest> filteredRequests = chain.applyActing(requests);
 
-            // ====== Phase 4: Tool Execution ======
-            List<ToolExecutor.ToolCallRequest> requests = modelResult.getToolCalls().stream()
-                .map(tc -> new ToolExecutor.ToolCallRequest(tc.getId(), tc.getName(), tc.getInput()))
-                .toList();
-
-            // P1-6 + O15: Hook - before tool call（经 HookRegistry 单一命名空间分发）
-            long toolStart = System.currentTimeMillis();
-            fireBeforeToolCall(ctx, requests);
-
-            // P1-2: 通过中间件链过滤/检查工具调用
-            List<ToolExecutor.ToolCallRequest> filteredRequests = chain.applyActing(requests);
-
-            // ====== O10: 工具环护栏 —— 连续失败超限的工具拒绝执行（结果仍回注以保持 tool_call 配对）======
-            List<ToolExecutor.ToolCallRequest> guardPassed = new ArrayList<>();
-            List<ToolResult> guardBlocked = new ArrayList<>();
-            for (ToolExecutor.ToolCallRequest req : filteredRequests) {
-                int failCount = getToolFailCount(req.toolName());
-                if (failCount >= TOOL_GUARDRAIL_FAILURE_LIMIT) {
-                    log.warn("Agent [{}] 工具 [{}] 已连续失败 {} 次，护栏熔断跳过执行",
-                            getId(), req.toolName(), failCount);
-                    guardBlocked.add(ToolResult.error(req.toolCallId(), req.toolName(),
-                            "[系统护栏] 工具 '" + req.toolName() + "' 已连续失败 " + failCount
-                                    + " 次，已被熔断跳过执行。请放弃该工具调用路径，改用其他方式完成任务。",
-                            ToolResult.ErrorType.GUARDRAIL));
-                } else {
-                    guardPassed.add(req);
-                }
-            }
-
-            String userId = ctx.userId() != null ? ctx.userId() : "system";
-            String sessionId = ctx.sessionId() != null ? ctx.sessionId() : "session";
-
-            List<ToolResult> results = new ArrayList<>(guardBlocked);
-            if (!guardPassed.isEmpty()) {
-                results.addAll(toolExecutor.executeBatch(guardPassed, userId, sessionId));
-            }
-
-            long toolDuration = System.currentTimeMillis() - toolStart;
-
-            // P1-6 + O15: Hook - after tool call（经 HookRegistry 单一命名空间分发）
-            fireAfterToolCall(ctx, results, toolDuration);
-
-            // Phase 9: Token budget event
-            if (tokenBudget != null) {
-                emitter.onNext(RuntimeEvent.tokenBudget(tokenBudget.getCurrentElasticUsage(), tokenBudget.getElasticBudget()));
-            }
-
-            boolean allFailed = true;
-            for (ToolResult result : results) {
-                // O10: per-tool 失败计数（GUARDRAIL 拦截结果为护栏自身产生，不再累计）；
-                // 成功即复位，保持"连续失败"语义
-                if (result.isError() && result.getErrorType() != ToolResult.ErrorType.GUARDRAIL) {
-                    incrementToolFailCount(result.getToolName());
-                } else if (!result.isError()) {
-                    resetToolFailCount(result.getToolName());
-                }
-
-                // P0-1: 同一 toolCallId 连续 VALIDATION 失败计数（防死循环，对齐 crewAI _max_parsing_attempts=3）
-                if (result.isError() && result.getErrorType() == ToolResult.ErrorType.VALIDATION) {
-                    String counterKey = "valFailCount:" + result.getToolCallId();
-                    int valFailCount = state.getAttribute(counterKey) instanceof Integer i
-                            ? i.intValue() + 1 : 1;
-                    state.setAttribute(counterKey, valFailCount);
-                    if (valFailCount >= 3) {
-                        log.warn("Agent [{}] toolCallId [{}] 连续 {} 次 VALIDATION 失败，标记为终态错误",
-                                getId(), result.getToolCallId(), valFailCount);
-                        String terminalMsg = result.getContent()
-                                + "\n\n[系统提示] 该工具已连续 " + valFailCount
-                                + " 次参数校验失败，请放弃此工具调用路径，改用其他方式完成任务。";
-                        emitter.onNext(RuntimeEvent.builder()
-                                .type(RuntimeEvent.EventType.toolResult)
-                                .toolCallId(result.getToolCallId())
-                                .toolName(result.getToolName())
-                                .toolOutput(terminalMsg)
-                                .toolError(true)
-                                .build());
-                        messages.add(TurnMessage.toolResult(
-                                result.getToolCallId(), result.getToolName(), terminalMsg));
-                        allFailed = false; // 不计入 allFailed（已明确告知 LLM 放弃）
-                        continue;
+                // ====== O10: 工具环护栏 —— 连续失败超限的工具拒绝执行（结果仍回注以保持 tool_call 配对）======
+                List<ToolExecutor.ToolCallRequest> guardPassed = new ArrayList<>();
+                List<ToolResult> guardBlocked = new ArrayList<>();
+                for (ToolExecutor.ToolCallRequest req : filteredRequests) {
+                    int failCount = getToolFailCount(req.toolName());
+                    if (failCount >= TOOL_GUARDRAIL_FAILURE_LIMIT) {
+                        log.warn("Agent [{}] 工具 [{}] 已连续失败 {} 次，护栏熔断跳过执行",
+                                getId(), req.toolName(), failCount);
+                        guardBlocked.add(ToolResult.error(req.toolCallId(), req.toolName(),
+                                "[系统护栏] 工具 '" + req.toolName() + "' 已连续失败 " + failCount
+                                        + " 次，已被熔断跳过执行。请放弃该工具调用路径，改用其他方式完成任务。",
+                                ToolResult.ErrorType.GUARDRAIL));
+                    } else {
+                        guardPassed.add(req);
                     }
-                } else if (!result.isError()) {
-                    // P0-1: 成功的工具调用清除该 toolCallId 的 VALIDATION 计数器
-                    String counterKey = "valFailCount:" + result.getToolCallId();
-                    state.setAttribute(counterKey, 0);
                 }
 
-                // Phase 9: 策展管道处理工具结果
-                String curatedContent = result.getContent();
-                if (curationPipeline != null && tokenBudget != null) {
-                    var curated = curationPipeline.curate(result.getContent(), result.getToolName(),
-                            tokenBudget.remainingElastic() / Math.max(1, results.size()));
-                    curatedContent = curated.summary();
+                String userId = ctx.userId() != null ? ctx.userId() : "system";
+                String sessionId = ctx.sessionId() != null ? ctx.sessionId() : "session";
+
+                // D2/F1-4: 本调用已过 PermissionMiddleware/PermissionEngine 预检，标注 preAuthorized=true
+                // ——关卡④ 不再重复评估，避免与中间件的挂起/确认链路重复拦截。
+                ToolContext toolCtx = new ToolContext(userId, sessionId, "",
+                        PermissionModes.resolve(ctx), true);
+
+                List<ToolResult> results = new ArrayList<>(guardBlocked);
+                if (!guardPassed.isEmpty()) {
+                    results.addAll(toolExecutor.executeBatch(guardPassed, toolCtx));
+                }
+
+                long toolDuration = System.currentTimeMillis() - toolStart;
+
+                // P1-6 + O15: Hook - after tool call（经 HookRegistry 单一命名空间分发）
+                fireAfterToolCall(ctx, results, toolDuration);
+
+                // Phase 9: Token budget event
+                if (tokenBudget != null) {
+                    emitter.onNext(RuntimeEvent.tokenBudget(tokenBudget.getCurrentElasticUsage(), tokenBudget.getElasticBudget()));
+                }
+
+                boolean allFailed = true;
+                for (ToolResult result : results) {
+                    // O10: per-tool 失败计数（GUARDRAIL 拦截结果为护栏自身产生，不再累计）；
+                    // 成功即复位，保持"连续失败"语义
+                    if (result.isError() && result.getErrorType() != ToolResult.ErrorType.GUARDRAIL) {
+                        incrementToolFailCount(result.getToolName());
+                    } else if (!result.isError()) {
+                        resetToolFailCount(result.getToolName());
+                    }
+
+                    // P0-1: 同一 toolCallId 连续 VALIDATION 失败计数（防死循环，对齐 crewAI _max_parsing_attempts=3）
+                    if (result.isError() && result.getErrorType() == ToolResult.ErrorType.VALIDATION) {
+                        String counterKey = "valFailCount:" + result.getToolCallId();
+                        int valFailCount = state.getAttribute(counterKey) instanceof Integer i
+                                ? i.intValue() + 1 : 1;
+                        state.setAttribute(counterKey, valFailCount);
+                        if (valFailCount >= 3) {
+                            log.warn("Agent [{}] toolCallId [{}] 连续 {} 次 VALIDATION 失败，标记为终态错误",
+                                    getId(), result.getToolCallId(), valFailCount);
+                            String terminalMsg = result.getContent()
+                                    + "\n\n[系统提示] 该工具已连续 " + valFailCount
+                                    + " 次参数校验失败，请放弃此工具调用路径，改用其他方式完成任务。";
+                            emitter.onNext(RuntimeEvent.builder()
+                                    .type(RuntimeEvent.EventType.toolResult)
+                                    .toolCallId(result.getToolCallId())
+                                    .toolName(result.getToolName())
+                                    .toolOutput(terminalMsg)
+                                    .toolError(true)
+                                    .build());
+                            messages.add(TurnMessage.toolResult(
+                                    result.getToolCallId(), result.getToolName(), terminalMsg));
+                            allFailed = false; // 不计入 allFailed（已明确告知 LLM 放弃）
+                            continue;
+                        }
+                    } else if (!result.isError()) {
+                        // P0-1: 成功的工具调用清除该 toolCallId 的 VALIDATION 计数器
+                        String counterKey = "valFailCount:" + result.getToolCallId();
+                        state.setAttribute(counterKey, 0);
+                    }
+
+                    // Phase 9: 策展管道处理工具结果
+                    String curatedContent = result.getContent();
+                    if (curationPipeline != null && tokenBudget != null) {
+                        var curated = curationPipeline.curate(result.getContent(), result.getToolName(),
+                                tokenBudget.remainingElastic() / Math.max(1, results.size()));
+                        curatedContent = curated.summary();
+                    }
+
+                    emitter.onNext(RuntimeEvent.builder()
+                            .type(RuntimeEvent.EventType.toolResult)
+                            .toolCallId(result.getToolCallId())
+                            .toolName(result.getToolName())
+                            .toolOutput(curatedContent)
+                            .toolError(result.isError())
+                            .build());
+                    messages.add(TurnMessage.toolResult(
+                            result.getToolCallId(), result.getToolName(), curatedContent));
+                    if (!result.isError()) allFailed = false;
+                }
+
+                consecutiveToolFailures = allFailed ? consecutiveToolFailures + 1 : 0;
+                if (consecutiveToolFailures >= 3) {
+                    log.warn("Agent [{}] 连续 3 轮工具调用全部失败，强制退出", getId());
+                    if (eventPublisher != null) {
+                        eventPublisher.publishError(getId(), ctx.sessionId(), ctx.correlationId(),
+                                "ConsecutiveToolFailures", "连续三轮工具调用失败", state.getCurrentTurn());
+                    }
+                    emitter.onNext(RuntimeEvent.error("连续三轮工具调用失败"));
+                    emitter.onComplete();
+                    return;
+                }
+
+                // P0-6: 发布 TurnCompleted 事件
+                if (eventPublisher != null) {
+                    boolean hasToolCalls = !modelResult.getToolCalls().isEmpty();
+                    long turnDurationMs = Duration.between(turnStart, Instant.now()).toMillis();
+                    eventPublisher.publishTurnCompleted(getId(), ctx.sessionId(), ctx.correlationId(),
+                            state.getCurrentTurn(), hasToolCalls,
+                            results.size(), turnDurationMs);
+                }
+
+                // ====== H4-步骤4: 检测挂起的工具调用 ======
+                if (state.hasPendingAsking()) {
+                    handlePermissionSuspend(ctx, emitter);
+                    return; // 终止本轮执行流，等待用户确认后恢复
+                }
+
+                // P0-#8: 每 N 轮自动保存检查点（借鉴 CrewAI 多粒度检查点 + cc-haha WAL 日志模式）
+                if (config.isCheckpointEnabled()
+                        && state.getCurrentTurn() % config.getCheckpointInterval() == 0) {
+                    saveCheckpoint(ctx, emitter, state.getCurrentTurn());
                 }
 
                 emitter.onNext(RuntimeEvent.builder()
-                        .type(RuntimeEvent.EventType.toolResult)
-                        .toolCallId(result.getToolCallId())
-                        .toolName(result.getToolName())
-                        .toolOutput(curatedContent)
-                        .toolError(result.isError())
+                        .type(RuntimeEvent.EventType.turnComplete)
+                        .turnCount(state.getCurrentTurn())
                         .build());
-                messages.add(TurnMessage.toolResult(
-                        result.getToolCallId(), result.getToolName(), curatedContent));
-                if (!result.isError()) allFailed = false;
+            } catch (Exception e) {
+                AgentTracer.addAgentAttributes("turn.error", e.getMessage());
+                // D4/F2-4: 失败轮次必须留下 ERROR 状态，否则 trace 里"炸掉的一轮"与正常轮次
+                // 无从区分。此处只置状态不 end——收口交给下面 finally 的 turnScope.close()。
+                AgentTracer.setSpanError(turnScope.span(), e.getMessage());
+                throw e;
+            } finally {
+                turnScope.close();
             }
-
-            consecutiveToolFailures = allFailed ? consecutiveToolFailures + 1 : 0;
-            if (consecutiveToolFailures >= 3) {
-                log.warn("Agent [{}] 连续 3 轮工具调用全部失败，强制退出", getId());
-                if (eventPublisher != null) {
-                    eventPublisher.publishError(getId(), ctx.sessionId(), ctx.correlationId(),
-                            "ConsecutiveToolFailures", "连续三轮工具调用失败", state.getCurrentTurn());
-                }
-                emitter.onNext(RuntimeEvent.error("连续三轮工具调用失败"));
-                emitter.onComplete();
-                return;
-            }
-
-            // P0-6: 发布 TurnCompleted 事件
-            if (eventPublisher != null) {
-                boolean hasToolCalls = !modelResult.getToolCalls().isEmpty();
-                long turnDurationMs = Duration.between(turnStart, Instant.now()).toMillis();
-                eventPublisher.publishTurnCompleted(getId(), ctx.sessionId(), ctx.correlationId(),
-                        state.getCurrentTurn(), hasToolCalls,
-                        results.size(), turnDurationMs);
-            }
-
-            // ====== H4-步骤4: 检测挂起的工具调用 ======
-            if (state.hasPendingAsking()) {
-                handlePermissionSuspend(ctx, emitter);
-                return; // 终止本轮执行流，等待用户确认后恢复
-            }
-
-            // P0-#8: 每 N 轮自动保存检查点（借鉴 CrewAI 多粒度检查点 + cc-haha WAL 日志模式）
-            if (config.isCheckpointEnabled()
-                    && state.getCurrentTurn() % config.getCheckpointInterval() == 0) {
-                saveCheckpoint(ctx, emitter, state.getCurrentTurn());
-            }
-
-            emitter.onNext(RuntimeEvent.builder()
-                    .type(RuntimeEvent.EventType.turnComplete)
-                    .turnCount(state.getCurrentTurn())
-                    .build());
         }
 
         // 达到最大轮次
@@ -696,6 +747,17 @@ public class ReActAgent extends BaseAgent {
     }
 
     /**
+     * D3: 把委派完成事件格式化为注入父会话的系统消息。
+     * summary 为空时写 {@code (无摘要)}，避免产生 "null" 字样。
+     */
+    private String formatDelegationCompletion(DelegationCompletion c) {
+        String summary = (c.summary() == null || c.summary().isBlank()) ? "(无摘要)" : c.summary();
+        return "[子任务完成通知] delegationId=" + c.delegationId()
+                + " status=" + c.statusName()
+                + "\n摘要: " + summary;
+    }
+
+    /**
      * 将内部 TurnMessage 转换为 Spring AI Message。
      * 原 AgentRuntime.convertToSpringMessages() 逻辑完全相同。
      */
@@ -720,6 +782,8 @@ public class ReActAgent extends BaseAgent {
                     List.of(new ToolResponseMessage.ToolResponse(
                         tm.toolCallId(), tm.toolName(), tm.content() != null ? tm.content() : "")),
                     Map.of()));
+                case "system" -> result.add(new SystemMessage(
+                        tm.content() != null ? tm.content() : ""));
                 default -> {
                     if (tm.isToolResult()) {
                         String responseText = tm.content() != null ? tm.content() : "";
@@ -748,14 +812,97 @@ public class ReActAgent extends BaseAgent {
     }
 
     /**
-     * P1 容错：将当前 AgentState 注入 ResilientChatModelExecutor。
+     * P1 容错：将当前 AgentState 与上下文压缩回调注入 ResilientChatModelExecutor。
      *
-     * <p>如果 chatModel 是 {@link ResilientChatModelExecutor} 实例，
-     * 则设置其 AgentState 引用，使 fallback 冷却时间等状态在主循环轮回间持久化。</p>
+     * <p>如果 chatModel 是 {@link ResilientChatModelExecutor} 实例，则设置其 AgentState 引用
+     * （供 fallback 冷却持久化）与 CompressCallback（对接 ContextManager 的窗口压缩），
+     * 使 CONTEXT_COMPRESSION 恢复分支在上下文溢出时真正执行压缩而非空转。</p>
+     *
+     * <p>回调为幂等注册：每次 execute 都设置同一语义的 lambda，无副作用。</p>
+     *
+     * @param ctx 运行时上下文（提供 sessionId，供压缩冷却/熔断跟踪）
      */
-    private void wireResilientExecutor() {
+    private void wireResilientExecutor(RuntimeContext ctx) {
         if (chatModel instanceof ResilientChatModelExecutor executor) {
             executor.setAgentState(state);
+            executor.setCompressCallback((st, reason) -> compressForRecovery(ctx, reason));
+        }
+    }
+
+    /**
+     * P1 容错：注入"用压缩后的上下文重建待重试请求"的能力。
+     *
+     * <p>压缩作用于 {@code AgentState.messagesMutable()}，而 {@link ResilientChatModelExecutor}
+     * 重试时复用的是入参 {@link Prompt} —— 两者是不同对象。不重建请求，重试发出去的仍是
+     * 压缩前那份超长请求，必然再次溢出，两格压缩配额白烧后本轮流以失败收场。
+     * 只有宿主持有 system 指令与中间件链，故重建只能由这里提供。</p>
+     *
+     * <p>请求形状交给 {@link ModelInvoker#buildPrompt} 统一生成，避免在别处复制
+     * "SystemMessage + messages" 的拼装方式而与 {@code ModelInvoker} 漂移。</p>
+     *
+     * <p>中间件 {@code onReasoning} 会在重建时重跑一次 —— 与"新一轮请求"语义一致；
+     * 当前生产中间件均未覆写该方法（接口默认为恒等），因此重建结果与首次请求同构。</p>
+     *
+     * @param chain               本轮中间件链（提供推理阶段的既有变换）
+     * @param enrichedInstruction 变换后的系统指令
+     */
+    private void wirePromptRebuilder(MiddlewareChain chain, String enrichedInstruction) {
+        if (chatModel instanceof ResilientChatModelExecutor executor) {
+            executor.setPromptRebuilder(() -> modelInvoker.buildPrompt(
+                    chain.applyReasoning(convertToSpringMessages(state.messagesMutable())),
+                    enrichedInstruction));
+        }
+    }
+
+    /**
+     * 恢复分支专用压缩：复用 queryLoop 的两级窗口压缩（microCompact → autoCompactIfNeeded）。
+     *
+     * <p><b>为什么复用 queryLoop 的同一对调用</b>：压缩逻辑只保留一份实现，并自动继承
+     * {@code autoCompactIfNeeded} 已有的摘要冷却（10 分钟）与连续失败熔断（3 次）；
+     * 另建一套"恢复专用压缩"会让同一份会话消息被两条不同规则压缩，冷却/熔断状态也无法共享。</p>
+     *
+     * <p>返回值表示消息列表是否真的被改变。不改压缩算法，只把它接到模型容错链路上。</p>
+     *
+     * <p>本方法位于模型调用热路径，异常一律吞掉并返回 {@code false}（不向上抛）。</p>
+     *
+     * @param ctx    运行时上下文
+     * @param reason 触发压缩的失败原因（用于日志与打点）
+     * @return 消息列表是否发生变化
+     */
+    @SuppressWarnings("unchecked")
+    private boolean compressForRecovery(RuntimeContext ctx, FailoverReason reason) {
+        try {
+            List<TurnMessage> messages = state.messagesMutable();
+            if (messages.isEmpty()) {
+                return false;
+            }
+
+            int before = messages.size();
+            boolean changed = false;
+
+            List<TurnMessage> micro = contextManager.microCompact(messages);
+            if (micro.size() != before) {
+                messages.clear();
+                messages.addAll(micro);
+                changed = true;
+            }
+
+            AutoCompactResult r = contextManager.autoCompactIfNeeded(
+                    messages, config.getModelRef(), ctx.sessionId(), tokenBudget);
+            if (r.isCompacted()) {
+                List<TurnMessage> compacted = (List<TurnMessage>) r.getCompressedMessages();
+                messages.clear();
+                messages.addAll(compacted);
+                changed = true;
+            }
+
+            log.info("上下文压缩（恢复分支）: reason={}, messages {} → {}, tokens {} → {}",
+                    reason, before, messages.size(),
+                    r.getPreCompactTokens(), r.getPostCompactTokens());
+            return changed;
+        } catch (Exception e) {
+            log.warn("上下文压缩（恢复分支）异常，跳过压缩: reason={}, {}", reason, e.getMessage());
+            return false;
         }
     }
 
@@ -876,8 +1023,11 @@ public class ReActAgent extends BaseAgent {
                             // 执行工具调用
                             ToolExecutor.ToolCallRequest req = new ToolExecutor.ToolCallRequest(
                                     suspended.toolCallId(), suspended.toolName(), suspended.input());
+                            // D2/F1-4: 用户已批准该调用 → 属于预检通过，关卡④ 跳过重复评估
+                            // （否则写类工具会在恢复路径上被 fail-closed 二次拒绝）
                             List<ToolResult> results = toolExecutor.executeBatch(
-                                    List.of(req), ctx.userId(), ctx.sessionId());
+                                    List.of(req), new ToolContext(ctx.userId(), ctx.sessionId(), "",
+                                            PermissionModes.resolve(ctx), true));
 
                             for (ToolResult result : results) {
                                 String content = result.getContent();

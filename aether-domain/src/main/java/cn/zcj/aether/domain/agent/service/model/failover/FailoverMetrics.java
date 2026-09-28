@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <ul>
  *   <li>{@code aether.model.recovery.branch}{branch=...} —— 各恢复分支触发次数（Counter）</li>
  *   <li>{@code aether.model.fallback.switches} —— fallback 链切换次数（Counter）</li>
+ *   <li>{@code aether.failover.compress}{result=...} —— 上下文压缩恢复分支执行结果（Counter）</li>
  * </ul>
  * 压测混沌验证（429×3 → 500×2 → 成功）通过这两个指标观测切换次数与恢复路径。
  */
@@ -22,10 +23,12 @@ public class FailoverMetrics {
 
     public static final String BRANCH_METRIC = "aether.model.recovery.branch";
     public static final String FALLBACK_SWITCH_METRIC = "aether.model.fallback.switches";
+    public static final String COMPRESS_METRIC = "aether.failover.compress";
 
     private final MeterRegistry meterRegistry;
     private final Counter fallbackSwitches;
     private final ConcurrentHashMap<RecoveryBranch, Counter> branchCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<CompressOutcome, Counter> compressCounters = new ConcurrentHashMap<>();
 
     public FailoverMetrics(@Autowired(required = false) MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -55,4 +58,20 @@ public class FailoverMetrics {
         }
         fallbackSwitches.increment();
     }
+
+    /** 记录上下文压缩恢复分支的执行结果。 */
+    public void recordCompressResult(CompressOutcome outcome) {
+        if (meterRegistry == null) {
+            log.debug("无 MeterRegistry，跳过上下文压缩结果记录: {}", outcome);
+            return;
+        }
+        compressCounters.computeIfAbsent(outcome, o -> Counter.builder(COMPRESS_METRIC)
+                        .description("上下文压缩恢复分支执行结果")
+                        .tag("result", o.name().toLowerCase())
+                        .register(meterRegistry))
+                .increment();
+    }
+
+    /** 上下文压缩恢复分支的四种出口：成功 / 无变化 / 回调缺失 / 异常。 */
+    public enum CompressOutcome { SUCCESS, INEFFECTIVE, NOOP, ERROR }
 }

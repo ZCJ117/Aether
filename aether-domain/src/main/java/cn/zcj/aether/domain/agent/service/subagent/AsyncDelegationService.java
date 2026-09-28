@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
@@ -24,12 +25,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * recoverAbandoned 为启动一次性（one-shot）：容量跳过或落库失败的记录在下次重启时重新扫描恢复。
  * store 为 null 时内存降级（aether.delegation.persistence=false）。不持有线程池：
  * 子Agent执行由 SubagentLifecycleService 内部固定池承担。
- * <p>注：detectStale 心跳冻结检测目前无生产定时触发（Batch 4 D4 引入调度后接线）；
- * 挂起子Agent 会占用租约与池线程，为已知运行时局限（与同步 SubAgentOrchestrator 同源）。</p>
+ * <p>注：detectStale 心跳冻结检测已由 {@code StaleDelegationScanner} 周期触发
+ * （{@code aether.delegation.stale-scan-interval-ms}，默认 60000，&lt;=0 禁用）；
+ * 该扫描被禁用时，挂起子Agent 会占用租约与池线程（与同步 SubAgentOrchestrator 同源）。</p>
  */
 @Slf4j
 @Service
 @DependsOnDatabaseInitialization
+@DependsOn("delegationCompletionSink")
 public class AsyncDelegationService {
 
     /** 重执行上限：Aether 借用 hermes _MAX_DELIVERY_ATTEMPTS=8（投递预算）作为启动恢复重入队上限。 */
@@ -160,10 +163,12 @@ public class AsyncDelegationService {
             if (store != null) {
                 store.markTerminal(id, terminal, summary);
             }
-            completionBus.publish(new DelegationCompletion(
+            // VUL-05 (b): 置位条件必须严格是 delivered > 0。
+            // 无条件置位会让 completion_delivered 永远为 TRUE，回灌查询（= FALSE）永远捞不到数据 —— 静默数据丢失。
+            int delivered = completionBus.publish(new DelegationCompletion(
                     id, task.parentSessionId(), task.parentAgentId(), task.task(),
                     terminal, summary, Instant.now()));
-            if (store != null) {
+            if (store != null && delivered > 0) {
                 store.markCompletionDelivered(id);
             }
         } catch (Exception e) {

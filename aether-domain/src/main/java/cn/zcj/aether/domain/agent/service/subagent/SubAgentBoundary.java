@@ -11,8 +11,11 @@ import java.util.UUID;
 
 /**
  * 子Agent隔离边界。
- * 为每个子任务创建隔离的 AgentConfig，限制最大轮数30、超时60s，
+ * 为每个子任务创建隔离的 AgentConfig：超时 60s（CancelToken 墙钟约束），
  * 禁用检查点和缓存，确保子Agent在受控环境中执行。
+ *
+ * <p>注：本项目未实现子Agent专属的轮数上限——{@link AgentConfig} 无轮数字段，
+ * 轮数统一由 {@code ReActAgent.MAX_TURNS}（全局常量 100）约束。</p>
  */
 @Slf4j
 @Component

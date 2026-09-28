@@ -1,5 +1,7 @@
 package cn.zcj.aether.domain.agent.service.runtime;
 
+import cn.zcj.aether.domain.agent.service.agent.observability.AgentTracer;
+import cn.zcj.aether.domain.agent.service.context.ModelPricingRegistry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Builder;
@@ -39,6 +41,15 @@ public class ModelInvoker {
     @org.springframework.beans.factory.annotation.Autowired
     private ModelCallCache modelCallCache;
 
+    /**
+     * D4/F2-5: 模型定价注册表（供 model span 的上报 {@code cost.usd}）。
+     *
+     * <p>可选注入：测试直 {@code new ModelInvoker()} 时为 null，此时成本按 0.0 上报，
+     * 不影响任何既有返回值与异常语义。</p>
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ModelPricingRegistry pricingRegistry;
+
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 单次模型调用总超时（毫秒）；读取 aether.model.invoker.call-timeout-ms。
@@ -53,6 +64,23 @@ public class ModelInvoker {
     public long getCallTimeoutMs() { return callTimeoutMs; }
 
     public boolean isTrueStreaming() { return trueStreaming; }
+
+    /**
+     * 按统一请求形状构建 Prompt（{@code SystemMessage(systemPrompt)} + messages）。
+     *
+     * <p>上下文压缩后重建待重试请求时复用本方法，保证重建出的请求与首次请求形状一致
+     * （同样的 system 指令位置与消息序列）。</p>
+     *
+     * @param messages     已含中间件变换的消息序列（不含 system 指令）
+     * @param systemPrompt 系统指令
+     */
+    public Prompt buildPrompt(List<Message> messages, String systemPrompt) {
+        List<Message> fullMessages = new ArrayList<>();
+        fullMessages.add(new org.springframework.ai.chat.messages.SystemMessage(
+                systemPrompt != null ? systemPrompt : ""));
+        fullMessages.addAll(messages);
+        return new Prompt(fullMessages);
+    }
 
     /**
      * P1-#2: 带缓存的流式调用。
@@ -73,14 +101,7 @@ public class ModelInvoker {
         String key = ModelCallCache.cacheKey(modelName, messages);
         ModelCallResult cached = modelCallCache.get(key);
         if (cached != null) {
-            return ModelCallResult.builder()
-                    .events(cached.getEvents())
-                    .fullText(cached.getFullText())
-                    .toolCalls(cached.getToolCalls())
-                    .inputTokens(cached.getInputTokens())
-                    .outputTokens(cached.getOutputTokens())
-                    .cacheTokens(cached.getOutputTokens())
-                    .build();
+            return replayCacheHit(modelName, cached);
         }
 
         ModelCallResult result = callWithStream(chatModel, messages, systemPrompt, modelName);
@@ -109,14 +130,7 @@ public class ModelInvoker {
         String key = ModelCallCache.cacheKey(modelName, messages);
         ModelCallResult cached = modelCallCache.get(key);
         if (cached != null) {
-            return reactor.core.publisher.Mono.just(ModelCallResult.builder()
-                    .events(cached.getEvents())
-                    .fullText(cached.getFullText())
-                    .toolCalls(cached.getToolCalls())
-                    .inputTokens(cached.getInputTokens())
-                    .outputTokens(cached.getOutputTokens())
-                    .cacheTokens(cached.getOutputTokens())
-                    .build());
+            return reactor.core.publisher.Mono.just(replayCacheHit(modelName, cached));
         }
 
         return callWithStreamAsync(chatModel, messages, systemPrompt, modelName)
@@ -143,6 +157,19 @@ public class ModelInvoker {
      * @param deltaSink 每个 text chunk 的实时下发回调（可为 null，等价只汇总不下发）
      */
     public Mono<ModelCallResult> callWithStreamingAsync(
+            ChatModel chatModel,
+            List<Message> messages,
+            String systemPrompt,
+            String modelName,
+            java.util.function.Consumer<RuntimeEvent> deltaSink) {
+
+        io.opentelemetry.api.trace.Span span = AgentTracer.startModelCall(modelName);
+        return tracedModelCall(
+                doCallWithStreamingAsync(chatModel, messages, systemPrompt, modelName, deltaSink),
+                span, modelName);
+    }
+
+    private Mono<ModelCallResult> doCallWithStreamingAsync(
             ChatModel chatModel,
             List<Message> messages,
             String systemPrompt,
@@ -236,6 +263,17 @@ public class ModelInvoker {
             String systemPrompt,
             String modelName) {
 
+        io.opentelemetry.api.trace.Span span = AgentTracer.startModelCall(modelName);
+        return tracedModelCall(
+                doCallWithStreamAsync(chatModel, messages, systemPrompt, modelName), span, modelName);
+    }
+
+    private Mono<ModelCallResult> doCallWithStreamAsync(
+            ChatModel chatModel,
+            List<Message> messages,
+            String systemPrompt,
+            String modelName) {
+
         log.info("异步模型调用: model={}, messagesCount={}", modelName, messages.size());
 
         List<Message> fullMessages = new ArrayList<>();
@@ -305,8 +343,68 @@ public class ModelInvoker {
                 });
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * D4/F2-5: 缓存命中路径的埋点 + 结果回放。
+     *
+     * <p>spec §7.1.6 把 {@code callWithStreamCached} 列为 model call 的四个入口之一，但命中时
+     * 该方法<b>不会</b>落到 {@link #callWithStream}／{@link #callWithStreamAsync}——那条路径上的
+     * 埋点自然一个都不生效，命中分支在 trace 里完全不可见。故在此单独补一个 span。</p>
+     *
+     * <p>成本记 {@code 0.0}：命中不发请求、不为 token 计费；token 数沿用缓存结果，便于按 trace
+     * 统计"缓存省下了多少 token"。{@code cache.hit=true} 使缓存命中可被过滤。
+     * 状态恒为 OK —— 只有 {@code !hasError()} 的结果才写入缓存，命中结果必非失败。</p>
+     *
+     * <p>返回的是缓存结果的副本（而非缓存内的同一实例）：调用方可能改动返回对象，
+     * 直接外传会污染缓存条目。</p>
+     *
+     * @param modelName 模型名（写入 span 的 {@code model.name}）
+     * @param cached    命中的缓存结果
+     * @return 可直接返回给调用方的副本
+     */
+    private ModelCallResult replayCacheHit(String modelName, ModelCallResult cached) {
+        ModelCallResult replay = ModelCallResult.builder()
+                .events(cached.getEvents())
+                .fullText(cached.getFullText())
+                .toolCalls(cached.getToolCalls())
+                .inputTokens(cached.getInputTokens())
+                .outputTokens(cached.getOutputTokens())
+                .cacheTokens(cached.getOutputTokens())
+                .build();
+
+        io.opentelemetry.api.trace.Span span = AgentTracer.startModelCall(modelName);
+        span.setAttribute("cache.hit", true);
+        AgentTracer.endModelCall(span, replay.getInputTokens(), replay.getOutputTokens(), 0.0);
+        return replay;
+    }
+
+    /**
+     * D4/F2-5: 同步模型调用 —— 开启 {@code agent.model.call} span 后委派 {@link #doCallWithStream}。
+     *
+     * <p>span 在本方法（调用线程）同步创建，故其父 span 恰为当前 turn span。</p>
+     *
+     * <p><b>注意</b>：缓存命中<b>不</b>走这里——{@link #callWithStreamCached} 命中即返回，
+     * 本方法只在"未命中"或"未开缓存"时被调用；命中路径的 span 由 {@link #replayCacheHit}
+     * 单独负责，两条路径各有一个 span，不会重复。</p>
+     */
     public ModelCallResult callWithStream(
+            ChatModel chatModel,
+            List<Message> messages,
+            String systemPrompt,
+            String modelName) {
+
+        io.opentelemetry.api.trace.Span span = AgentTracer.startModelCall(modelName);
+        try {
+            ModelCallResult result = doCallWithStream(chatModel, messages, systemPrompt, modelName);
+            finishModelSpan(span, modelName, result);
+            return result;
+        } catch (RuntimeException | Error e) {
+            AgentTracer.endSpanWithError(span, e.getMessage());
+            throw e;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private ModelCallResult doCallWithStream(
             ChatModel chatModel,
             List<Message> messages,
             String systemPrompt,
@@ -405,6 +503,79 @@ public class ModelInvoker {
                 .inputTokens(inputTokens)
                 .outputTokens(outputTokens)
                 .build();
+    }
+
+    // =========================================================
+    // D4/F2-5: model span 生命周期
+    // =========================================================
+
+    /**
+     * 给模型调用 Mono 挂上 span 结束钩子。
+     *
+     * <p>成功记 token/成本；失败记 ERROR；被取消/中断（既无 onSuccess 也无 onError）
+     * 时由 {@code doFinally} 兜底结束，避免悬空 span。三种终止信号经 {@code AtomicBoolean}
+     * 保证只结算一次。</p>
+     */
+    private Mono<ModelCallResult> tracedModelCall(
+            Mono<ModelCallResult> source, io.opentelemetry.api.trace.Span span, String modelName) {
+
+        java.util.concurrent.atomic.AtomicBoolean ended =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        return source
+                .doOnSuccess(result -> {
+                    if (ended.compareAndSet(false, true)) {
+                        finishModelSpan(span, modelName, result);
+                    }
+                })
+                .doOnError(e -> {
+                    if (ended.compareAndSet(false, true)) {
+                        AgentTracer.endSpanWithError(span, e.getMessage());
+                    }
+                })
+                .doFinally(signal -> {
+                    if (ended.compareAndSet(false, true)) {
+                        AgentTracer.endSpanWithError(span, "模型流未完成（取消/中断）: " + signal);
+                    }
+                });
+    }
+
+    /**
+     * 按调用结果结束 model span：无结果或 {@code hasError()} 记 ERROR，否则记 token 与成本。
+     *
+     * <p>边界（spec §7.1.9）：{@code ModelCallResult} 无 token 信息（异常结果）走 ERROR 分支，
+     * 不调 {@link AgentTracer#endModelCall}。</p>
+     */
+    private void finishModelSpan(
+            io.opentelemetry.api.trace.Span span, String modelName, ModelCallResult result) {
+        if (result == null) {
+            AgentTracer.endSpanWithError(span, "模型流未返回结果");
+            return;
+        }
+        if (result.hasError()) {
+            AgentTracer.endSpanWithError(span, result.getError());
+            return;
+        }
+        AgentTracer.endModelCall(span, result.getInputTokens(), result.getOutputTokens(),
+                estimateCostUsd(modelName, result.getInputTokens(), result.getOutputTokens()));
+    }
+
+    /**
+     * 估算本次调用的美元成本（仅用于 span 属性上报）。
+     *
+     * <p>定价注册表缺失时按 0.0 上报，任何异常也不得冒泡到业务线程。
+     * 注册表存在但无该模型定价时，{@link ModelPricingRegistry#lookup} 返回保守默认定价
+     * （$0.001/$0.002 每千 token），成本熔断的既有语义不变。</p>
+     */
+    private double estimateCostUsd(String modelName, int inputTokens, int outputTokens) {
+        if (pricingRegistry == null) {
+            return 0.0;
+        }
+        try {
+            return pricingRegistry.lookup(modelName).calculateCost(inputTokens, outputTokens);
+        } catch (Exception e) {
+            log.debug("成本估算失败，按 0.0 上报: {}", e.getMessage());
+            return 0.0;
+        }
     }
 
     @SuppressWarnings("unchecked")

@@ -69,6 +69,14 @@ aether:
   security:
     jwt:
       secret: ${JWT_SECRET:aether-dev-jwt-secret-key-min-32-chars!!}
+  # ====== D4/F3-3: dev 显式启用 RAG 三级管道 ======
+  # dev 具备 ChatModel + pgvector（memory.pgvector.enabled: true），故启用总开关与一级改写；
+  # rerank 保持 false——它依赖 Python document-service（localhost:8001），由启动自检如实报告，
+  # 而不是伪装成"三级全开"。全局默认值仍在 application.yml 保持 false（本次不翻转任何默认值）。
+  rag:
+    enabled: true
+    rewrite:
+      enabled: true
   # O16: CORS 白名单——未配置时拒绝所有跨域；Vite 代理转发会保留浏览器 Origin，dev 前端(5173)必须入列
   cors:
     allowed-origins: http://localhost:5173,http://127.0.0.1:5173
@@ -106,14 +114,17 @@ management:
 
 # OpenTelemetry — 由 OTel Java Agent（-javaagent）在 JVM 启动时读取，非 Spring Boot 托管属性。
 # IDE 警告 "无法解析配置属性 otel.*" 为预期行为，不影响运行时。
-# 【工程化闭环】链路追踪经 OTLP 导出至 localhost:4317（OTel Collector），service.name=aether-agent
+# 【工程化闭环】链路追踪经 OTLP 导出至 OTel Collector，service.name=aether-agent
 # 与 metrics.tags.application 保持一致的应用标识；分布式调用链与指标/日志三支柱联动，
 # 使跨服务 SSE 编排的延迟与异常可在追踪系统端到端还原，补全"可观测三支柱"闭环。
+# 端点须支持环境变量覆盖：docker-compose 以 dev profile 启动并注入
+# OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317，若此处写死 localhost，容器内将把 span
+# 打向自身 loopback，导出链路静默失效（与 prod profile 的写法保持一致的解析顺序）。
 otel:
   traces:
     exporter: otlp
   exporter:
     otlp:
-      endpoint: http://localhost:4317
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
   service:
     name: aether-agent

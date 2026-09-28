@@ -101,7 +101,13 @@ public class DangerousToolRule implements PermissionRule {
             }
         }
 
-        return PermissionDecision.ALLOW;
+        // 【弃权】非硬封锁、非会话白名单、非危险模式 —— 本规则对"该不该跑这个工具"没有意见，
+        // 必须返回 null 而非 ALLOW：本规则属于 deny 组，返回 ALLOW 会使 evaluateDenyGroup
+        // 整组交出 ALLOW，PermissionEngine.check() 随即在 deny 阶段短路返回，ask 组
+        // （注入防护 InjectionGuardRule）与 allow 组永不求值 —— 注入防护的 ASK_USER 形同虚设。
+        // 弃权后交由 ask/allow 组与权限模式兜底：只读与白名单工具仍放行，其余按模式决策
+        // （DEFAULT → ASK_USER、ACCEPT_EDITS → ALLOW）。
+        return null;
     }
 
     public void allowForSession(Long userId, String toolName) {

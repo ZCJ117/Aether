@@ -36,7 +36,7 @@ public class MemoryProperties {
     /** nudge 轮次间隔，0=禁用 */
     private int nudgeInterval = 10;
 
-    /** flush 最小轮次，0=禁用 */
+    /** flush 最小轮次；&lt;=0 表示不设门槛（每会话结束都触发），非禁用。注意与 nudge-interval 的 0 语义相反 */
     private int flushMinTurns = 6;
 
     /** 检索参数 */

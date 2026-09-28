@@ -17,6 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   <li><b>工具自带检查</b>（bypass 免疫，与 P0 方案步骤 4 的关卡 2 汇合）</li>
  *   <li><b>allow 组</b>（白名单、只读放行）</li>
  *   <li><b>BYPASS 模式兜底</b> → ALLOW</li>
+ *   <li><b>ACCEPT_EDITS 模式</b>：ask 组与 allow 组返回的 ASK_USER 降级跳过（DENY 不受影响），兜底 → ALLOW（与 DEFAULT 的可观测差异）</li>
  *   <li><b>默认 ASK_USER</b>（DONT_ASK 模式下转 DENY）</li>
  * </ol>
  *
@@ -146,9 +147,15 @@ public class PermissionEngine {
         // 2. ask 组
         PermissionDecision askResult = evaluateGroup(askRules, ctx);
         if (askResult != null) {
-            log.debug("ask 组命中: tool={}, userId={}, rule={}",
-                    ctx.getToolName(), ctx.getUserId(), askResult);
-            return askResult;
+            // D2/F1-5: ACCEPT_EDITS 信任模式降级跳过 ask 组决策（deny 组仍可返回 DENY，allow 组继续评估）
+            if (mode == PermissionMode.ACCEPT_EDITS) {
+                log.debug("ACCEPT_EDITS 降级跳过 ask 组决策: tool={}, userId={}, decision={}",
+                        ctx.getToolName(), ctx.getUserId(), askResult);
+            } else {
+                log.debug("ask 组命中: tool={}, userId={}, rule={}",
+                        ctx.getToolName(), ctx.getUserId(), askResult);
+                return askResult;
+            }
         }
 
         // 3. 工具自带检查（bypass 免疫）
@@ -159,8 +166,16 @@ public class PermissionEngine {
         // 4. allow 组
         PermissionDecision allowResult = evaluateGroup(allowRules, ctx);
         if (allowResult != null) {
-            log.debug("allow 组命中: tool={}, userId={}", ctx.getToolName(), ctx.getUserId());
-            return allowResult;
+            // D2/F1-5: ACCEPT_EDITS 信任模式下 allow 组的 ASK_USER 同样降级——
+            // §7.1.8 对照表承诺「ACCEPT_EDITS + ASK_USER → 放行」对任何规则来源都成立。
+            // 仅降级 ASK_USER：DENY（如 ToolAllowlistRule 的黑名单/白名单未命中）不得被吞掉。
+            if (mode == PermissionMode.ACCEPT_EDITS && allowResult == PermissionDecision.ASK_USER) {
+                log.debug("ACCEPT_EDITS 降级跳过 allow 组 ASK_USER 决策: tool={}, userId={}",
+                        ctx.getToolName(), ctx.getUserId());
+            } else {
+                log.debug("allow 组命中: tool={}, userId={}", ctx.getToolName(), ctx.getUserId());
+                return allowResult;
+            }
         }
 
         // 5. DONT_ASK 模式 → DENY（用户不可用）
@@ -173,7 +188,14 @@ public class PermissionEngine {
             }
         }
 
-        // 6. 默认 ASK_USER（不再默认 DENY 一刀切）
+        // 6. ACCEPT_EDITS 信任模式兜底放行（与 DEFAULT 的可观测差异：返回 ALLOW 而非 ASK_USER）
+        if (mode == PermissionMode.ACCEPT_EDITS) {
+            log.info("ACCEPT_EDITS 无规则匹配，自动放行: tool={}, userId={}",
+                    ctx.getToolName(), ctx.getUserId());
+            return PermissionDecision.ALLOW;
+        }
+
+        // 7. 默认 ASK_USER（不再默认 DENY 一刀切）
         log.info("无规则匹配，默认询问用户: tool={}, userId={}",
                 ctx.getToolName(), ctx.getUserId());
         return PermissionDecision.ASK_USER;

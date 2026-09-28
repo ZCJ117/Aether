@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -143,5 +145,72 @@ class RetrievalPipelineTest {
                 .createdAt(java.time.Instant.now())
                 .lastAccessedAt(java.time.Instant.now())
                 .build();
+    }
+
+    // =========================================================
+    // D4/F3-1 + F3-4 回归
+    // =========================================================
+
+    /** T3-2：端口已装配但运行开关关闭 → 不得调用重排（装配 ≠ 调用）。 */
+    @Test
+    void rerankPortPresentButSwitchOffNeverInvokesRerank() {
+        List<String> rerankInvocations = new java.util.ArrayList<>();
+        HybridSearchPort hybrid = (vec, lex, k, s) -> List.of(doc("a", 0.9), doc("b", 0.7));
+        RerankPort recordingRerank = (q, cands, topN) -> {
+            rerankInvocations.add("invoked");
+            return cands;
+        };
+
+        RetrievalPipeline pipeline = new RetrievalPipeline(
+                new QueryRewriter(null), props(true, false, true, false), provider(null));
+        pipeline.hybridSearchPort = hybrid;
+        pipeline.rerankPort = recordingRerank;
+
+        var result = pipeline.retrieve("查询", SCOPES, 2);
+
+        assertTrue(rerankInvocations.isEmpty(),
+                "rerank.enabled=false 时即使 RerankPort 已装配也不得调用（装配≠调用）");
+        assertNotEquals("rerank", result.trace().finalSource());
+        assertEquals("a", result.documents().get(0).id(), "应保留 RRF 原序");
+    }
+
+    /** T3-3：单候选时跳过重排不算降级，不得记 aether.rag.degrade.total{stage=rerank}。 */
+    @Test
+    void singleCandidateDoesNotRecordRerankDegrade() {
+        HybridSearchPort hybrid = (vec, lex, k, s) -> List.of(doc("only", 0.9));
+        RerankPort rerank = (q, cands, topN) -> cands;
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        RetrievalPipeline pipeline = new RetrievalPipeline(
+                new QueryRewriter(null), props(true, false, true, true), provider(registry));
+        pipeline.hybridSearchPort = hybrid;
+        pipeline.rerankPort = rerank;
+
+        pipeline.retrieve("查询", SCOPES, 5);
+
+        var search = registry.find("aether.rag.degrade.total").tag("stage", "rerank");
+        assertNull(search.counter(),
+                "单候选无需重排，不属降级 —— 改造前会误记一次 rerank 降级");
+    }
+
+    /** T3-3 对照：重排真的失败时仍须记降级（修复不得把真降级也抹掉）。 */
+    @Test
+    void rerankFailureStillRecordsDegrade() {
+        HybridSearchPort hybrid = (vec, lex, k, s) -> List.of(doc("a", 0.9), doc("b", 0.7));
+        RerankPort failing = (q, cands, topN) -> {
+            throw new IllegalStateException("python down");
+        };
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        RetrievalPipeline pipeline = new RetrievalPipeline(
+                new QueryRewriter(null), props(true, false, true, true), provider(registry));
+        pipeline.hybridSearchPort = hybrid;
+        pipeline.rerankPort = failing;
+
+        pipeline.retrieve("查询", SCOPES, 2);
+
+        assertEquals(1.0, registry.get("aether.rag.degrade.total")
+                .tag("stage", "rerank").counter().count(),
+                "重排调用失败才是真降级，必须继续计入");
     }
 }

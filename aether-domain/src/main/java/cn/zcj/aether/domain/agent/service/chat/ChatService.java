@@ -13,6 +13,7 @@ import cn.zcj.aether.domain.agent.service.agent.core.AgentState;
 import cn.zcj.aether.domain.agent.service.agent.core.CancelToken;
 import cn.zcj.aether.domain.agent.service.agent.core.RuntimeContext;
 import cn.zcj.aether.domain.agent.service.agent.permission.ConfirmResult;
+import cn.zcj.aether.domain.agent.service.agent.permission.PermissionModes;
 import cn.zcj.aether.domain.agent.service.armory.AgentRegistry;
 import cn.zcj.aether.domain.agent.service.executor.GraphExecutor;
 import cn.zcj.aether.domain.agent.service.memory.MemoryInjectionService;
@@ -121,6 +122,12 @@ public class ChatService implements IChatService {
 
     @Override
     public List<String> handleMessage(String agentId, String userId, String sessionId, String message) {
+        return handleMessage(agentId, userId, sessionId, message, null);
+    }
+
+    @Override
+    public List<String> handleMessage(String agentId, String userId, String sessionId, String message,
+                                      String permissionMode) {
         AgentGraph graph = agentRegistry.get(agentId);
         if (graph == null) {
             throw new AppException(ResponseCode.E0001.getCode());
@@ -184,8 +191,8 @@ public class ChatService implements IChatService {
                     "Agent 已暂停，等待用户确认。请先通过 /api/v1/confirm 提交确认结果。");
         }
 
-        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, null, null,
-                entry.getName());
+        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message,
+                withPermissionMode(null, permissionMode), null, entry.getName());
 
         List<String> outputs = new ArrayList<>();
         //NOTE  turn 结束 = agent.execute(ctx) 这个 Flowable 跑完,在这个项目里 turn = 一次「用户发一条消息 → Agent 跑完给出回复」。
@@ -211,6 +218,12 @@ public class ChatService implements IChatService {
     @Override
     public Flowable<RuntimeEvent> handleMessageStream(
             String agentId, String userId, String sessionId, String message) {
+        return handleMessageStream(agentId, userId, sessionId, message, null);
+    }
+
+    @Override
+    public Flowable<RuntimeEvent> handleMessageStream(
+            String agentId, String userId, String sessionId, String message, String permissionMode) {
 
         AgentGraph graph = agentRegistry.get(agentId);
         if (graph == null) {
@@ -272,8 +285,8 @@ public class ChatService implements IChatService {
                     "Agent 已暂停，等待用户确认。请先通过 /api/v1/confirm 提交确认结果。"));
         }
 
-        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message, metadata, null,
-                entry.getName());
+        RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null, message,
+                withPermissionMode(metadata, permissionMode), null, entry.getName());
 
         // 记忆生命周期：捕获助手文本（经流式净化防记忆回显递归污染）+ turn 后持久化
         // 注意：Flowable 为冷流，闭包捕获的 scrubber/captured 仅支持单次订阅；
@@ -310,6 +323,15 @@ public class ChatService implements IChatService {
     public Flowable<RuntimeEvent> handleConfirm(
             String agentId, String userId, String sessionId,
             List<ConfirmResult> confirmResults) {
+        return handleConfirm(agentId, userId, sessionId, confirmResults, null);
+    }
+
+    /**
+     * D2/F1-2：带权限模式的确认恢复 —— 恢复执行时的模式必须与挂起时一致，否则关卡判定会漂移。
+     */
+    public Flowable<RuntimeEvent> handleConfirm(
+            String agentId, String userId, String sessionId,
+            List<ConfirmResult> confirmResults, String permissionMode) {
 
         AgentGraph graph = agentRegistry.get(agentId);
         if (graph == null) {
@@ -352,7 +374,7 @@ public class ChatService implements IChatService {
         metadata.put("confirmResults", confirmResults);
 
         RuntimeContext ctx = new RuntimeContext(userId, sessionId, null, null,
-                "[用户已提交工具调用确认]", metadata, null, entry.getName());
+                "[用户已提交工具调用确认]", withPermissionMode(metadata, permissionMode), null, entry.getName());
 
         return agent.execute(ctx);
     }
@@ -366,6 +388,21 @@ public class ChatService implements IChatService {
                 chatCommandEntity.getTexts() != null && !chatCommandEntity.getTexts().isEmpty()
                         ? chatCommandEntity.getTexts().get(0).getMessage()
                         : "");
+    }
+
+    /**
+     * D2/F1-2：把 HTTP 入参的权限模式写入 {@code RuntimeContext.metadata}。
+     *
+     * <p>空白时**不写该键**并原样返回入参（保持既有 {@code null}/空 map 语义不变）；
+     * 键名统一引用 {@link PermissionModes#METADATA_KEY}，与读取侧共用同一常量，避免静默失效。
+     */
+    private static Map<String, Object> withPermissionMode(Map<String, Object> metadata, String permissionMode) {
+        if (permissionMode == null || permissionMode.isBlank()) {
+            return metadata;
+        }
+        Map<String, Object> merged = metadata != null ? new HashMap<>(metadata) : new HashMap<>();
+        merged.put(PermissionModes.METADATA_KEY, permissionMode);
+        return merged;
     }
 
     /**

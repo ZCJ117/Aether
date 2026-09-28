@@ -1,0 +1,29 @@
+# ============================================================
+# D4/F2-7: OTel Collector 配置 —— 接收应用经 OTLP gRPC 导出的 span，
+# 经 debug exporter 打到 stdout，供 T2-9 端到端验收直接断言。
+# 生产环境把 exporters 换成 jaegertracing / otlphttp 等即可，receivers 不变。
+# ============================================================
+receivers:
+  otlp:
+    protocols:
+      # 应用侧 OtelConfig 使用 OtlpGrpcSpanExporter，故只需暴露 gRPC。
+      # 容器内需监听 0.0.0.0，否则仅绑定 loopback，同网络内的 aether 服务连不上。
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+
+exporters:
+  # 写 stdout（verbosity: detailed 会展开每个 span 的属性），
+  # 使 "docker compose logs otel-collector" 可直接看到 agent.turn / agent.model.call /
+  # agent.tool.call 三层 span 与 service.name=aether-agent。
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

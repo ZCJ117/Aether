@@ -160,6 +160,24 @@ class ResilientChatModelExecutorTest {
     }
 
     @Test
+    void contextOverflowWithoutCompressCallbackTerminatesCleanly() {
+        // T4-5：回调缺失时行为可控——tryCompress 返回 false 且不抛异常，
+        // 配额照旧被扣满（2 次）后退化终止，而不是空转崩溃。
+        when(chatModel.call(any(Prompt.class))).thenThrow(new RuntimeException("context too long"));
+        when(classifier.classify(any(), any(), any())).thenReturn(
+                ClassifiedError.of(FailoverReason.CONTEXT_OVERFLOW, null, "anthropic", "claude-sonnet", "context"));
+        ModelConfig cfg = ModelConfig.builder().modelId("claude-sonnet").apiKey("key1").build();
+
+        ResilientChatModelExecutor executor = build(cfg, List.of());
+        executor.setBackoffWaiter(sec -> { });
+
+        assertThrows(ResilientChatModelExecutor.ResilientCallException.class,
+                () -> executor.call(new Prompt("hi")));
+        // 2 次压缩尝试 + 1 次判定耗尽
+        verify(chatModel, times(3)).call(any(Prompt.class));
+    }
+
+    @Test
     void timeoutReconnectsWithFixedOneSecondThenSuccess() {
         when(chatModel.call(any(Prompt.class)))
                 .thenThrow(new RuntimeException("read timeout"))

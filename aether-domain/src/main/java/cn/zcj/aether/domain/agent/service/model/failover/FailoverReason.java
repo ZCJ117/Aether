@@ -4,7 +4,7 @@ package cn.zcj.aether.domain.agent.service.model.failover;
  * API 调用失败原因枚举 — 决定恢复策略。
  *
  * 对齐 hermes-agent error_classifier.py 的 FailoverReason（21 种），
- * 裁剪为 Aether 三 Provider（OpenAI/Anthropic/DashScope）实际可达的 14 种。
+ * 裁剪为 Aether 三 Provider（OpenAI/Anthropic/DashScope）实际可达的 15 种。
  *
  * 恢复策略由 {@link ClassifiedError} 的四个布尔动作提示驱动，
  * 而非在此枚举上硬编码行为。

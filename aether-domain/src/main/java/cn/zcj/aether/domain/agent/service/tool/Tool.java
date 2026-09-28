@@ -61,7 +61,16 @@ public interface Tool {
         return true;
     }
 
-    /** 权限检查 */
+    /**
+     * 工具自身不可委托给权限引擎的硬约束检查（**非安全边界**）。
+     *
+     * <p>安全边界由 {@code PermissionEngine} 承担：经 {@code PermissionMiddleware} 预检的调用
+     * 已评估过策略；未经预检的调用由 {@code ToolExecutor} 关卡④ 兜底评估。
+     * 本方法只用于表达"该工具在特定入参下必须拒绝"这类无法表达为策略规则的约束。</p>
+     *
+     * @param input 工具入参
+     * @return {@code false} 时由 {@code ToolExecutor} 关卡④ 以 {@code ErrorType.PERMISSION} 拒绝
+     */
     default boolean checkPermissions(Map<String, Object> input) {
         return true;
     }

@@ -2,7 +2,7 @@ spring:
   config:
     name: aether-app
   profiles:
-#   NOTE 2.在项目启动时优先加载application.yml, 在第六行激活 dev 因此它会加载 application-dev.yml 作为补充配置
+#   NOTE 2.在项目启动时优先加载application.yml, 在第九行激活 dev 因此它会加载 application-dev.yml 作为补充配置
     # 【工程化闭环】profile 体系（dev/prod/test/bench）实现"一套代码、多环境配置"的工程化治理：
     # 由单一 application.yml 激活基准 profile，再按环境叠加对应 application-{profile}.yml，
     # 配置变更无需改码重编，配合 CI 多 profile 测试与容器 env 注入形成环境隔离闭环。
@@ -96,7 +96,7 @@ aether:
       vector-dimension: 1024     # 向量维度（pgvector，与 embedding 模型一致）
     embedding:                   # 记忆向量生成（未配置 base-url/api-key 则语义检索降级）
       base-url: https://open.bigmodel.cn
-      api-key: ${ZHIPU_API_KEY}  # O16: 硬编码凭据移除——无默认回退，未设环境变量即启动失败(fail-fast)
+      api-key: ${ZHIPU_API_KEY}  # O16: 本基座无默认回退；但默认激活的 dev profile 另配了硬编码回退（见 application-dev.yml），故默认启动路径不会 fail-fast
       path: api/paas/v4/embeddings
       model: embedding-2
       dimension: 1024
@@ -177,7 +177,7 @@ aether:
         thread-name-prefix: aether-graph
         rejection-policy: CallerRunsPolicy
     # 其余命名池（tool / memory-io / session-persist / delegation / background-review /
-    # graph-trace / scheduled）缺省即默认参数，可按需覆盖，键名见 AetherThreadPoolProperties.DEFAULT
+    # graph-trace / scheduled / audit）缺省即默认参数，可按需覆盖，键名见 AetherThreadPoolProperties.DEFAULT
   # ====== D4: 可视化调试 ======
   delegation:
     live-log-dir: ./cache/delegation/live   # 每子Agent直播日志根目录（对齐 hermes cache/delegation/live）

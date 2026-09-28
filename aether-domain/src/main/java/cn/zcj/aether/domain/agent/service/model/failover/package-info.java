@@ -11,7 +11,7 @@
  *
  * <h3>核心类型</h3>
  * <ul>
- *   <li>{@link cn.zcj.aether.domain.agent.service.model.failover.FailoverReason} — 14 种失败原因枚举</li>
+ *   <li>{@link cn.zcj.aether.domain.agent.service.model.failover.FailoverReason} — 15 种失败原因枚举</li>
  *   <li>{@link cn.zcj.aether.domain.agent.service.model.failover.ClassifiedError} — 分类结果 + 恢复动作提示</li>
  *   <li>{@link cn.zcj.aether.domain.agent.service.model.failover.ModelErrorClassifier} — 分类器 SPI 端口</li>
  *   <li>{@link cn.zcj.aether.domain.agent.service.model.failover.ResilientChatModelExecutor} — 容错执行器</li>

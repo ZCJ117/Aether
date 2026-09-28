@@ -65,6 +65,8 @@ class AsyncDelegationServiceTest {
         when(lifecycle.launch(any(), any())).thenReturn(future);
         when(lifecycle.status(any())).thenReturn(java.util.Optional.of(SubagentState.COMPLETED));
         when(lifecycle.result(any())).thenReturn(java.util.Optional.of(result));
+        // D3/VUL-05 F5-5: 投递成功（有订阅者）→ 才置位投递标记
+        when(completionBus.publish(any())).thenReturn(1);
 
         service.dispatch(task());
 
@@ -73,6 +75,26 @@ class AsyncDelegationServiceTest {
         verify(completionBus).publish(argThat(c -> c.status() == SubagentState.COMPLETED));
         verify(store).markCompletionDelivered(argThat(id -> id.startsWith("ad-")));
         verify(leaseManager).releaseLease("s1");
+    }
+
+    /**
+     * T5-6（反向）：无订阅者 → 投递数为 0 → <b>不得</b>置位投递标记，
+     * 使记录保留 {@code completion_delivered = FALSE} 供下次启动回灌重放。
+     */
+    @Test
+    void completionNotMarkedDeliveredWhenNoSubscriber() {
+        ResultRefiner.SubAgentResult result =
+                new ResultRefiner.SubAgentResult("成功", "[结论]", java.util.Map.of());
+        when(lifecycle.launch(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(result));
+        when(lifecycle.status(any())).thenReturn(java.util.Optional.of(SubagentState.COMPLETED));
+        when(lifecycle.result(any())).thenReturn(java.util.Optional.of(result));
+        when(completionBus.publish(any())).thenReturn(0);
+
+        service.dispatch(task());
+
+        verify(completionBus).publish(any());
+        verify(store, never()).markCompletionDelivered(any());
     }
 
     @Test

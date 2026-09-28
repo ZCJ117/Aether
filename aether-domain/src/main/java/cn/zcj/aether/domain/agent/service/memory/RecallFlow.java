@@ -104,6 +104,10 @@ public class RecallFlow {
 
     /**
      * Deep 召回：LLM 查询分解 → 多子查询并行搜索 → 置信度路由 → LLM 重排。
+     *
+     * <p>D4/F3-5 口径：本路径<b>不</b>经过 {@link RetrievalPipeline} 三级管道——
+     * 三级检索（改写 → 混合 RRF → 重排）只作用于 {@link #recallShallow}。
+     * 深召回接入管道会改变其语义，属明确排除项（见 D4 spec §3.2）。</p>
      */
     public CompletableFuture<List<MemorySearchResult>> recallDeep(
             String query, MemoryFacade.RecallOptions options) {

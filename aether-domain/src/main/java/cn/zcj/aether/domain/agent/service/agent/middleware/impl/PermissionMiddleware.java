@@ -8,6 +8,7 @@ import cn.zcj.aether.domain.agent.service.agent.permission.PermissionContext;
 import cn.zcj.aether.domain.agent.service.agent.permission.PermissionDecision;
 import cn.zcj.aether.domain.agent.service.agent.permission.PermissionEngine;
 import cn.zcj.aether.domain.agent.service.agent.permission.PermissionMode;
+import cn.zcj.aether.domain.agent.service.agent.permission.PermissionModes;
 import cn.zcj.aether.domain.agent.service.agent.permission.SuspendedToolCall;
 import cn.zcj.aether.domain.agent.service.tool.Tool;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
@@ -51,7 +52,7 @@ public class PermissionMiddleware implements AgentMiddleware {
             List<ToolExecutor.ToolCallRequest> requests,
             Agent agent, RuntimeContext ctx) {
 
-        PermissionMode mode = getPermissionMode(ctx);
+        PermissionMode mode = PermissionModes.resolve(ctx);
         AgentState state = agent.getState();
 
         List<ToolExecutor.ToolCallRequest> allowed = new ArrayList<>();
@@ -100,15 +101,5 @@ public class PermissionMiddleware implements AgentMiddleware {
         }
 
         return allowed;
-    }
-
-    private PermissionMode getPermissionMode(RuntimeContext ctx) {
-        if (ctx.metadata() == null) return PermissionMode.DEFAULT;
-        String modeStr = (String) ctx.metadata().get("permissionMode");
-        if (modeStr != null) {
-            try { return PermissionMode.valueOf(modeStr.toUpperCase()); }
-            catch (IllegalArgumentException e) { /* fall through */ }
-        }
-        return PermissionMode.DEFAULT;
     }
 }

@@ -20,7 +20,7 @@ import java.util.Map;
  * P1(4.2): RAG 三级检索管道 —— 改写 → 混合召回（RRF）→ 重排，逐级降级。
  *
  * <p><b>数据流</b>：query ─(LLM 改写)→ 检索友好 query(+变体)
- * ─(pgvector 语义 + PG 全文词法 → RRF 单 SQL 融合)→ Top-50 候选
+ * ─(pgvector 语义 + PG 全文词法 → RRF 单 SQL 融合)→ max(topK, hybrid.candidate-limit) 候选
  * ─(Python 重排)→ Top-N。</p>
  *
  * <p><b>切换条件</b>（每一级独立开关 + 降级）：</p>
@@ -28,11 +28,19 @@ import java.util.Map;
  *   <li>一级：rewrite 未启用 / 无 ChatModel / 超时(rewrite.timeout-ms) / 异常 → 原 query；</li>
  *   <li>二级：hybrid 未启用 / 端口缺失 / 异常 → 纯向量召回（VectorStore.search）；
  *       无有效向量 → 纯词法；两者皆缺 → 返回空（调用方回退原检索路径）；</li>
- *   <li>三级：rerank 未启用 / 服务不可达 / 超时(rerank.timeout-ms) → 保留 RRF 序截断。</li>
+ *   <li>三级：rerank 未启用 / 端口缺失 / 服务不可达 / 超时(rerank.timeout-ms) → 保留 RRF 序截断。</li>
  * </ul>
  *
+ * <p><b>D4/F3-5 适用范围</b>：本管道只作用于 {@code RecallFlow.recallShallow}
+ * （由 {@code aether.rag.enabled} 在运行期开关）。{@code RecallFlow.recallDeep} 走
+ * {@code decomposeQuery → 并行 vectorStore.search → llmRerank} 的独立路径，不接入本管道——
+ * 深召回接入会改变其语义，属明确排除项（见 D4 spec §3.2）。</p>
+ *
+ * <p><b>装配 ≠ 调用</b>：{@code hybridSearchPort} / {@code rerankPort} 由基础设施可用性决定是否装配，
+ * 是否<b>调用</b>由各自的运行期开关决定。故端口非空但开关关闭时，本管道不调用该级也不记降级。</p>
+ *
  * <p>指标：{@code aether.rag.stage.duration}{stage}（Timer，含 rewrite/hybrid/rerank）
- * + {@code aether.rag.degrade.total}{stage}（降级计数）。</p>
+ * + {@code aether.rag.degrade.total}{stage}（降级计数，只计真正的调用失败/超时）。</p>
  */
 @Slf4j
 @Component
@@ -134,6 +142,9 @@ public class RetrievalPipeline {
 
         // ── 三级：重排（降级 → RRF 序截断）──
         String finalSource = docs.stream().findFirst().map(RetrievalDocument::source).orElse("none");
+        // D4/F3-4: 不再为"单候选跳过重排"记 degrade——docs.size() <= 1 时本就无需重排，
+        // 不属降级（原实现会在候选数 <=1 且重排已启用时误记一次 aether.rag.degrade.total{stage=rerank}，
+        // 造成"重排频繁降级"的假象）。真正的降级只由下方 catch 的调用失败/超时计入。
         if (properties.getRerank().isEnabled() && rerankPort != null && docs.size() > 1) {
             Timer.Sample sample = startStage("rerank");
             try {
@@ -148,8 +159,6 @@ public class RetrievalPipeline {
             } finally {
                 endStage("rerank", sample);
             }
-        } else if (properties.getRerank().isEnabled()) {
-            recordDegrade("rerank");
         }
 
         List<RetrievalDocument> top = docs.stream()

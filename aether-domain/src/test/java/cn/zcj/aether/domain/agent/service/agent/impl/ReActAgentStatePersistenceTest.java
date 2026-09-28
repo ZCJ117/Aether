@@ -15,6 +15,7 @@ import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
 import cn.zcj.aether.domain.agent.service.session.SessionEntity;
 import cn.zcj.aether.domain.agent.service.session.SessionRepository;
+import cn.zcj.aether.domain.agent.service.tool.ToolContext;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
 import cn.zcj.aether.domain.agent.service.tool.ToolResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,7 +35,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -188,7 +188,7 @@ class ReActAgentStatePersistenceTest {
                 .thenReturn(Mono.just(finalTextResult()));
 
         ToolExecutor resumeExecutor = mock(ToolExecutor.class);
-        when(resumeExecutor.executeBatch(anyList(), anyString(), anyString()))
+        when(resumeExecutor.executeBatch(anyList(), any(ToolContext.class)))
                 .thenAnswer(inv -> {
                     List<ToolExecutor.ToolCallRequest> reqs = inv.getArgument(0);
                     return reqs.stream()
@@ -208,7 +208,7 @@ class ReActAgentStatePersistenceTest {
 
         // applyConfirmResults 的契约：批准的工具真实触达 ToolExecutor，
         // 结果作为 tool_result 消息写回对话历史（配对），恢复路径不重发 toolResult SSE 事件
-        verify(resumeExecutor, times(1)).executeBatch(anyList(), anyString(), anyString());
+        verify(resumeExecutor, times(1)).executeBatch(anyList(), any(ToolContext.class));
         assertTrue(resumed.getState().messagesMutable().stream().anyMatch(m ->
                         "tool_result".equals(m.role()) && "call-1".equals(m.toolCallId())
                                 && "ok".equals(m.content())),

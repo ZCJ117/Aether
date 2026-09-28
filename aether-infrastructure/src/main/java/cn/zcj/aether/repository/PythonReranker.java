@@ -23,10 +23,29 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>超时（{@code aether.rag.rerank.timeout-ms}）或调用失败 → 抛出交由管道降级为 RRF 序；
  * 服务端返回 null/解析失败 → 保留 RRF 原序截断。</p>
+ *
+ * <p><b>D4/F3-1 装配条件与运行开关解耦</b>：原条件挂在 {@code aether.rag.rerank.enabled} 上，
+ * 使"是否装配 Bean"（容器启动期）与"是否调用重排"（运行期开关）耦合——开关默认 false，
+ * 于是容器内根本不存在 {@code RerankPort}，{@code RetrievalPipeline.rerankPort} 恒为 null，
+ * "三级检索"在容器层面只有两级；即便把开关改 true 也要等下次启动才生效。</p>
+ *
+ * <p>现改为只要求"Python 服务地址可用"，与二级端口 {@code PgHybridSearchRepository}
+ * 挂在 {@code aether.memory.pgvector.enabled} 的既有正确形态对齐。是否<b>调用</b>仍由
+ * {@code aether.rag.rerank.enabled} 在运行期控制（见 {@code RetrievalPipeline} 三级分支）——
+ * 装配 ≠ 调用。</p>
+ *
+ * <p><b>为什么键名是 {@code aether.python.doc-url} 而不是 {@code aether.python.base-url}</b>：
+ * 实际绑定方是 {@code PythonServiceClient}（{@code aether.python.doc-url} /
+ * {@code sandbox-url} / {@code fs-url}，各带 localhost 默认值），库内根本不存在
+ * {@code aether.python.base-url}。若照抄该键名，条件将恒为 false，Bean 永不装配——
+ * 比改造前更糟。此处用 {@code doc-url}（重排实际走的就是 doc-url 的 {@code /rerank}）
+ * 并配 {@code matchIfMissing = true}：该键缺省时 {@code @Value} 会落到默认地址
+ * localhost:8001，故"地址缺省"等价于"地址可用"，Bean 照常装配。置为
+ * {@code aether.python.doc-url=false} 可显式关闭该端口的装配。</p>
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "aether.rag.rerank.enabled", havingValue = "true")
+@ConditionalOnProperty(name = "aether.python.doc-url", matchIfMissing = true)
 public class PythonReranker implements RerankPort {
 
     private final PythonServicePort pythonServicePort;

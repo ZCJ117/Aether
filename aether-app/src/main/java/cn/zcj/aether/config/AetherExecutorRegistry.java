@@ -84,7 +84,7 @@ public class AetherExecutorRegistry {
 
     /**
      * O17: 审计异步写入池（原 AsyncConfig.auditExecutor 迁入，统一由 Registry 管理）。
-     * 经 @Async("auditExecutor") 引用。
+     * 由 AuditAspect 经 {@code @Qualifier("auditExecutor")} 显式提交（O17/O18 起弃用 @Async）。
      */
     @Bean(name = "auditExecutor", destroyMethod = "shutdown")
     public ExecutorService auditExecutor(AetherThreadPoolProperties p) {

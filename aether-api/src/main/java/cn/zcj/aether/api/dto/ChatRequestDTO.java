@@ -10,4 +10,7 @@ public class ChatRequestDTO {
     private String sessionId;
     private String message;
 
+    /** 权限模式：default | plan | accept_edits | bypass（可选，大小写不敏感，缺省 default）。 */
+    private String permissionMode;
+
 }

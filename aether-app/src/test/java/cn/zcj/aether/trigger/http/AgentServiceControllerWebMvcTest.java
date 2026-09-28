@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,7 +62,7 @@ class AgentServiceControllerWebMvcTest {
 
     @Test
     void chatStreamEmitsTextDeltaAndDoneFrames() throws Exception {
-        when(chatServiceImpl.handleMessageStream(anyString(), anyString(), anyString(), anyString()))
+        when(chatServiceImpl.handleMessageStream(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenReturn(Flowable.just(RuntimeEvent.text("hello"), RuntimeEvent.done()));
 
         MvcResult result = mockMvc.perform(post("/api/v1/chat_stream")
@@ -79,7 +80,7 @@ class AgentServiceControllerWebMvcTest {
     @Test
     void chatStreamCreatesSessionWhenSessionIdMissing() throws Exception {
         when(chatServiceImpl.createSession(anyString(), anyString())).thenReturn("s-auto");
-        when(chatServiceImpl.handleMessageStream(anyString(), anyString(), anyString(), anyString()))
+        when(chatServiceImpl.handleMessageStream(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenReturn(Flowable.just(RuntimeEvent.done()));
 
         MvcResult result = mockMvc.perform(post("/api/v1/chat_stream")
@@ -93,7 +94,7 @@ class AgentServiceControllerWebMvcTest {
                 .andExpect(content().string(containsString("\"type\":\"done\"")));
 
         verify(chatServiceImpl).createSession("1", "u1");
-        verify(chatServiceImpl).handleMessageStream("1", "u1", "s-auto", "hi");
+        verify(chatServiceImpl).handleMessageStream("1", "u1", "s-auto", "hi", null);
     }
 
     @Test

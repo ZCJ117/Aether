@@ -15,6 +15,10 @@ public record TurnMessage(
         String toolName,
         List<Map<String, Object>> toolCalls  // assistant 消息附带的 tool_use 块
 ) {
+    public static TurnMessage system(String content) {
+        return new TurnMessage("system", content, null, null, null);
+    }
+
     public static TurnMessage user(String content) {
         return new TurnMessage("user", content, null, null, null);
     }

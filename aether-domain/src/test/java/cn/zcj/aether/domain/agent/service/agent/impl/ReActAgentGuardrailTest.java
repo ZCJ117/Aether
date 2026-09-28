@@ -7,6 +7,7 @@ import cn.zcj.aether.domain.agent.service.context.AutoCompactResult;
 import cn.zcj.aether.domain.agent.service.context.ContextManager;
 import cn.zcj.aether.domain.agent.service.runtime.ModelInvoker;
 import cn.zcj.aether.domain.agent.service.runtime.RuntimeEvent;
+import cn.zcj.aether.domain.agent.service.tool.ToolContext;
 import cn.zcj.aether.domain.agent.service.tool.ToolExecutor;
 import cn.zcj.aether.domain.agent.service.tool.ToolResult;
 import org.junit.jupiter.api.Test;
@@ -19,7 +20,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
@@ -64,7 +64,7 @@ class ReActAgentGuardrailTest {
                 .thenReturn(Mono.just(brokenOnly), Mono.just(mixed), Mono.just(brokenOnly),
                         Mono.just(brokenOnly), Mono.just(finalText));
 
-        when(toolExecutor.executeBatch(anyList(), anyString(), anyString())).thenAnswer(inv -> {
+        when(toolExecutor.executeBatch(anyList(), any(ToolContext.class))).thenAnswer(inv -> {
             List<ToolExecutor.ToolCallRequest> reqs = inv.getArgument(0);
             return reqs.stream()
                     .map(r -> r.toolName().equals("ok_tool")
@@ -83,7 +83,7 @@ class ReActAgentGuardrailTest {
         List<RuntimeEvent> events = agent.execute(ctx).toList().blockingGet();
 
         // 真实执行仅发生在 failCount < 3 的前 3 轮；第 4 次 broken_tool 调用被护栏熔断
-        verify(toolExecutor, times(3)).executeBatch(anyList(), anyString(), anyString());
+        verify(toolExecutor, times(3)).executeBatch(anyList(), any(ToolContext.class));
 
         boolean guardrailEvent = events.stream()
                 .filter(e -> e.getType() == RuntimeEvent.EventType.toolResult)

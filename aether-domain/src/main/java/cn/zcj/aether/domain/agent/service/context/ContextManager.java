@@ -76,8 +76,9 @@ public class ContextManager {
     @org.springframework.beans.factory.annotation.Autowired
     private CompactionPipeline compactionPipeline;
 
-    /** O7: 摘要 LLM 冷却窗口（对齐 hermes context_compressor 600s 冷却熔断） */
-    // 【上下文工程】摘要冷却窗口 600s：压缩后短期内不再触发 LLM 摘要，避免高频压缩打爆成本与延迟
+    /** O7: 摘要 LLM 失败熔断冷却窗口（对齐 hermes context_compressor 的失败熔断语义） */
+    // 【上下文工程】摘要失败熔断冷却 600s：LLM 摘要失败即置位，本会话窗口内跳过摘要直接降级拼接；
+    // 摘要成功则清除冷却与失败计数。避免失败路径高频重试打爆成本与延迟
     @org.springframework.beans.factory.annotation.Value("${aether.context.compaction.summary-cooldown-ms:600000}")
     private long summaryCooldownMs = 600_000;
 
@@ -241,9 +242,11 @@ public class ContextManager {
     /**
      * 工具结果裁剪 — 超长结果（> {@value #MAX_TOOL_RESULT_CHARS} 字符）存盘并替换为路径引用。
      *
-     * <p>O8: 实现与注释对齐 — 完整内容经 {@code MessageOffloader.offloadToolResult} 写入
-     * {@code .aether/sessions/tool-overflow/}，消息体内保留前 500 字符预览 + 存盘路径引用，
-     * 后续可按路径回读完整输出；写盘不可用（未装配/IO 失败）时降级为原地截断。</p>
+     * <p>O8: 完整内容经 {@code MessageOffloader.offloadToolResult} 写入
+     * {@code <user.dir>/.aether/sessions/tool-overflow/}（按内容哈希命名，同内容不重复写盘），
+     * 消息体内保留前 500 字符预览 + 存盘路径引用（注意：引用是**相对** {@code .aether/sessions/}
+     * 的路径，回读需自行拼接基准）；
+     * 写盘不可用（未装配/IO 失败）时降级为原地截断。</p>
      */
     public List<TurnMessage> applyToolResultBudget(List<TurnMessage> messages) {
         List<TurnMessage> result = new ArrayList<>(messages.size());
