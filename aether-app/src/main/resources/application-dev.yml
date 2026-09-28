@@ -60,8 +60,8 @@ aether:
     pgvector:
       enabled: true
     embedding:
-      # 2026-09-01: 环境变量优先，硬编码回退（本地开发便利）；注意 Key 已在 git 历史中泄露过，待轮换
-      api-key: ${ZHIPU_API_KEY:***REMOVED-CREDENTIAL***}
+      # 2026-09-28: 移除明文兜底。该 Key 曾随本文件入仓并泄露，本轮已轮换；未设置环境变量时为空串（RAG 全局默认关闭，不影响启动）
+      api-key: ${ZHIPU_API_KEY:}
   # 开发环境允许访问本地 Python 微服务 (localhost:8001-8003)
   ssrf:
     allow-private-urls: true

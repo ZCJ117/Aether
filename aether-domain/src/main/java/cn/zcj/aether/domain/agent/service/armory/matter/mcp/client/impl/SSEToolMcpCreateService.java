@@ -25,7 +25,7 @@ public class SSEToolMcpCreateService implements TooMcpCreateService {
     public ToolCallback[] buildToolCallback(AiAgentConfigTableVO.Module.ChatModel.ToolMcp toolMcp) throws Exception {
         AiAgentConfigTableVO.Module.ChatModel.ToolMcp.SSEServerParameters sseConfig = toolMcp.getSse();
 
-        // http://appbuilder.baidu.com/v2/ai_search/mcp/sse?api_key=***REMOVED-CREDENTIAL***
+        // http://appbuilder.baidu.com/v2/ai_search/mcp/sse?api_key=<BAIDU_API_KEY>
 
         String originalBaseUri = sseConfig.getBaseUri();  // 基础的
 

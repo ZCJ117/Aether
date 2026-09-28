@@ -54,3 +54,39 @@ __pycache__/
 /benchmark/token.txt
 /benchmark/chat_out.json
 target/
+
+### 凭据与本地覆盖（2026-09-28 补充：防止 API 密钥再次入仓）
+# 注意：.gitignore 只能拦住**未被跟踪**的文件。已被 git 跟踪的文件
+# （如 aether-app/src/main/resources/agent/fable.yml、application-dev.yml）
+# 即便写在这里也不会生效——那些文件必须先把密钥换成 ${ENV_VAR} 占位符。
+# 本区块的作用：让"新建的"本地密钥文件默认就进不了仓库。
+
+# 环境变量文件
+.env
+.env.*
+*.env
+!.env.example
+
+# 本地覆盖配置（放本机密钥用，形态：application-local.yml / xxx.local.yml）
+*.local.yml
+*.local.yaml
+application-local.yml
+application-local.yaml
+**/application-local*.yml
+
+# 证书与私钥
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+*.ppk
+
+# JVM 崩溃日志（hs_err_pid*.log 会打印 JVM 启动参数，可能含 -D 传入的密钥）
+hs_err_pid*.log
+replay_pid*.log
+
+# 散装日志（日志常把整段请求体打进文件，历史上就是这么泄露过一次）
+*.log
