@@ -2,6 +2,10 @@
 
 > 基于 Java 17 + Spring Boot 3 + Spring AI 的 DDD 六模块多 Agent 脚手架：内置 Agent 编排、RAG 检索、MCP 工具接入、长期记忆、模型故障转移与效果评测能力，可通过 Docker Compose 一键起全栈。
 
+## 系统架构
+
+![Aether 智能体平台架构](docs/images/aether-architecture.png)
+
 ## 主要功能特性
 
 - **多 Agent 编排**：通过 `agent/agents.yml` 声明式定义 Agent（内置旅游规划、对话陪伴两个示例 Agent），支持子 Agent 委派（spawn / pause / interrupt）与运行状态查询。
