@@ -109,10 +109,16 @@ public class ContextManager {
     /** 按 sessionId 记录剩余压缩跳过轮数（无效压缩后冷却，防抖防循环） */
     private final ConcurrentHashMap<String, Integer> ineffectiveSuppressRounds = new ConcurrentHashMap<>();
 
-    /** 用于识别 Edit/Write/FileEdit/FileWrite 工具 */
+    /**
+     * 用于识别结构化写工具。
+     *
+     * <p>只收「入参里带明确目标路径」的工具。BashTool 不在其列：它的写目标要从命令行猜
+     * （{@code mv a.txt b.txt} 里被覆盖的是 b.txt 而非 a.txt），而猜错的后果是把一次
+     * 其实未被覆盖的写当冗余删掉——误删比漏删危险得多。</p>
+     */
     private static final Set<String> EDIT_TOOL_NAMES = Set.of(
             "Edit", "FileEdit", "Write", "FileWrite",
-            "FileEditTool", "FileWriteTool", "BashTool"
+            "FileEditTool", "FileWriteTool"
     );
 
     // ========== P2-1: 配对边界对齐 ==========
@@ -150,7 +156,7 @@ public class ContextManager {
         }
 
         // 规则 2：丢弃末尾连续的悬空 tool_use
-        while (!messages.isEmpty() && isDanglingToolUse(messages.get(messages.size() - 1))) {
+        while (!messages.isEmpty() && carriesToolCalls(messages.get(messages.size() - 1))) {
             messages.remove(messages.size() - 1);
             removedTail++;
         }
@@ -173,15 +179,13 @@ public class ContextManager {
     }
 
     /**
-     * 判断消息是否为悬空 tool_use（其 tool_result 不在当前列表中）。
+     * 消息是否携带工具调用（即其 tool_result 缺失时该消息即「悬空」）。
      *
-     * <p>两种情况：</p>
-     * <ul>
-     *   <li>独立 tool_use 消息（role=tool_use）</li>
-     *   <li>含 toolCalls 的 assistant 消息（tool_results 将被裁掉）</li>
-     * </ul>
+     * <p>两种形状：独立 tool_use 消息（{@code role=tool_use}）与含 toolCalls 的 assistant
+     * 消息（生产形状）。判据只在此处表达一次——历史缺陷正是同一判据在不同方法里
+     * 写法不一致导致的。</p>
      */
-    private boolean isDanglingToolUse(TurnMessage msg) {
+    private boolean carriesToolCalls(TurnMessage msg) {
         return msg.isToolUse() || msg.hasToolCalls();
     }
 
@@ -271,71 +275,85 @@ public class ContextManager {
     }
 
     /**
-     * 微压缩 — 两遍扫描算法
+     * 微压缩 — 移除「已被后续写覆盖」的冗余写操作。
      *
-     * <p>Pass 1: 建立 path → lastWriteIndex 映射（找到每个文件的最后一次写操作位置）</p>
-     * <p>Pass 2: 对于每个 tool_use，如果不是该文件的最后一次写操作，
-     * 则将该 tool_use 及其紧邻的 tool_result 一起移除</p>
+     * <p>只处理生产形状：工具调用一律是 assistant 消息上的 toolCalls（见
+     * {@code ReActAgent} 的构造点）。</p>
      *
-     * <p>P2-6: 天然配对安全 — tool_use 与紧邻 tool_result 成对移除，
-     * 不会产生孤儿消息，无需额外配对守卫。</p>
+     * <p>Pass 1: 建立 normalizedPath → 最后一次写所在的消息索引。</p>
+     * <p>Pass 2: 判定可整条移除的消息；配对的 tool_result 按 toolCallId 精确移除。</p>
+     * <p>Pass 3: 被移除处替换为 user 角色占位（配对中立），使「此处有一次被省略的写」对模型可见。</p>
+     *
+     * <p>保守规则（宁可少省 token，不可误删或产生孤儿消息）：一条消息可整条移除，
+     * 当且仅当其全部 call 都是写工具、路径全部可提取、全部已被后续写覆盖、toolCallId 全部可解析。
+     * 任一条不满足即整条保留。</p>
      */
     public List<TurnMessage> microCompact(List<TurnMessage> messages) {
-        // 【上下文工程】微压缩：两遍扫描移除被覆盖的冗余写操作（tool_use+tool_result 成对删），天然配对安全无孤儿消息
+        // 【上下文工程】微压缩：移除被后续写覆盖的冗余写操作，按 toolCallId 精确配对避免孤儿 tool_result
         int n = messages.size();
 
-        // Pass 1: 找每个路径的最后一次编辑位置
+        // Pass 1: normalizedPath → 最后一次写所在的消息索引（顺序覆盖，剩下的即最后一次）
         Map<String, Integer> lastWriteIndex = new LinkedHashMap<>();
         for (int i = 0; i < n; i++) {
-            TurnMessage msg = messages.get(i);
-            if (msg.isToolUse() && isEditTool(msg.toolName())) {
-                String path = extractPath(msg.content());
-                if (path != null && !path.isBlank()) {
-                    lastWriteIndex.put(normalizePath(path), i);
+            for (WriteCall wc : extractWriteCalls(messages.get(i))) {
+                if (wc.path() != null) {
+                    lastWriteIndex.put(wc.path(), i);
                 }
             }
         }
-
         if (lastWriteIndex.isEmpty()) {
             return new ArrayList<>(messages);
         }
 
-        // 收集被覆盖的 tool_use 索引及其对应的 tool_result 索引
+        // Pass 2: 判定可移除的消息及其配对的 tool_result
+        Map<Integer, String> placeholders = new LinkedHashMap<>();
         Set<Integer> removeIndices = new HashSet<>();
         for (int i = 0; i < n; i++) {
             TurnMessage msg = messages.get(i);
-            if (msg.isToolUse() && isEditTool(msg.toolName())) {
-                String path = extractPath(msg.content());
-                if (path != null && !path.isBlank()) {
-                    String norm = normalizePath(path);
-                    Integer lastIdx = lastWriteIndex.get(norm);
-                    // 如果当前不是最后一次写操作 → 冗余
-                    if (lastIdx != null && i != lastIdx) {
-                        removeIndices.add(i);           // tool_use
-                        if (i + 1 < n && messages.get(i + 1).isToolResult()) {
-                            removeIndices.add(i + 1);   // 对应的 tool_result
-                        }
-                    }
+            if (!msg.hasToolCalls()) continue;
+
+            List<WriteCall> writes = extractWriteCalls(msg);
+            // 含任一非写调用（如 Read）→ 整条保留，绝不重建消息
+            if (writes.size() != msg.toolCalls().size()) continue;
+            // 路径抠不出 → 无法证明其被覆盖；含该路径的最后一次写 → 不冗余。任一命中即整条保留
+            boolean removable = true;
+            for (WriteCall w : writes) {
+                if (w.path() == null || lastWriteIndex.get(w.path()) == i) {
+                    removable = false;
+                    break;
+                }
+            }
+            if (!removable) continue;
+
+            Set<String> ids = callIdsOf(msg);
+            // 配对不可证明 → 整条保留
+            if (ids.isEmpty()) continue;
+
+            placeholders.put(i, placeholderOf(writes));
+            removeIndices.add(i);
+            for (int j = i + 1; j < n && messages.get(j).isToolResult(); j++) {
+                if (ids.contains(messages.get(j).toolCallId())) {
+                    removeIndices.add(j);
+                } else {
+                    break;
                 }
             }
         }
-
-        if (removeIndices.isEmpty()) {
+        if (placeholders.isEmpty()) {
             return new ArrayList<>(messages);
         }
 
-        // Pass 2: 过滤
-        List<TurnMessage> kept = new ArrayList<>(n - removeIndices.size());
+        // Pass 3: 重建 —— 被移除的写消息替换为占位（user 角色，配对中立）
+        List<TurnMessage> kept = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            if (!removeIndices.contains(i)) {
+            if (placeholders.containsKey(i)) {
+                kept.add(TurnMessage.user(placeholders.get(i)));
+            } else if (!removeIndices.contains(i)) {
                 kept.add(messages.get(i));
             }
         }
 
-        int removed = n - kept.size();
-        log.info("microCompact: 移除 {} 条冗余消息 ({} tool_use+tool_result 对)",
-                removed, removed / 2);
-
+        log.info("microCompact: 移除 {} 条冗余消息，留 {} 条占位", n - kept.size(), placeholders.size());
         return kept;
     }
 
@@ -421,7 +439,7 @@ public class ContextManager {
             movedToCompact++;
         }
         // 若 toCompact 末尾是悬空 tool_use，将其移入 recent（避免摘要内容配对不完整）
-        while (!toCompact.isEmpty() && isDanglingToolUse(toCompact.get(toCompact.size() - 1))) {
+        while (!toCompact.isEmpty() && carriesToolCalls(toCompact.get(toCompact.size() - 1))) {
             TurnMessage dangling = toCompact.remove(toCompact.size() - 1);
             recent.add(0, dangling);
         }
@@ -698,6 +716,83 @@ public class ContextManager {
         return name != null && EDIT_TOOL_NAMES.contains(name);
     }
 
+    /** 一次写调用：目标路径已归一化；路径不可提取时为 null。 */
+    private record WriteCall(String path) {}
+
+    /**
+     * 提取消息中的写调用（仅 {@link #EDIT_TOOL_NAMES} 内的结构化写工具）。
+     *
+     * <p>只认生产形状：工具调用一律是 assistant 消息上的 toolCalls。独立 tool_use 消息
+     * （{@code role=tool_use}）全项目没有任何产出方，不为它保留分支——为不存在的形状写代码
+     * 正是本方法最初整体失效的原因。</p>
+     */
+    private List<WriteCall> extractWriteCalls(TurnMessage msg) {
+        List<WriteCall> out = new ArrayList<>();
+        if (!msg.hasToolCalls()) {
+            return out;
+        }
+        for (Map<String, Object> tc : msg.toolCalls()) {
+            Object name = tc.get("name");
+            if (name == null || !isEditTool(String.valueOf(name))) continue;
+            out.add(new WriteCall(normalizePathOrNull(pathFromInput(tc.get("input")))));
+        }
+        return out;
+    }
+
+    /** 该消息全部工具调用的 id；任一 call 缺 id 即视为「配对不可证明」，返回空集。 */
+    private Set<String> callIdsOf(TurnMessage msg) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (Map<String, Object> tc : msg.toolCalls()) {
+            Object id = tc.get("id");
+            if (id == null || String.valueOf(id).isBlank()) {
+                return Set.of();
+            }
+            ids.add(String.valueOf(id));
+        }
+        return ids;
+    }
+
+    /**
+     * 从工具入参中取文件路径：{@code Map} 走结构化键，{@code String} 走 {@link #extractPath(String)}。
+     * 抠不出返回 null —— 调用方据此整条保留，绝不猜。
+     */
+    private String pathFromInput(Object input) {
+        if (input instanceof Map<?, ?> map) {
+            for (String key : List.of("file_path", "filePath", "path")) {
+                Object value = map.get(key);
+                if (value != null && !String.valueOf(value).isBlank()) {
+                    return String.valueOf(value);
+                }
+            }
+            return null;
+        }
+        if (input instanceof String s) {
+            return extractPath(s);
+        }
+        return null;
+    }
+
+    private String normalizePathOrNull(String path) {
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        return normalizePath(path);
+    }
+
+    /**
+     * 被省略写操作的占位文本 —— 让模型看得见「此处有一次被省略的写」，
+     * 而不是引用一个凭空消失的操作（悬空引用）。
+     */
+    private String placeholderOf(List<WriteCall> writes) {
+        Set<String> names = new LinkedHashSet<>();
+        for (WriteCall w : writes) {
+            String path = w.path();
+            int slash = path.lastIndexOf('/');
+            names.add(slash >= 0 ? path.substring(slash + 1) : path);
+        }
+        return "[系统提示] 对 " + String.join("、", names) + " 的写入已被后续写入覆盖，已省略";
+    }
+
     /**
      * 从 tool input 内容中提取文件路径
      *
@@ -723,10 +818,6 @@ public class ContextManager {
                 if (map.containsKey("path")) {
                     return String.valueOf(map.get("path"));
                 }
-                // BashTool: command 字段中提取路径
-                if (map.containsKey("command")) {
-                    return extractPathFromCommand(String.valueOf(map.get("command")));
-                }
             } catch (Exception ignored) {
                 // 非JSON内容 → 尝试其他方式
             }
@@ -734,22 +825,6 @@ public class ContextManager {
 
         // 尝试从文本中提取类Unix路径
         return extractPathFromText(content);
-    }
-
-    /**
-     * 从 Bash 命令中提取首个路径参数
-     */
-    private String extractPathFromCommand(String command) {
-        if (command == null || command.isBlank()) return null;
-        // 常见模式: git add <path>, rm <path>, mv <src> <dst>, etc.
-        String[] parts = command.trim().split("\\s+");
-        for (int i = 1; i < parts.length; i++) {
-            String part = parts[i];
-            if (!part.startsWith("-") && (part.contains("/") || part.contains("."))) {
-                return part;
-            }
-        }
-        return null;
     }
 
     /**

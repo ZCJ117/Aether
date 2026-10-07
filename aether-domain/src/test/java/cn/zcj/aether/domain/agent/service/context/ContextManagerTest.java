@@ -236,48 +236,27 @@ class ContextManagerTest {
     }
 
     // ========== P2-6: microCompact 配对安全 ==========
+    //
+    // 纪律（2026-10-07 修复）：microCompact 的测试**一律**用 TurnMessage.assistantWithToolCalls(...)
+    // 构造消息——那才是生产形状。new TurnMessage("tool_use", ...) 是生产从不产生的形状，
+    // 正是它让 microCompact 整体失效却测试全绿
+    // （见 docs/superpowers/specs/2026-10-07-microcompact-write-dedup-fix-design.md §2 缺陷 A）。
+    // 唯一例外是 microCompactShouldNotTreatStandaloneToolUseAsWrite：它专门锁定「该形状不参与去重」。
 
     @Test
     void microCompactShouldPreservePairingIntegrity() {
-        // 模拟一条 tool_use + tool_result 被覆盖，一条保留
+        // 生产形状：同一路径写两次，第一次被覆盖，第二次保留
         List<TurnMessage> messages = new ArrayList<>();
         messages.add(TurnMessage.user("edit file A"));
-        // 第一次编辑 file.txt
-        var toolUse1 = new TurnMessage("tool_use",
-                "{\"file_path\":\"/app/file.txt\",\"new_str\":\"v1\"}",
-                null, "Edit", null);
-        messages.add(toolUse1);
-        messages.add(TurnMessage.toolResult("tc-1", "Edit", "success"));
-        // 第二次编辑 file.txt（最终版本，应保留）
-        var toolUse2 = new TurnMessage("tool_use",
-                "{\"file_path\":\"/app/file.txt\",\"new_str\":\"v2\"}",
-                null, "Edit", null);
-        messages.add(toolUse2);
-        messages.add(TurnMessage.toolResult("tc-2", "Edit", "success"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-1", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-1", "Write", "success"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-2", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-2", "Write", "success"));
 
         ContextManager cm = newContextManager();
         List<TurnMessage> compacted = cm.microCompact(messages);
 
-        // 验证：被保留的消息中不会出现孤立的 tool_use（无配对 tool_result）
-        for (int i = 0; i < compacted.size(); i++) {
-            TurnMessage msg = compacted.get(i);
-            if (msg.isToolUse()) {
-                // tool_use 后面必须紧跟 tool_result（或至少在列表中）
-                boolean hasResult = (i + 1 < compacted.size() && compacted.get(i + 1).isToolResult());
-                assertTrue(hasResult,
-                        "每条被保留的 tool_use 必须有配对的 tool_result 紧随其后，索引=" + i);
-            }
-        }
-
-        // 验证：被保留的消息中不会出现孤立的 tool_result（无前置 tool_use）
-        for (int i = 0; i < compacted.size(); i++) {
-            TurnMessage msg = compacted.get(i);
-            if (msg.isToolResult()) {
-                boolean hasToolUse = (i > 0 && compacted.get(i - 1).isToolUse());
-                assertTrue(hasToolUse,
-                        "每条被保留的 tool_result 必须有配对的 tool_use 在其前面，索引=" + i);
-            }
-        }
+        assertPairingInvariant(compacted);
     }
 
     @Test
@@ -285,15 +264,214 @@ class ContextManagerTest {
         // 只有一次编辑操作 → 不应被移除
         List<TurnMessage> messages = new ArrayList<>();
         messages.add(TurnMessage.user("edit"));
-        var toolUse = new TurnMessage("tool_use",
-                "{\"file_path\":\"/app/file.txt\"}", null, "Edit", null);
-        messages.add(toolUse);
-        messages.add(TurnMessage.toolResult("tc-1", "Edit", "success"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-1", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-1", "Write", "success"));
 
         ContextManager cm = newContextManager();
         List<TurnMessage> compacted = cm.microCompact(messages);
 
         assertEquals(3, compacted.size(), "最后一次写操作不应被移除");
+    }
+
+    @Test
+    void microCompactShouldRemoveCoveredWriteInProductionShape() {
+        // T1：生产形状下，被后续写覆盖的写操作必须真的被移除（修复前该方法整体空转）
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("edit file A"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-1", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-1", "Write", "v1"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-2", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-2", "Write", "v2"));
+
+        ContextManager cm = newContextManager();
+        List<TurnMessage> compacted = cm.microCompact(messages);
+
+        assertTrue(compacted.size() < messages.size(),
+                "被覆盖的写操作应被移除，实际 " + messages.size() + " → " + compacted.size());
+        assertEquals(1, compacted.stream().filter(TurnMessage::hasToolCalls).count(),
+                "只有最后一次写应保留");
+        assertEquals("tc-2",
+                compacted.stream().filter(TurnMessage::hasToolCalls)
+                        .findFirst().orElseThrow().toolCalls().get(0).get("id"),
+                "保留的必须是最后一次写");
+        assertFalse(compacted.stream().anyMatch(m -> "tc-1".equals(m.toolCallId())),
+                "被覆盖写操作的 tool_result 应一并移除");
+        assertPairingInvariant(compacted);
+    }
+
+    @Test
+    void microCompactShouldKeepMessageMixingWriteAndRead() {
+        // T2：Q1 保守规则 —— 并行批次里混有非写调用时，整条消息不参与去重
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("batch"));
+        messages.add(TurnMessage.assistantWithToolCalls("",
+                List.of(writeCall("tc-1", "/app/file.txt"), readCall("tc-2", "/app/other.txt"))));
+        messages.add(TurnMessage.toolResult("tc-1", "Write", "ok"));
+        messages.add(TurnMessage.toolResult("tc-2", "Read", "content"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-3", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-3", "Write", "v2"));
+
+        ContextManager cm = newContextManager();
+        List<TurnMessage> compacted = cm.microCompact(messages);
+
+        assertEquals(messages.size(), compacted.size(),
+                "含非写调用的消息整条保留，不得重建消息");
+        assertTrue(compacted.stream().anyMatch(m -> "tc-2".equals(m.toolCallId())),
+                "配对的 Read 结果不得成为孤儿");
+        assertPairingInvariant(compacted);
+    }
+
+    @Test
+    void microCompactShouldRemoveAllPairedResultsOfMultiCallMessage() {
+        // T3：一条消息携带 N 个 toolCall 全为同一路径的写 → 消息与全部 N 条 tool_result 一并移除
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("batch writes"));
+        messages.add(TurnMessage.assistantWithToolCalls("",
+                List.of(writeCall("tc-1", "/app/file.txt"), writeCall("tc-2", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-1", "Write", "ok1"));
+        messages.add(TurnMessage.toolResult("tc-2", "Write", "ok2"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-3", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-3", "Write", "final"));
+
+        ContextManager cm = newContextManager();
+        List<TurnMessage> compacted = cm.microCompact(messages);
+
+        assertTrue(compacted.stream().noneMatch(m -> "tc-1".equals(m.toolCallId())),
+                "多条 tool_result 必须全部移除，不能只删紧邻的一条");
+        assertTrue(compacted.stream().noneMatch(m -> "tc-2".equals(m.toolCallId())));
+        assertPairingInvariant(compacted);
+    }
+
+    @Test
+    void microCompactShouldKeepMessageWhenPathNotExtractable() {
+        // T4：路径抠不出 → 无法证明被覆盖 → 整条保留
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("write without path"));
+        messages.add(TurnMessage.assistantWithToolCalls("",
+                List.of(Map.of("id", "tc-1", "name", "Write", "input", Map.of("content", "raw")))));
+        messages.add(TurnMessage.toolResult("tc-1", "Write", "ok"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-2", "/app/file.txt"))));
+        messages.add(TurnMessage.toolResult("tc-2", "Write", "ok2"));
+
+        ContextManager cm = newContextManager();
+        List<TurnMessage> compacted = cm.microCompact(messages);
+
+        assertEquals(messages.size(), compacted.size(), "路径不可提取时整条保留");
+        assertPairingInvariant(compacted);
+    }
+
+    @Test
+    void microCompactShouldNotTreatBashToolAsWrite() {
+        // T5：BashTool 已移出写工具白名单 —— 命令行里的路径是猜的，猜错方向是误删
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("shell"));
+        messages.add(TurnMessage.assistantWithToolCalls("",
+                List.of(Map.of("id", "tc-1", "name", "BashTool", "input", Map.of("command", "mv a.txt b.txt")))));
+        messages.add(TurnMessage.toolResult("tc-1", "BashTool", "ok"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-2", "/app/a.txt"))));
+        messages.add(TurnMessage.toolResult("tc-2", "Write", "ok2"));
+
+        ContextManager cm = newContextManager();
+        List<TurnMessage> compacted = cm.microCompact(messages);
+
+        assertTrue(compacted.stream().anyMatch(m -> "tc-1".equals(m.toolCallId())),
+                "BashTool 调用不参与写去重，不得被移除");
+        assertPairingInvariant(compacted);
+    }
+
+    @Test
+    void microCompactPlaceholderShouldNamePathAndReason() {
+        // T7：省略必须对模型可见 —— 占位为 user 角色（配对中立）并点出路径与原因
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("edit"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-1", "/app/config.yml"))));
+        messages.add(TurnMessage.toolResult("tc-1", "Write", "v1"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("tc-2", "/app/config.yml"))));
+        messages.add(TurnMessage.toolResult("tc-2", "Write", "v2"));
+
+        ContextManager cm = newContextManager();
+        List<TurnMessage> compacted = cm.microCompact(messages);
+
+        TurnMessage placeholder = compacted.stream()
+                .filter(m -> m.content() != null && m.content().startsWith("[系统提示]"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("压缩后应存在占位消息"));
+        assertEquals("user", placeholder.role(),
+                "占位必须是 user 角色：tool_result 角色会构成孤儿 tool_result");
+        assertTrue(placeholder.content().contains("config.yml"), "占位应点出路径名");
+        assertTrue(placeholder.content().contains("已被后续写入覆盖"), "占位应说明省略原因");
+    }
+
+    @Test
+    void microCompactShouldPreservePairingInvariantOnMixedList() {
+        // T6：全量配对不变式守卫（写/读混合 + 多路径 + 多批次）
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("mixed"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("a-1", "/app/a.txt"), readCall("a-2", "/app/b.txt"))));
+        messages.add(TurnMessage.toolResult("a-1", "Write", "ok"));
+        messages.add(TurnMessage.toolResult("a-2", "Read", "content"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("a-3", "/app/a.txt"))));
+        messages.add(TurnMessage.toolResult("a-3", "Write", "v2"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("a-4", "/app/c.txt"))));
+        messages.add(TurnMessage.toolResult("a-4", "Write", "v1"));
+        messages.add(TurnMessage.assistantWithToolCalls("", List.of(writeCall("a-5", "/app/c.txt"))));
+        messages.add(TurnMessage.toolResult("a-5", "Write", "v2"));
+
+        ContextManager cm = newContextManager();
+        List<TurnMessage> compacted = cm.microCompact(messages);
+
+        assertFalse(compacted.stream().anyMatch(m -> "a-4".equals(m.toolCallId())),
+                "被覆盖的写与其结果应一并移除");
+        assertPairingInvariant(compacted);
+    }
+
+    @Test
+    void microCompactShouldNotTreatStandaloneToolUseAsWrite() {
+        // 独立 tool_use 形状全项目无产出方（见 spec §12），不参与写去重——按原样保留
+        List<TurnMessage> messages = new ArrayList<>();
+        messages.add(TurnMessage.user("legacy shape"));
+        messages.add(new TurnMessage("tool_use", "{\"file_path\":\"/app/legacy.txt\"}", "l-1", "Edit", null));
+        messages.add(TurnMessage.toolResult("l-1", "Edit", "v1"));
+        messages.add(new TurnMessage("tool_use", "{\"file_path\":\"/app/legacy.txt\"}", "l-2", "Edit", null));
+        messages.add(TurnMessage.toolResult("l-2", "Edit", "v2"));
+
+        ContextManager cm = newContextManager();
+        List<TurnMessage> compacted = cm.microCompact(messages);
+
+        assertEquals(messages.size(), compacted.size(),
+                "无产出方的形状不得参与去重，也不得被误删");
+        assertPairingInvariant(compacted);
+    }
+
+    private static Map<String, Object> writeCall(String id, String path) {
+        return Map.of("id", id, "name", "Write", "input", Map.of("file_path", path));
+    }
+
+    private static Map<String, Object> readCall(String id, String path) {
+        return Map.of("id", id, "name", "Read", "input", Map.of("file_path", path));
+    }
+
+    /**
+     * 配对不变式：列表中声明的 toolCallId（独立 tool_use 消息 + assistant 消息的 toolCalls）
+     * 与 tool_result 携带的 toolCallId 必须一一对应 —— 不允许孤儿 tool_result，也不允许悬空 tool_use。
+     */
+    private static void assertPairingInvariant(List<TurnMessage> messages) {
+        java.util.Set<String> declared = new java.util.LinkedHashSet<>();
+        java.util.Set<String> results = new java.util.LinkedHashSet<>();
+        for (TurnMessage msg : messages) {
+            if (msg.hasToolCalls()) {
+                for (Map<String, Object> tc : msg.toolCalls()) {
+                    declared.add(String.valueOf(tc.get("id")));
+                }
+            } else if (msg.isToolUse()) {
+                declared.add(msg.toolCallId());
+            }
+            if (msg.isToolResult()) {
+                results.add(msg.toolCallId());
+            }
+        }
+        assertEquals(declared, results,
+                "声明的 toolCallId 与 tool_result 的 toolCallId 必须一一对应");
     }
 
     // ========== P2-5: ModelContextWindowRegistry ==========
